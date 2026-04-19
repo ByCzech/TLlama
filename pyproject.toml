@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61.0", "setuptools_scm"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tllama"
+dynamic = ["version"]
+authors = [
+    {name = "ByCzech", email = "byczech@malyjarda.cz"}
+]
+description = "TLlama - Terminator Llama AI Web Interface"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.115.0",
+    "pydantic>=2.0.0",
+    "llama-cpp>=0.3.20"
+]
+
+[project.scripts]
+# Register tllama cmdline command
+#tllama = "tllama.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools_scm]
+fallback_version = "0.0.0-unknown"
