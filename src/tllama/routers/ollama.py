@@ -24,44 +24,37 @@ async def get_version():
     return {"version": "0.0.0"}  # Return version, that client expect
 
 
-@router.post("/show")
-async def show_model_info(request: dict):
-    return {
-        "modelfile": "FROM local-model:latest\nTEMPLATE \"{{ .System }}\\nUser: {{ .Prompt }}\\nAssistant: \"",
-        "parameters": "stop                           \"<|end_of_text|>\"\nstop                           \"<|eot_id|>\"",
-        "template": "{{ .System }}\nUser: {{ .Prompt }}\nAssistant: ",
-        "details": {
-            "format": "gguf",
-            "family": "llama",
-            "parameter_size": "8B",
-            "quantization_level": "Q4_K_M"
-        },
-        "messages": []  # Important: CLI can expect array of history with messages
-    }
-
-
 @router.get("/tags")
-async def list_tags():
-    """List models."""
-    return {
-        "models": [
-            {
-                "name": "local-model:latest",
-                "model": "local-model:latest",
-                "modified_at": get_iso_time(),
-                "size": 4000000000,
-                "digest": "sha256:1234567890abcdef",
-                "details": {
-                    "parent_model": "",
-                    "format": "gguf",
-                    "family": "llama",
-                    "families": ["llama"],
-                    "parameter_size": "7B",
-                    "quantization_level": "Q4_0"
-                }
+async def list_models_ollama():
+    local_models = model_manager.list_local_models()
+
+    formatted_models = []
+    for m in local_models:
+        metadata_info = model_manager.get_model_metadata(m['id'])
+        if not metadata_info:
+            continue
+
+        p_size = "unknown"
+        if isinstance(metadata_info["params"], (int, str)) and int(metadata_info["params"]) > 0:
+            p_size = f"{round(int(metadata_info['params']) / 1e9)}b"
+
+        formatted_models.append({
+            "name": f"{m['id']}",
+            "model": f"{m['id']}",
+            "modified_at": datetime.fromtimestamp(m["mtime"], timezone.utc).isoformat(),
+            "size": m["size"],
+            "digest": f"{m['sha256']}",
+            "details": {
+                "parent_model": "",
+                "format": "gguf",
+                "family": metadata_info["arch"],
+                "families": [metadata_info["arch"]],
+                "parameter_size": p_size,
+                "quantization_level": metadata_info["bits"]
             }
-        ]
-    }
+        })
+
+    return {"models": formatted_models}
 
 
 @router.post("/chat")
@@ -180,14 +173,24 @@ async def ollama_generate(request: OllamaGenerateRequest):
 
 @router.post("/show")
 async def show_model_info(request: dict):
+    model_name = request.get("name", "")
+    metadata_info = model_manager.get_model_metadata(model_name)
+
+    if not metadata_info:
+        raise HTTPException(status_code=404, detail="Model doesn't exist")
+
+    template = metadata_info.get("template", None) or "{{ .System }}\nUser: {{ .Prompt }}\nAssistant: "
+
     return {
-        "modelfile": "FROM local-model:latest",
-        "parameters": "",
-        "template": "{{ .Prompt }}",
+        "modelfile": f"FROM {model_name}.gguf\nTEMPLATE \"\"\"{template}\"\"\"",
+        "parameters": "stop                           \"<|end_of_text|>\"",
+        "template": template,
         "details": {
+            "parent_model": "",
             "format": "gguf",
-            "family": "llama",
-            "parameter_size": "7B",
-            "quantization_level": "Q4_0"
+            "family": metadata_info["arch"],
+            "families": [metadata_info["arch"]],
+            "parameter_size": f"{round(int(metadata_info['params']) / 1e9)}B" if metadata_info["params"] else "unknown",
+            "quantization_level": metadata_info["bits"]
         }
     }

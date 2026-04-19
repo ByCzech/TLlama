@@ -13,10 +13,19 @@ router = APIRouter(
 
 
 @router.get("/models")
-async def list_models():
+async def list_models_openai():
+    local_models = model_manager.list_local_models()
+
     return {
         "object": "list",
-        "data": [{"id": "local-model", "object": "model", "owned_by": "user"}]
+        "data": [
+            {
+                "id": m["id"],
+                "object": "model",
+                "created": m["mtime"],
+                "owned_by": "local-ai"
+            } for m in local_models
+        ]
     }
 
 
