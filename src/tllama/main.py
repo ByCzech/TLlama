@@ -1,10 +1,11 @@
 import uvicorn
 
 from fastapi import FastAPI, Response
+from .backend import lifespan
 from .routers import openai
 from .routers import ollama
 
-app = FastAPI(title="Multi AI Proxy Server")
+app = FastAPI(lifespan=lifespan, title="Multi AI Proxy Server")
 
 # OpenAI router
 app.include_router(openai.router)

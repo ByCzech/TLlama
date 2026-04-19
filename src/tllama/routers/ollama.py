@@ -5,6 +5,7 @@ import asyncio
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from tllama.schemas.ollama import OllamaChatRequest, OllamaGenerateRequest
+from tllama.backend import model_manager
 
 router = APIRouter(
     prefix="/api",
@@ -15,35 +16,6 @@ router = APIRouter(
 def get_iso_time():
     """Ollama wants specific time format."""
     return datetime.now(timezone.utc).isoformat()
-
-
-async def ollama_chat_stream(model_id: str):
-    """Generator NDJSON stream for /api/chat."""
-    chunks = ["This ", "answer ", "is ", "stream ", "via ", "Ollama API."]
-
-    for chunk in chunks:
-        data = {
-            "model": model_id,
-            "created_at": get_iso_time(),
-            "message": {"role": "assistant", "content": chunk},
-            "done": False
-        }
-        yield f"{json.dumps(data)}\n"
-        await asyncio.sleep(0.05)
-
-    # End chunk signaling finish (done: true)
-    final_data = {
-        "model": model_id,
-        "created_at": get_iso_time(),
-        "message": {"role": "assistant", "content": ""},
-        "done": True,
-        "done_reason": "stop",
-        "total_duration": 1337000000,
-        "load_duration": 1337000,
-        "prompt_eval_count": 10,
-        "eval_count": len(chunks)
-    }
-    yield f"{json.dumps(final_data)}\n"
 
 
 @router.get("/version")
@@ -93,20 +65,29 @@ async def list_tags():
 
 @router.post("/chat")
 async def ollama_chat(request: OllamaChatRequest):
-    """Chat endpoint."""
-    if request.stream:
-        return StreamingResponse(
-            ollama_chat_stream(request.model),
-            media_type="application/x-ndjson"
-        )
+    response_iter = model_manager.llm.create_chat_completion(
+        messages=[{"role": m.role, "content": m.content} for m in request.messages],
+        stream=True
+    )
 
-    # Non-streaming answer
-    return {
-        "model": request.model,
-        "created_at": get_iso_time(),
-        "message": {"role": "assistant", "content": "Statická odpověď z Ollama rozhraní."},
-        "done": True
-    }
+    async def generate_ollama():
+        for chunk in response_iter:
+            # Check existence content in delta (llama-cpp format)
+            delta = chunk["choices"][0].get("delta", {})
+            content = delta.get("content", "")
+
+            data = {
+                "model": request.model,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "message": {"role": "assistant", "content": content},
+                "done": False
+            }
+            yield f"{json.dumps(data)}\n"
+
+        # Final chunk for Ollama
+        yield f"{json.dumps({'model': request.model, 'done': True})}\n"
+
+    return StreamingResponse(generate_ollama(), media_type="application/x-ndjson")
 
 
 @router.post("/generate")
