@@ -1,7 +1,9 @@
+import os
 import uvicorn
 
 from fastapi import FastAPI, Response
 from .routers import openai, ollama
+from pydantic import TypeAdapter
 
 app = FastAPI(title="Multi AI Proxy Server")
 
@@ -26,13 +28,24 @@ async def health_check():
 
 
 def start_server():
-    uvicorn.run(
-        "tllama.main:app",
-        host="127.0.0.1",
-        port=8000,
-        # reload=True,
-        log_level="debug"
+    if ":" in os.getenv('TLLAMA_HOST', '127.0.0.1'):
+        host = os.getenv('TLLAMA_HOST', '127.0.0.1').split(':')[0]
+        port = int(os.getenv('TLLAMA_HOST', '127.0.0.1').split(':')[1])
+    else:
+        host = '127.0.0.1'
+        port = 8000
+    kwargs = dict(
+        host=host,
+        port=port
     )
+    if os.getenv('TLLAMA_UVICORN_RELOAD', False):
+        kwargs['reload'] == TypeAdapter(bool).validate_python(os.getenv('TLLAMA_UVICORN_RELOAD'))
+    if os.getenv('TLLAMA_DEBUG', False) and os.getenv('TLLAMA_DEBUG', '0').isdecimal() and os.getenv('TLLAMA_DEBUG', False):
+        kwargs['log_level'] = "debug"
+
+    uvicorn.run("tllama.main:app", **kwargs)
+
+    return
 
 
 if __name__ == "__main__":
