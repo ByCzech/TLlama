@@ -1,8 +1,9 @@
 import json
 import time
-from datetime import datetime, timezone
 import asyncio
-from fastapi import APIRouter
+
+from datetime import datetime, timezone
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from tllama.schemas.ollama import OllamaChatRequest, OllamaGenerateRequest
 from tllama.backend import model_manager
@@ -65,26 +66,18 @@ async def list_tags():
 
 @router.post("/chat")
 async def ollama_chat(request: OllamaChatRequest):
-    response_iter = model_manager.llm.create_chat_completion(
+    # If client sent model name, which we don't have loaded, get_model try to load it
+    llm = await model_manager.get_model(request.model)
+
+    response_iter = llm.create_chat_completion(
         messages=[{"role": m.role, "content": m.content} for m in request.messages],
         stream=True
     )
 
     async def generate_ollama():
         for chunk in response_iter:
-            # Check existence content in delta (llama-cpp format)
-            delta = chunk["choices"][0].get("delta", {})
-            content = delta.get("content", "")
-
-            data = {
-                "model": request.model,
-                "created_at": datetime.now(timezone.utc).isoformat(),
-                "message": {"role": "assistant", "content": content},
-                "done": False
-            }
-            yield f"{json.dumps(data)}\n"
-
-        # Final chunk for Ollama
+            content = chunk["choices"][0].get("delta", {}).get("content", "")
+            yield f"{json.dumps({'model': request.model, 'message': {'role': 'assistant', 'content': content}, 'done': False})}\n"
         yield f"{json.dumps({'model': request.model, 'done': True})}\n"
 
     return StreamingResponse(generate_ollama(), media_type="application/x-ndjson")
@@ -92,28 +85,97 @@ async def ollama_chat(request: OllamaChatRequest):
 
 @router.post("/generate")
 async def ollama_generate(request: OllamaGenerateRequest):
-    """Older endpoint completion (used by some UIs for quick prompts)."""
-    async def generate_stream():
-        data = {
+    try:
+        # Dynamic model loading on request
+        llm = await model_manager.get_model(request.model)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error loading model: {str(e)}")
+
+    # Preload model is in action?
+    if not request.prompt.strip():
+        print(f"DEBUG: Preload model {request.model} done.")
+
+        # Ollama expects information, that is done
+        response_data = {
             "model": request.model,
             "created_at": get_iso_time(),
-            "response": "Answer from /api/generate",
+            "response": "",
             "done": True
         }
-        yield f"{json.dumps(data)}\n"
+
+        if request.stream:
+            async def preload_stream():
+                yield f"{json.dumps(response_data)}\n"
+            return StreamingResponse(preload_stream(), media_type="application/x-ndjson")
+
+        return response_data
+
+    # Prompt Assembly: If client sent system prompt, instert it before main prompt
+    full_prompt = request.prompt
+    if request.system:
+        full_prompt = f"{request.system}\n\n{request.prompt}"
+
+    # Config params from 'options' array
+    generation_kwargs = {
+        "max_tokens": request.options.get("num_predict", 512),
+        "temperature": request.options.get("temperature", 0.8),
+        "top_p": request.options.get("top_p", 0.9),
+        "stop": request.options.get("stop", []),
+        "echo": False,
+    }
 
     if request.stream:
-        return StreamingResponse(
-            generate_stream(),
-            media_type="application/x-ndjson"
-        )
+        async def generate_stream():
+            start_time = time.time_ns()
+            # llama-cpp-python generator
+            response_iter = llm.create_completion(
+                prompt=full_prompt,
+                stream=True,
+                **generation_kwargs
+            )
 
-    return {
-        "model": request.model,
-        "created_at": get_iso_time(),
-        "response": "Answer from /api/generate",
-        "done": True
-    }
+            for chunk in response_iter:
+                text = chunk["choices"][0]["text"]
+                data = {
+                    "model": request.model,
+                    "created_at": get_iso_time(),
+                    "response": text,
+                    "done": False
+                }
+                yield f"{json.dumps(data)}\n"
+
+            # Final chunk with statistics
+            end_time = time.time_ns()
+            final_data = {
+                "model": request.model,
+                "created_at": get_iso_time(),
+                "done": True,
+                "total_duration": end_time - start_time,
+                "prompt_eval_count": len(llm.tokenize(full_prompt.encode("utf-8"))),
+                # Context (tokens) for next prompt, if client wants it
+                "context": []
+            }
+            yield f"{json.dumps(final_data)}\n"
+
+        return StreamingResponse(generate_stream(), media_type="application/x-ndjson")
+
+    else:
+        # Non-streaming variant
+        start_time = time.time_ns()
+        response = llm.create_completion(
+            prompt=full_prompt,
+            stream=False,
+            **generation_kwargs
+        )
+        end_time = time.time_ns()
+
+        return {
+            "model": request.model,
+            "created_at": get_iso_time(),
+            "response": response["choices"][0]["text"],
+            "done": True,
+            "total_duration": end_time - start_time
+        }
 
 
 @router.post("/show")

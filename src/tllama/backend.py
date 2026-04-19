@@ -1,30 +1,31 @@
+import asyncio
+
 from llama_cpp import Llama
-from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from typing import Dict
 
 
 class ModelManager:
     def __init__(self):
-        self.llm: Llama = None
+        self.models: Dict[str, Llama] = {}
+        self._lock = asyncio.Lock()
 
-    def load_model(self, path: str):
-        self.llm = Llama(
-            model_path=path,
-            n_ctx=4096,         # Context window
-            n_gpu_layers=-1,    # Load all layers to GPU if available
-            use_mmap=False      # Disable mmap or it goes to CPU on Vulkan API
-        )
+    async def get_model(self, model_name: str) -> Llama:
+        async with self._lock:
+            model_path = f"./models/{model_name}.gguf"
+
+            if model_name not in self.models:
+                print(f"DEBUG: Dynamic loading of model {model_name}...")
+                # Load model to (V)RAM
+                self.models[model_name] = Llama(
+                    model_path=model_path,
+                    n_ctx=2048,
+                    n_gpu_layers=-1
+                )
+            return self.models[model_name]
+
+    def unload_model(self, model_name: str):
+        if model_name in self.models:
+            del self.models[model_name]
 
 
 model_manager = ModelManager()
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Initialisation on start
-    model_manager.load_model("./models/Qwen3.6-35B-A3B-UD-IQ3_S.gguf")
-
-    yield
-
-    # Cleanup on exit
-    del model_manager.llm

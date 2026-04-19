@@ -22,8 +22,10 @@ async def list_models():
 
 @router.post("/chat/completions")
 async def chat_completions(request: ChatCompletionRequest):
-    # Call llama-cpp backend
-    response_iter = model_manager.llm.create_chat_completion(
+    # Dynamic model loading
+    llm = await model_manager.get_model(request.model)
+
+    response_iter = llm.create_chat_completion(
         messages=[{"role": m.role, "content": m.content} for m in request.messages],
         stream=True,
         temperature=request.temperature
