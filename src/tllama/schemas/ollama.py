@@ -11,7 +11,9 @@ class OllamaChatRequest(BaseModel):
     model: str
     messages: List[Message]
     stream: bool = True
-    options: Optional[dict[str, Any]] = None
+    format: Optional[str] = None  # např. "json"
+    options: dict = Field(default_factory=dict)
+    keep_alive: Optional[str] = "5m"
 
 
 class OllamaGenerateRequest(BaseModel):

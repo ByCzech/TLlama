@@ -59,21 +59,72 @@ async def list_models_ollama():
 
 @router.post("/chat")
 async def ollama_chat(request: OllamaChatRequest):
-    # If client sent model name, which we don't have loaded, get_model try to load it
     llm = await model_manager.get_model(request.model)
 
-    response_iter = llm.create_chat_completion(
-        messages=[{"role": m.role, "content": m.content} for m in request.messages],
-        stream=True
-    )
+    opts = request.options or {}
+    gen_params = {
+        "max_tokens": opts.get("num_predict", 512),
+        "temperature": opts.get("temperature", 0.8),
+        "top_p": opts.get("top_p", 0.9),
+        "stop": opts.get("stop", []),
+    }
 
-    async def generate_ollama():
-        for chunk in response_iter:
-            content = chunk["choices"][0].get("delta", {}).get("content", "")
-            yield f"{json.dumps({'model': request.model, 'message': {'role': 'assistant', 'content': content}, 'done': False})}\n"
-        yield f"{json.dumps({'model': request.model, 'done': True})}\n"
+    messages = [{"role": m.role, "content": m.content} for m in request.messages]
 
-    return StreamingResponse(generate_ollama(), media_type="application/x-ndjson")
+    if request.format == "json":
+        gen_params["response_format"] = {"type": "json_object"}
+
+    start_time = time.time_ns()
+
+    if request.stream:
+        async def chat_stream_generator():
+            response_iter = llm.create_chat_completion(
+                messages=messages,
+                stream=True,
+                **gen_params
+            )
+
+            for chunk in response_iter:
+                delta = chunk["choices"][0].get("delta", {})
+                content = delta.get("content", "")
+
+                yield f"{json.dumps({
+                    'model': request.model,
+                    'created_at': datetime.now(timezone.utc).isoformat(),
+                    'message': {'role': 'assistant', 'content': content},
+                    'done': False
+                })}\n"
+
+            end_time = time.time_ns()
+            yield f"{json.dumps({
+                'model': request.model,
+                'created_at': datetime.now(timezone.utc).isoformat(),
+                'done': True,
+                'total_duration': end_time - start_time,
+                'load_duration': 0,
+                'prompt_eval_count': len(request.messages),
+                'eval_count': 100
+            })}\n"
+
+        return StreamingResponse(chat_stream_generator(), media_type="application/x-ndjson")
+
+    else:
+        response = llm.create_chat_completion(
+            messages=messages,
+            stream=False,
+            **gen_params
+        )
+        end_time = time.time_ns()
+
+        return {
+            "model": request.model,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "message": response["choices"][0]["message"],
+            "done": True,
+            "total_duration": end_time - start_time,
+            "prompt_eval_count": response.get("usage", {}).get("prompt_tokens"),
+            "eval_count": response.get("usage", {}).get("completion_tokens")
+        }
 
 
 @router.post("/generate")
@@ -173,9 +224,11 @@ async def ollama_generate(request: OllamaGenerateRequest):
 
 @router.post("/show")
 async def show_model_info(request: dict):
-    model_name = request.get("name", "")
-    metadata_info = model_manager.get_model_metadata(model_name)
+    model_name = request.get("name", "") or request.get("model", "")
+    if not model_name:
+        raise HTTPException(status_code=400, detail="Missing model name")
 
+    metadata_info = model_manager.get_model_metadata(model_name)
     if not metadata_info:
         raise HTTPException(status_code=404, detail="Model doesn't exist")
 

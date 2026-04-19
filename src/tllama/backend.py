@@ -45,26 +45,29 @@ class ModelManager:
         if not os.path.exists(model_path):
             return None
 
-        temp_llm = Llama(model_path=model_path, vocab_only=True, verbose=False)
-        meta = temp_llm.metadata
+        try:
+            temp_llm = Llama(model_path=model_path, vocab_only=True, verbose=False)
+            meta = temp_llm.metadata
 
-        arch = meta.get("general.architecture", "llama")
-        params = meta.get("general.parameter_count", 0)
-        bits = meta.get("general.quantization_version", "unknown")
-        template = meta.get("tokenizer.chat_template", "")
+            arch = meta.get("general.architecture", "llama")
+            params = meta.get("general.parameter_count", 0)
+            bits = meta.get("general.quantization_version", "unknown")
+            template = meta.get("tokenizer.chat_template", "")
 
-        del temp_llm
+            del temp_llm
 
-        return {
-            "arch": arch,
-            "params": params,
-            "bits": bits,
-            "template": template,
-            "metadata_raw": meta
-        }
+            return {
+                "arch": arch,
+                "params": params,
+                "bits": bits,
+                "template": template,
+                "metadata_raw": meta
+            }
+        except Exception as e:
+            return None
 
     def list_local_models(self):
-        """Skenuje složku a vrací metadata o GGUF souborech."""
+        """Scan models GGUF dir."""
         model_list = []
         for file in self.models_dir.glob("*.gguf"):
             stats = file.stat()
