@@ -19,7 +19,8 @@ class ModelManager:
                 self.models[model_name] = Llama(
                     model_path=model_path,
                     n_ctx=2048,
-                    n_gpu_layers=-1
+                    n_gpu_layers=-1,
+                    use_mmap=False
                 )
             return self.models[model_name]
 
