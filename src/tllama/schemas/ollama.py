@@ -11,7 +11,8 @@ class OllamaChatRequest(BaseModel):
     model: str
     messages: List[Message]
     stream: bool = True
-    format: Optional[str] = None  # např. "json"
+    think: Optional[bool] = None
+    format: Optional[str] = None
     options: dict = Field(default_factory=dict)
     keep_alive: Optional[str] = "5m"
 
@@ -23,6 +24,7 @@ class OllamaGenerateRequest(BaseModel):
     template: Optional[str] = None
     context: Optional[List[int]] = None
     stream: bool = True
+    think: Optional[bool] = None
     # Default_factory will ensure empty dict, if key is missing
     options: dict = Field(default_factory=dict)
 
