@@ -272,14 +272,17 @@ async def ollama_generate(request: OllamaGenerateRequest):
 
     # Ollama supports "json" or a JSON schema object
     request_format = getattr(request, "format", None)
-    if request_format == "json":
-        generation_kwargs["grammar"] = LlamaGrammar.from_json_schema(
-            json.dumps({"type": "object"})
-        )
-    elif isinstance(request_format, dict):
-        generation_kwargs["grammar"] = LlamaGrammar.from_json_schema(
-            json.dumps(request_format)
-        )
+    try:
+        if request_format == "json":
+            generation_kwargs["grammar"] = LlamaGrammar.from_json_schema(
+                json.dumps({"type": "object"})
+            )
+        elif isinstance(request_format, dict):
+            generation_kwargs["grammar"] = LlamaGrammar.from_json_schema(
+                json.dumps(request_format)
+            )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid format schema: {e}")
 
     start_time = time.time_ns()
 
