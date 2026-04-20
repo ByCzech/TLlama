@@ -9,6 +9,8 @@ from llama_cpp import Llama
 from typing import Dict, Optional, Any, List
 from datetime import datetime, timezone, timedelta
 
+from tllama.helpers.llama_stats import load_llama_with_captured_stats
+
 
 def _now_iso():
     return datetime.now(timezone.utc).isoformat()
@@ -84,11 +86,13 @@ class ModelManager:
             if model_name not in self.models:
                 print(f"DEBUG: Dynamic loading of model {model_name} with n_ctx={requested_n_ctx}...")
 
-                llm = Llama(
+                llm, load_stats, load_log = load_llama_with_captured_stats(
+                    Llama,
                     model_path=model_path,
                     n_ctx=requested_n_ctx,
                     n_gpu_layers=-1,
-                    use_mmap=False
+                    use_mmap=False,
+                    verbose=True,
                 )
 
                 actual_n_ctx = llm.n_ctx()
@@ -108,6 +112,21 @@ class ModelManager:
                     "n_ctx": actual_n_ctx,
                     "n_gpu_layers": -1,
                     "use_mmap": False,
+
+                    # stats from log
+                    "processor": load_stats.get("processor", "100% CPU"),
+                    "offloaded_layers": load_stats.get("offloaded_layers", 0),
+                    "total_layers": load_stats.get("total_layers", 0),
+                    "gpu_model_mib": load_stats.get("gpu_model_mib", 0.0),
+                    "gpu_kv_mib": load_stats.get("gpu_kv_mib", 0.0),
+                    "gpu_compute_mib": load_stats.get("gpu_compute_mib", 0.0),
+                    "gpu_output_mib": load_stats.get("gpu_output_mib", 0.0),
+                    "gpu_rs_mib": load_stats.get("gpu_rs_mib", 0.0),
+                    "cpu_model_mib": load_stats.get("cpu_model_mib", 0.0),
+                    "cpu_kv_mib": load_stats.get("cpu_kv_mib", 0.0),
+                    "cpu_compute_mib": load_stats.get("cpu_compute_mib", 0.0),
+                    "cpu_output_mib": load_stats.get("cpu_output_mib", 0.0),
+                    "cpu_rs_mib": load_stats.get("cpu_rs_mib", 0.0)
                 }
             else:
                 self.active_models[model_name]["last_used_at"] = _now_iso()
@@ -182,4 +201,3 @@ class ModelManager:
 
 
 model_manager = ModelManager()
-

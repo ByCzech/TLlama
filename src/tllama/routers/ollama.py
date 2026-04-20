@@ -650,7 +650,7 @@ async def list_running_models():
                 "quantization_level": metadata_info.get("bits", "unknown"),
             },
             "expires_at": m["expires_at"],
-            "size_vram": 0,
+            "size_vram": int(m.get("gpu_model_mib", 0.0) * 1024**2)
         })
 
     return {"models": formatted}
