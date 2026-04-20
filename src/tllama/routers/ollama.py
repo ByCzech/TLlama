@@ -247,6 +247,8 @@ async def ollama_chat(request: OllamaChatRequest):
 
 @router.post("/generate")
 async def ollama_generate(request: OllamaGenerateRequest):
+    prompt_text = request.prompt or ""
+
     opts = request.options or {}
     try:
         llm = await model_manager.get_model(
@@ -258,7 +260,7 @@ async def ollama_generate(request: OllamaGenerateRequest):
 
     metadata_info = model_manager.get_model_metadata(request.model) or {}
 
-    if not request.prompt.strip():
+    if not prompt_text.strip():
         response_data = {
             "model": request.model,
             "created_at": get_iso_time(),
@@ -278,13 +280,12 @@ async def ollama_generate(request: OllamaGenerateRequest):
     is_raw = bool(getattr(request, "raw", False))
     has_template_override = bool(getattr(request, "template", None))
 
-    # raw=true => bez templatingu
     if is_raw:
-        full_prompt = request.prompt
+        full_prompt = prompt_text
     else:
-        full_prompt = request.prompt
+        full_prompt = prompt_text
         if request.system:
-            full_prompt = f"{request.system}\n\n{request.prompt}"
+            full_prompt = f"{request.system}\n\n{prompt_text}"
 
     generation_kwargs = {
         "max_tokens": normalize_max_tokens_from_options(opts),
@@ -293,7 +294,6 @@ async def ollama_generate(request: OllamaGenerateRequest):
         "echo": False,
     }
 
-    # Ollama supports "json" or a JSON schema object
     request_format = getattr(request, "format", None)
     try:
         if request_format == "json":
@@ -309,25 +309,17 @@ async def ollama_generate(request: OllamaGenerateRequest):
 
     start_time = time.time_ns()
 
-    # raw + explicit think nejde v tomhle backendu implementovat čistě
     if is_raw and explicit_think is not None:
         raise HTTPException(
             status_code=400,
             detail="raw=true cannot be combined with explicit think in this backend, because think control is implemented through prompt templating."
         )
 
-    def split_thinking_and_response(text: str) -> tuple[str, str]:
-        thinking_parts = THINK_BLOCK_RE.findall(text)
-        thinking = "\n".join(part.strip() for part in thinking_parts if part.strip())
-        response_text = THINK_BLOCK_RE.sub("", text).strip()
-        return thinking, response_text
-
-    # 1) RAW branch
     if is_raw:
         prompt_eval_count = estimate_completion_prompt_eval_count(llm, full_prompt)
 
         if request.stream:
-            async def generate_stream():
+            def generate_stream():
                 response_iter = llm.create_completion(
                     prompt=full_prompt,
                     stream=True,
@@ -386,9 +378,6 @@ async def ollama_generate(request: OllamaGenerateRequest):
             "context": []
         }
 
-    # 2) Rendered branch:
-    #    a) explicit think set
-    #    b) or template override present
     should_render = explicit_think is not None or has_template_override
 
     if should_render:
@@ -402,10 +391,11 @@ async def ollama_generate(request: OllamaGenerateRequest):
 
         prompt_eval_count = estimate_completion_prompt_eval_count(llm, rendered_prompt)
 
-        # explicit think=true / "low|medium|high" -> separate thinking where possible
+        fmt = detect_reasoning_format(request.model, metadata_info)
+
         if explicit_think not in (None, False):
             if request.stream:
-                async def generate_stream():
+                def generate_stream():
                     response_iter = llm.create_completion(
                         prompt=rendered_prompt,
                         stream=True,
@@ -414,7 +404,8 @@ async def ollama_generate(request: OllamaGenerateRequest):
                     )
 
                     finish_reason = None
-                    text_buffer = ""
+
+                    splitter = ReasoningStreamSplitter(fmt)
 
                     for chunk in response_iter:
                         choice = chunk["choices"][0]
@@ -424,27 +415,37 @@ async def ollama_generate(request: OllamaGenerateRequest):
                         if chunk_finish_reason is not None:
                             finish_reason = chunk_finish_reason
 
-                        if text:
-                            text_buffer += text
+                        for kind, piece in splitter.push(text):
+                            if kind == "thinking":
+                                yield f"{json.dumps({
+                                    'model': request.model,
+                                    'created_at': get_iso_time(),
+                                    'thinking': piece,
+                                    'done': False
+                                })}\n"
+                            else:
+                                yield f"{json.dumps({
+                                    'model': request.model,
+                                    'created_at': get_iso_time(),
+                                    'response': piece,
+                                    'done': False
+                                })}\n"
 
-                    thinking, response_text = split_thinking_and_response(text_buffer)
-
-                    if thinking:
-                        yield f"{json.dumps({
-                            'model': request.model,
-                            'created_at': get_iso_time(),
-                            'thinking': thinking,
-                            'response': '',
-                            'done': False
-                        })}\n"
-
-                    if response_text:
-                        yield f"{json.dumps({
-                            'model': request.model,
-                            'created_at': get_iso_time(),
-                            'response': response_text,
-                            'done': False
-                        })}\n"
+                    for kind, piece in splitter.finish():
+                        if kind == "thinking":
+                            yield f"{json.dumps({
+                                'model': request.model,
+                                'created_at': get_iso_time(),
+                                'thinking': piece,
+                                'done': False
+                            })}\n"
+                        else:
+                            yield f"{json.dumps({
+                                'model': request.model,
+                                'created_at': get_iso_time(),
+                                'response': piece,
+                                'done': False
+                            })}\n"
 
                     end_time = time.time_ns()
                     yield f"{json.dumps({
@@ -468,13 +469,12 @@ async def ollama_generate(request: OllamaGenerateRequest):
             end_time = time.time_ns()
 
             full_text = response["choices"][0].get("text", "")
-            thinking, response_text = split_thinking_and_response(full_text)
+            thinking_text, response_text = split_full_text_by_reasoning_format(full_text, fmt)
 
-            return {
+            result = {
                 "model": request.model,
                 "created_at": get_iso_time(),
                 "response": response_text,
-                "thinking": thinking,
                 "done": True,
                 "done_reason": response["choices"][0].get("finish_reason"),
                 "total_duration": end_time - start_time,
@@ -483,9 +483,13 @@ async def ollama_generate(request: OllamaGenerateRequest):
                 "context": []
             }
 
-        # explicit think=false OR template override without explicit think
+            if thinking_text:
+                result["thinking"] = thinking_text
+
+            return result
+
         if request.stream:
-            async def generate_stream():
+            def generate_stream():
                 response_iter = llm.create_completion(
                     prompt=rendered_prompt,
                     stream=True,
@@ -544,11 +548,10 @@ async def ollama_generate(request: OllamaGenerateRequest):
             "context": []
         }
 
-    # 3) Default plain completion branch
     prompt_eval_count = estimate_completion_prompt_eval_count(llm, full_prompt)
 
     if request.stream:
-        async def generate_stream():
+        def generate_stream():
             response_iter = llm.create_completion(
                 prompt=full_prompt,
                 stream=True,
