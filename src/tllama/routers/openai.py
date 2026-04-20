@@ -6,6 +6,10 @@ from fastapi.responses import StreamingResponse
 from tllama.schemas.openai import ChatCompletionRequest
 from tllama.backend import model_manager
 
+from tllama.routers.ollama import (
+    _normalize_max_tokens, _normalize_stop, _render_prompt_with_explicit_think,
+    _estimate_completion_prompt_eval_count)
+
 router = APIRouter(
     prefix="/v1",
     tags=["OpenAI API"]
