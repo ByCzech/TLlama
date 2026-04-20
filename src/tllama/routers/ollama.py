@@ -16,6 +16,7 @@ from tllama.helpers.common import (
     get_iso_time,
     normalize_stop,
     normalize_max_tokens_from_options,
+    normalize_message_content,
     resolve_think_flag,
     estimate_completion_prompt_eval_count,
 )
@@ -80,7 +81,18 @@ async def ollama_chat(request: OllamaChatRequest):
     explicit_think = resolve_think_flag(request)
     user_stop = normalize_stop(opts.get("stop"))
 
-    messages = [{"role": m.role, "content": m.content} for m in request.messages]
+    messages = [
+        {
+            "role": m.role,
+            "content": normalize_message_content(m.content),
+            "images": m.images,
+            "thinking": m.thinking,
+            "tool_calls": m.tool_calls,
+            "tool_name": m.tool_name,
+            "tool_call_id": m.tool_call_id,
+        }
+        for m in request.messages
+    ]
 
     base_gen_params = {
         "max_tokens": normalize_max_tokens_from_options(opts),
