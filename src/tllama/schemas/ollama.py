@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, field_validator
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Dict
 
 
 class Message(BaseModel):
@@ -13,7 +13,7 @@ class OllamaChatRequest(BaseModel):
     stream: bool = True
     think: Optional[bool] = None
     format: Optional[str] = None
-    options: dict = Field(default_factory=dict)
+    options: Dict[str, Any] = Field(default_factory=dict)
     keep_alive: Optional[str] = "5m"
 
 

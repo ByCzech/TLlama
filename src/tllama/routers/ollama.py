@@ -1,12 +1,20 @@
+import logging
 import json
 import time
 import asyncio
+
+import jinja2
+from jinja2.sandbox import ImmutableSandboxedEnvironment
+
+from typing import Optional, List, Tuple
 
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from tllama.schemas.ollama import OllamaChatRequest, OllamaGenerateRequest
 from tllama.backend import model_manager
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api",
@@ -19,65 +27,66 @@ def get_iso_time():
     return datetime.now(timezone.utc).isoformat()
 
 
-def _resolve_think_flag(request) -> bool | None:
-    """
-    Ollama-style precedence:
-    1) top-level request.think
-    2) compat fallback: options["think"]
-    3) None = not explicitly set
-    """
-    raw = getattr(request, "think", None)
+def _normalize_stop(value) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, list):
+        return []
+    return [s for s in value if isinstance(s, str) and s != ""]
 
-    if raw is None:
-        opts = request.options or {}
-        raw = opts.get("think", None)
 
-    if raw is None:
+def _normalize_max_tokens(opts: dict):
+    num_predict = opts.get("num_predict", None)
+
+    if num_predict is None:
         return None
 
-    if isinstance(raw, bool):
-        return raw
+    if isinstance(num_predict, int) and num_predict <= 0:
+        return None
 
-    # kompatibilita pro klienty, co pošlou string
-    if isinstance(raw, str):
-        value = raw.strip().lower()
-        if value == "true":
-            return True
-        if value in ("false", "none"):
-            return False
-
-    raise HTTPException(
-        status_code=400,
-        detail='invalid think value; expected true/false'
-    )
+    return num_predict
 
 
-def _build_messages_for_template(request):
-    """
-    Připraví message dicts i pro templaty, které umí pracovat s `thinking`.
-    Když message model pole `thinking` nemá, nic se nestane.
-    """
+def _resolve_think_flag(request: OllamaChatRequest) -> Optional[bool]:
+    if request.think is not None:
+        return request.think
+
+    opt_think = request.options.get("think")
+    if isinstance(opt_think, bool):
+        return opt_think
+
+    return None
+
+
+def _build_template_messages(request: OllamaChatRequest) -> List[dict]:
     result = []
     for m in request.messages:
         item = {
             "role": m.role,
-            "content": m.content,
+            "content": m.content or "",
         }
 
+        # pro budoucí kompatibilitu, kdybys Message rozšířil
         thinking = getattr(m, "thinking", None)
-        if thinking:
+        if thinking is not None:
             item["thinking"] = thinking
 
+        images = getattr(m, "images", None)
+        if images is not None:
+            item["images"] = images
+
         tool_calls = getattr(m, "tool_calls", None)
-        if tool_calls:
+        if tool_calls is not None:
             item["tool_calls"] = tool_calls
 
         tool_name = getattr(m, "tool_name", None)
-        if tool_name:
+        if tool_name is not None:
             item["tool_name"] = tool_name
 
         tool_call_id = getattr(m, "tool_call_id", None)
-        if tool_call_id:
+        if tool_call_id is not None:
             item["tool_call_id"] = tool_call_id
 
         result.append(item)
@@ -85,76 +94,86 @@ def _build_messages_for_template(request):
     return result
 
 
-def _render_prompt_with_explicit_think(llm, metadata_info, request, think_enabled: bool) -> str:
-    """
-    Ollama-like prompt rendering:
-    explicitní think=false se musí propsat do template vrstvy.
-    """
+def _render_prompt_with_explicit_think(
+    llm,
+    metadata_info: dict,
+    request: OllamaChatRequest,
+    think_enabled: bool,
+    user_stop: list[str],
+):
     template = metadata_info.get("template")
     if not template:
         raise HTTPException(
             status_code=501,
-            detail="model template is not available; cannot emulate ollama think=false for this model"
+            detail="Model template is not available; cannot emulate think=false for this model."
         )
 
     bos_id = llm.token_bos()
     eos_id = llm.token_eos()
 
-    bos_token = (
-        llm.detokenize([bos_id]).decode("utf-8", errors="ignore")
-        if bos_id != -1 else ""
-    )
-    eos_token = (
-        llm.detokenize([eos_id]).decode("utf-8", errors="ignore")
-        if eos_id != -1 else ""
-    )
+    bos_token = llm.detokenize([bos_id]).decode("utf-8", errors="ignore") if bos_id != -1 else ""
+    eos_token = llm.detokenize([eos_id]).decode("utf-8", errors="ignore") if eos_id != -1 else ""
 
-    messages = _build_messages_for_template(request)
+    messages = [{"role": m.role, "content": m.content or ""} for m in request.messages]
 
-    # Kontext záměrně obsahuje jak "Ollama-like" názvy, tak běžné jinja/hf názvy.
-    # Různé GGUF templaty používají různé konvence.
+    def raise_exception(message: str):
+        raise ValueError(message)
+
+    def strftime_now(fmt: str) -> str:
+        return datetime.now().strftime(fmt)
+
     context = {
-        # běžné HF/Jinja názvy
+        # běžné jinja / chat template proměnné
         "messages": messages,
         "bos_token": bos_token,
         "eos_token": eos_token,
         "add_generation_prompt": True,
-        "tools": getattr(request, "tools", []) or [],
-        "response": "",
+        "tools": [],
+        "functions": None,
+        "function_call": None,
+        "tool_choice": None,
+        "raise_exception": raise_exception,
+        "strftime_now": strftime_now,
+
+        # think přepínače
         "enable_thinking": think_enabled,
         "thinking": think_enabled,
 
-        # Ollama-like názvy
+        # aliasy kvůli kompatibilitě s různými templaty
         "Messages": messages,
-        "Tools": getattr(request, "tools", []) or [],
+        "Tools": [],
         "Response": "",
         "Think": think_enabled,
         "ThinkLevel": "",
         "IsThinkSet": True,
     }
 
-    # Preferuj stejný formatter, který už jsi měl rozchozený.
     try:
-        handler = lcf.Jinja2ChatFormatter(
-            template=template,
-            bos_token=bos_token,
-            eos_token=eos_token,
+        env = ImmutableSandboxedEnvironment(
+            loader=jinja2.BaseLoader(),
+            trim_blocks=True,
+            lstrip_blocks=True,
+            undefined=jinja2.ChainableUndefined,
         )
-        format_result = handler(**context)
-        return format_result.prompt
-    except Exception:
-        # fallback přes čisté Jinja2, kdyby formatter nesežral extra kwargs
-        try:
-            from jinja2.sandbox import SandboxedEnvironment
-        except Exception as e:
-            raise HTTPException(
-                status_code=500,
-                detail=f"failed to render template with explicit think flag: {e}"
-            )
-
-        env = SandboxedEnvironment(trim_blocks=True, lstrip_blocks=True)
         tmpl = env.from_string(template)
-        return tmpl.render(**context)
+        prompt = tmpl.render(**context)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"think=false template render failed: {type(e).__name__}: {e}"
+        )
+
+    stop = [
+        s for s in (user_stop or [])
+        if isinstance(s, str) and s != ""
+    ]
+
+    # eos token přidávej jen když fakt není prázdný
+    if eos_token:
+        if eos_token not in stop:
+            stop.append(eos_token)
+
+    return prompt, stop
 
 
 @router.get("/version")
@@ -202,30 +221,33 @@ async def ollama_chat(request: OllamaChatRequest):
 
     opts = request.options or {}
     explicit_think = _resolve_think_flag(request)
+    user_stop = _normalize_stop(opts.get("stop"))
 
-    gen_params = {
-        "max_tokens": opts.get("num_predict", 512),
+    base_gen_params = {
+        "max_tokens": _normalize_max_tokens(opts),
         "temperature": opts.get("temperature", 0.8),
         "top_p": opts.get("top_p", 0.9),
-        "stop": opts.get("stop", []),
     }
 
     if request.format == "json":
-        gen_params["response_format"] = {"type": "json_object"}
+        base_gen_params["response_format"] = {"type": "json_object"}
 
     start_time = time.time_ns()
 
-    # ------------------------------------------------------------------
-    # PATH 1:
-    # explicit think=false -> Ollama-like render prompt manually, then create_completion
-    # ------------------------------------------------------------------
-    if explicit_think is False:
-        full_prompt = _render_prompt_with_explicit_think(
+    # think=false => explicitní render promptu
+    if explicit_think is not None:
+        full_prompt, stop = _render_prompt_with_explicit_think(
             llm=llm,
             metadata_info=metadata_info,
             request=request,
-            think_enabled=False,
+            think_enabled=explicit_think,
+            user_stop=user_stop
         )
+
+        gen_params = {
+            **base_gen_params,
+            "stop": stop,
+        }
 
         if request.stream:
             async def chat_stream_generator():
@@ -235,33 +257,37 @@ async def ollama_chat(request: OllamaChatRequest):
                     **gen_params
                 )
 
-                for chunk in response_iter:
-                    text = chunk["choices"][0].get("text", "")
-                    if not text:
-                        continue
+                finish_reason = None
 
-                    yield f"{json.dumps({
-                        'model': request.model,
-                        'created_at': datetime.now(timezone.utc).isoformat(),
-                        'message': {'role': 'assistant', 'content': text},
-                        'done': False
-                    })}\n"
+                for chunk in response_iter:
+                    choice = chunk["choices"][0]
+                    text = choice.get("text", "")
+                    chunk_finish_reason = choice.get("finish_reason")
+
+                    if chunk_finish_reason is not None:
+                        finish_reason = chunk_finish_reason
+
+                    if text:
+                        yield f"{json.dumps({
+                            'model': request.model,
+                            'created_at': datetime.now(timezone.utc).isoformat(),
+                            'message': {'role': 'assistant', 'content': text},
+                            'done': False
+                        })}\n"
 
                 end_time = time.time_ns()
                 yield f"{json.dumps({
                     'model': request.model,
                     'created_at': datetime.now(timezone.utc).isoformat(),
                     'done': True,
+                    'done_reason': finish_reason,
                     'total_duration': end_time - start_time,
                     'load_duration': 0,
                     'prompt_eval_count': len(request.messages),
                     'eval_count': None
                 })}\n"
 
-            return StreamingResponse(
-                chat_stream_generator(),
-                media_type="application/x-ndjson"
-            )
+            return StreamingResponse(chat_stream_generator(), media_type="application/x-ndjson")
 
         response = llm.create_completion(
             prompt=full_prompt,
@@ -270,26 +296,27 @@ async def ollama_chat(request: OllamaChatRequest):
         )
         end_time = time.time_ns()
 
-        content = response["choices"][0].get("text", "")
-
         return {
             "model": request.model,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "message": {
                 "role": "assistant",
-                "content": content
+                "content": response["choices"][0].get("text", "")
             },
             "done": True,
+            "done_reason": response["choices"][0].get("finish_reason"),
             "total_duration": end_time - start_time,
             "prompt_eval_count": response.get("usage", {}).get("prompt_tokens"),
             "eval_count": response.get("usage", {}).get("completion_tokens")
         }
 
-    # ------------------------------------------------------------------
-    # PATH 2:
-    # default / explicit think=true -> necháme původní fungující create_chat_completion path
-    # ------------------------------------------------------------------
+    # default / think=true => původní fungující chat path
     messages = [{"role": m.role, "content": m.content} for m in request.messages]
+
+    gen_params = {
+        **base_gen_params,
+        "stop": opts.get("stop", []),
+    }
 
     if request.stream:
         async def chat_stream_generator():
@@ -318,7 +345,7 @@ async def ollama_chat(request: OllamaChatRequest):
                 'total_duration': end_time - start_time,
                 'load_duration': 0,
                 'prompt_eval_count': len(request.messages),
-                'eval_count': 100
+                'eval_count': None
             })}\n"
 
         return StreamingResponse(chat_stream_generator(), media_type="application/x-ndjson")
