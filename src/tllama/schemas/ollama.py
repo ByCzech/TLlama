@@ -1,5 +1,7 @@
 from pydantic import BaseModel, Field, field_validator
-from typing import List, Optional, Any, Dict
+from typing import List, Optional, Any, Dict, Union, Literal
+
+ThinkValue = Optional[Union[bool, Literal["low", "medium", "high"]]]
 
 
 class Message(BaseModel):
@@ -24,14 +26,13 @@ class OllamaGenerateRequest(BaseModel):
     template: Optional[str] = None
     context: Optional[List[int]] = None
     stream: bool = True
-    think: Optional[bool] = None
-    # Default_factory will ensure empty dict, if key is missing
-    options: dict = Field(default_factory=dict)
+    think: ThinkValue = None
+    format: Optional[object] = None   # "json" nebo JSON schema objekt
+    raw: Optional[bool] = False
+    keep_alive: Optional[Union[str, int]] = "5m"
+    options: Dict[str, Any] = Field(default_factory=dict)
 
-    # This validator will ensure, empty dict even if client set "options": null
-    @field_validator('options', mode='before')
+    @field_validator("options", mode="before")
     @classmethod
     def prevent_none_options(cls, v):
-        if v is None:
-            return {}
-        return v
+        return {} if v is None else v
