@@ -34,18 +34,26 @@ class OllamaChatRequest(BaseModel):
 
 class OllamaGenerateRequest(BaseModel):
     model: str
-    prompt: str
+    prompt: Optional[str] = ""
     system: Optional[str] = None
     template: Optional[str] = None
     context: Optional[List[int]] = None
     stream: bool = True
     think: ThinkValue = None
-    format: Optional[object] = None   # "json" nebo JSON schema objekt
+    format: FormatValue = None
     raw: Optional[bool] = False
-    keep_alive: Optional[Union[str, int]] = "5m"
-    options: Dict[str, Any] = Field(default_factory=dict)
+    keep_alive: Optional[Union[str, int, float]] = "5m"
+    options: dict = Field(default_factory=dict)
+    images: Optional[List[str]] = None
+    tools: Optional[List[Dict[str, Any]]] = None
+    suffix: Optional[str] = None
 
     @field_validator("options", mode="before")
     @classmethod
     def prevent_none_options(cls, v):
         return {} if v is None else v
+
+    @field_validator("prompt", mode="before")
+    @classmethod
+    def prevent_none_prompt(cls, v):
+        return "" if v is None else v
