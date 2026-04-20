@@ -70,10 +70,13 @@ async def list_models_ollama():
 
 @router.post("/chat")
 async def ollama_chat(request: OllamaChatRequest):
-    llm = await model_manager.get_model(request.model)
+    opts = request.options or {}
+    llm = await model_manager.get_model(
+        request.model,
+        num_ctx=opts.get("num_ctx")
+    )
     metadata_info = model_manager.get_model_metadata(request.model) or {}
 
-    opts = request.options or {}
     explicit_think = resolve_think_flag(request)
     user_stop = normalize_stop(opts.get("stop"))
 
@@ -227,8 +230,12 @@ async def ollama_chat(request: OllamaChatRequest):
 
 @router.post("/generate")
 async def ollama_generate(request: OllamaGenerateRequest):
+    opts = request.options or {}
     try:
-        llm = await model_manager.get_model(request.model)
+        llm = await model_manager.get_model(
+            request.model,
+            num_ctx=opts.get("num_ctx")
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error loading model: {str(e)}")
 
@@ -249,7 +256,6 @@ async def ollama_generate(request: OllamaGenerateRequest):
 
         return response_data
 
-    opts = request.options or {}
     explicit_think = resolve_think_flag(request)
     user_stop = normalize_stop(opts.get("stop"))
     is_raw = bool(getattr(request, "raw", False))
@@ -610,3 +616,41 @@ async def show_model_info(request: dict):
             "quantization_level": metadata_info["bits"]
         }
     }
+
+
+@router.get("/ps")
+async def list_running_models():
+    loaded_models = model_manager.list_loaded_models()
+
+    formatted = []
+    for m in loaded_models:
+        metadata_info = model_manager.get_model_metadata(m["id"]) or {}
+
+        p_size = "unknown"
+        params = metadata_info.get("params", 0)
+        if isinstance(params, (int, str)):
+            try:
+                if int(params) > 0:
+                    p_size = f"{round(int(params) / 1e9)}b"
+            except Exception:
+                pass
+
+        formatted.append({
+            "name": m["model"],
+            "model": m["model"],
+            "size": m["size"],
+            "digest": m["sha256"],
+            "context_length": m["n_ctx"],
+            "details": {
+                "parent_model": "",
+                "format": "gguf",
+                "family": metadata_info.get("arch", "unknown"),
+                "families": [metadata_info.get("arch", "unknown")],
+                "parameter_size": p_size,
+                "quantization_level": metadata_info.get("bits", "unknown"),
+            },
+            "expires_at": m["expires_at"],
+            "size_vram": 0,
+        })
+
+    return {"models": formatted}
