@@ -8,282 +8,26 @@ from jinja2.sandbox import ImmutableSandboxedEnvironment
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
+from llama_cpp import LlamaGrammar
 from tllama.schemas.ollama import OllamaChatRequest, OllamaGenerateRequest
 from tllama.backend import model_manager
+
+from tllama.helpers.common import (
+    get_iso_time,
+    normalize_stop,
+    normalize_max_tokens_from_options,
+    resolve_think_flag,
+    estimate_completion_prompt_eval_count,
+)
+from tllama.helpers.prompt_render import (
+    render_chat_prompt_with_explicit_think,
+    render_generate_prompt,
+)
 
 router = APIRouter(
     prefix="/api",
     tags=["Ollama API"]
 )
-
-
-def get_iso_time():
-    """Ollama wants specific time format."""
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _normalize_stop(value) -> list[str]:
-    if value is None:
-        return []
-    if isinstance(value, str):
-        value = [value]
-    if not isinstance(value, list):
-        return []
-    return [s for s in value if isinstance(s, str) and s != ""]
-
-
-def _normalize_max_tokens(opts: dict):
-    num_predict = opts.get("num_predict", None)
-
-    if num_predict is None:
-        return None
-
-    if isinstance(num_predict, int) and num_predict <= 0:
-        return None
-
-    return num_predict
-
-
-def _resolve_think_flag(request) -> bool | str | None:
-    if getattr(request, "think", None) is not None:
-        return request.think
-
-    options = getattr(request, "options", {}) or {}
-    opt_think = options.get("think")
-
-    if isinstance(opt_think, (bool, str)):
-        return opt_think
-
-    return None
-
-
-def _render_prompt_with_explicit_think(
-    llm,
-    metadata_info: dict,
-    request: OllamaChatRequest,
-    think_enabled: bool,
-    user_stop: list[str],
-):
-    template = metadata_info.get("template")
-    if not template:
-        raise HTTPException(
-            status_code=501,
-            detail="Model template is not available; cannot emulate explicit think mode for this model."
-        )
-
-    bos_id = llm.token_bos()
-    eos_id = llm.token_eos()
-
-    bos_token = llm.detokenize([bos_id]).decode("utf-8", errors="ignore") if bos_id != -1 else ""
-    eos_token = llm.detokenize([eos_id]).decode("utf-8", errors="ignore") if eos_id != -1 else ""
-
-    messages = [{"role": m.role, "content": m.content or ""} for m in request.messages]
-
-    def raise_exception(message: str):
-        raise ValueError(message)
-
-    def strftime_now(fmt: str) -> str:
-        return datetime.now().strftime(fmt)
-
-    context = {
-        # běžné jinja / chat template proměnné
-        "messages": messages,
-        "bos_token": bos_token,
-        "eos_token": eos_token,
-        "add_generation_prompt": True,
-        "tools": [],
-        "functions": None,
-        "function_call": None,
-        "tool_choice": None,
-        "raise_exception": raise_exception,
-        "strftime_now": strftime_now,
-
-        # think přepínače
-        "enable_thinking": think_enabled,
-        "thinking": think_enabled,
-
-        # aliasy kvůli kompatibilitě s různými templaty
-        "Messages": messages,
-        "Tools": [],
-        "Response": "",
-        "Think": think_enabled,
-        "ThinkLevel": "",
-        "IsThinkSet": True,
-    }
-
-    try:
-        env = ImmutableSandboxedEnvironment(
-            loader=jinja2.BaseLoader(),
-            trim_blocks=True,
-            lstrip_blocks=True,
-            undefined=jinja2.ChainableUndefined,
-        )
-        tmpl = env.from_string(template)
-        prompt = tmpl.render(**context)
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"explicit think template render failed: {type(e).__name__}: {e}"
-        )
-
-    stop = [
-        s for s in (user_stop or [])
-        if isinstance(s, str) and s != ""
-    ]
-
-    # eos token přidávej jen když fakt není prázdný
-    if eos_token:
-        if eos_token not in stop:
-            stop.append(eos_token)
-
-    return prompt, stop
-
-
-def _estimate_completion_prompt_eval_count(llm, prompt: str) -> int:
-    bos_token_id = llm.token_bos()
-    eos_token_id = llm.token_eos()
-
-    try:
-        add_bos = bool(llm._model.add_bos_token()) and bos_token_id != -1
-    except Exception:
-        add_bos = bos_token_id != -1
-
-    try:
-        add_eos = bool(llm._model.add_eos_token()) and eos_token_id != -1
-    except Exception:
-        add_eos = eos_token_id != -1
-
-    prompt_tokens = llm.tokenize(
-        prompt.encode("utf-8"),
-        add_bos=False,
-        special=True,
-    )
-
-    return len(prompt_tokens) + (1 if add_bos else 0) + (1 if add_eos else 0)
-
-
-def _render_generate_prompt_with_explicit_think(
-    llm,
-    metadata_info: dict,
-    request: OllamaGenerateRequest,
-    full_prompt: str,
-    think_value: bool | str,
-):
-    template = getattr(request, "template", None) or metadata_info.get("template")
-    if not template:
-        raise HTTPException(
-            status_code=501,
-            detail="Model template is not available; cannot emulate generate think for this model."
-        )
-
-    bos_id = llm.token_bos()
-    eos_id = llm.token_eos()
-
-    bos_token = llm.detokenize([bos_id]).decode("utf-8", errors="ignore") if bos_id != -1 else ""
-    eos_token = llm.detokenize([eos_id]).decode("utf-8", errors="ignore") if eos_id != -1 else ""
-
-    think_enabled = think_value is not False
-    think_level = think_value if isinstance(think_value, str) else ""
-
-    context = {
-        "prompt": full_prompt,
-        "messages": [{"role": "user", "content": full_prompt}],
-        "bos_token": bos_token,
-        "eos_token": eos_token,
-        "add_generation_prompt": True,
-        "enable_thinking": think_enabled,
-        "thinking": think_enabled,
-
-        "Messages": [{"role": "user", "content": full_prompt}],
-        "Tools": [],
-        "Response": "",
-        "Think": think_enabled,
-        "ThinkLevel": think_level,
-        "IsThinkSet": True,
-    }
-
-    try:
-        env = ImmutableSandboxedEnvironment(
-            loader=jinja2.BaseLoader(),
-            trim_blocks=True,
-            lstrip_blocks=True,
-            undefined=jinja2.ChainableUndefined,
-        )
-        tmpl = env.from_string(template)
-        prompt = tmpl.render(**context)
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"generate think template render failed: {type(e).__name__}: {e}"
-        )
-
-    stop = _normalize_stop(request.options.get("stop"))
-    if eos_token and eos_token not in stop:
-        stop.append(eos_token)
-
-    return prompt, stop
-
-
-def _render_generate_prompt(
-    llm,
-    metadata_info: dict,
-    request: OllamaGenerateRequest,
-    full_prompt: str,
-    explicit_think: bool | str | None,
-):
-    template = getattr(request, "template", None) or metadata_info.get("template")
-    if not template:
-        raise HTTPException(
-            status_code=501,
-            detail="Model template is not available; cannot render generate prompt for this model."
-        )
-
-    bos_id = llm.token_bos()
-    eos_id = llm.token_eos()
-
-    bos_token = llm.detokenize([bos_id]).decode("utf-8", errors="ignore") if bos_id != -1 else ""
-    eos_token = llm.detokenize([eos_id]).decode("utf-8", errors="ignore") if eos_id != -1 else ""
-
-    think_enabled = explicit_think is not False if explicit_think is not None else True
-    think_level = explicit_think if isinstance(explicit_think, str) else ""
-
-    context = {
-        "prompt": full_prompt,
-        "messages": [{"role": "user", "content": full_prompt}],
-        "bos_token": bos_token,
-        "eos_token": eos_token,
-        "add_generation_prompt": True,
-        "enable_thinking": think_enabled,
-        "thinking": think_enabled,
-
-        "Messages": [{"role": "user", "content": full_prompt}],
-        "Tools": [],
-        "Response": "",
-        "Think": think_enabled,
-        "ThinkLevel": think_level,
-        "IsThinkSet": explicit_think is not None,
-    }
-
-    try:
-        env = ImmutableSandboxedEnvironment(
-            loader=jinja2.BaseLoader(),
-            trim_blocks=True,
-            lstrip_blocks=True,
-            undefined=jinja2.ChainableUndefined,
-        )
-        tmpl = env.from_string(template)
-        prompt = tmpl.render(**context)
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"generate template render failed: {type(e).__name__}: {e}"
-        )
-
-    stop = _normalize_stop(request.options.get("stop"))
-    if eos_token and eos_token not in stop:
-        stop.append(eos_token)
-
-    return prompt, stop
 
 
 @router.get("/version")
@@ -330,11 +74,13 @@ async def ollama_chat(request: OllamaChatRequest):
     metadata_info = model_manager.get_model_metadata(request.model) or {}
 
     opts = request.options or {}
-    explicit_think = _resolve_think_flag(request)
-    user_stop = _normalize_stop(opts.get("stop"))
+    explicit_think = resolve_think_flag(request)
+    user_stop = normalize_stop(opts.get("stop"))
+
+    messages = [{"role": m.role, "content": m.content} for m in request.messages]
 
     base_gen_params = {
-        "max_tokens": _normalize_max_tokens(opts),
+        "max_tokens": normalize_max_tokens_from_options(opts),
         "temperature": opts.get("temperature", 0.8),
         "top_p": opts.get("top_p", 0.9),
     }
@@ -346,15 +92,15 @@ async def ollama_chat(request: OllamaChatRequest):
 
     # think=false => explicitní render promptu
     if explicit_think is False:
-        full_prompt, stop = _render_prompt_with_explicit_think(
+        full_prompt, stop = render_chat_prompt_with_explicit_think(
             llm=llm,
             metadata_info=metadata_info,
-            request=request,
+            messages=messages,
             think_enabled=explicit_think,
-            user_stop=user_stop
+            user_stop=user_stop,
         )
 
-        prompt_eval_count = _estimate_completion_prompt_eval_count(llm, full_prompt)
+        prompt_eval_count = estimate_completion_prompt_eval_count(llm, full_prompt)
 
         gen_params = {
             **base_gen_params,
@@ -423,7 +169,6 @@ async def ollama_chat(request: OllamaChatRequest):
         }
 
     # default / think=true => původní fungující chat path
-    messages = [{"role": m.role, "content": m.content} for m in request.messages]
 
     gen_params = {
         **base_gen_params,
@@ -505,8 +250,8 @@ async def ollama_generate(request: OllamaGenerateRequest):
         return response_data
 
     opts = request.options or {}
-    explicit_think = _resolve_think_flag(request)
-    user_stop = _normalize_stop(opts.get("stop"))
+    explicit_think = resolve_think_flag(request)
+    user_stop = normalize_stop(opts.get("stop"))
     is_raw = bool(getattr(request, "raw", False))
     has_template_override = bool(getattr(request, "template", None))
 
@@ -519,7 +264,7 @@ async def ollama_generate(request: OllamaGenerateRequest):
             full_prompt = f"{request.system}\n\n{request.prompt}"
 
     generation_kwargs = {
-        "max_tokens": _normalize_max_tokens(opts),
+        "max_tokens": normalize_max_tokens_from_options(opts),
         "temperature": opts.get("temperature", 0.8),
         "top_p": opts.get("top_p", 0.9),
         "echo": False,
@@ -528,9 +273,13 @@ async def ollama_generate(request: OllamaGenerateRequest):
     # Ollama supports "json" or a JSON schema object
     request_format = getattr(request, "format", None)
     if request_format == "json":
-        generation_kwargs["response_format"] = {"type": "json_object"}
+        generation_kwargs["grammar"] = LlamaGrammar.from_json_schema(
+            json.dumps({"type": "object"})
+        )
     elif isinstance(request_format, dict):
-        generation_kwargs["response_format"] = request_format
+        generation_kwargs["grammar"] = LlamaGrammar.from_json_schema(
+            json.dumps(request_format)
+        )
 
     start_time = time.time_ns()
 
@@ -549,7 +298,7 @@ async def ollama_generate(request: OllamaGenerateRequest):
 
     # 1) RAW branch
     if is_raw:
-        prompt_eval_count = _estimate_completion_prompt_eval_count(llm, full_prompt)
+        prompt_eval_count = estimate_completion_prompt_eval_count(llm, full_prompt)
 
         if request.stream:
             async def generate_stream():
@@ -617,7 +366,7 @@ async def ollama_generate(request: OllamaGenerateRequest):
     should_render = explicit_think is not None or has_template_override
 
     if should_render:
-        rendered_prompt, stop = _render_generate_prompt(
+        rendered_prompt, stop = render_generate_prompt(
             llm=llm,
             metadata_info=metadata_info,
             request=request,
@@ -625,7 +374,7 @@ async def ollama_generate(request: OllamaGenerateRequest):
             explicit_think=explicit_think,
         )
 
-        prompt_eval_count = _estimate_completion_prompt_eval_count(llm, rendered_prompt)
+        prompt_eval_count = estimate_completion_prompt_eval_count(llm, rendered_prompt)
 
         # explicit think=true / "low|medium|high" -> separate thinking where possible
         if explicit_think not in (None, False):
@@ -770,7 +519,7 @@ async def ollama_generate(request: OllamaGenerateRequest):
         }
 
     # 3) Default plain completion branch
-    prompt_eval_count = _estimate_completion_prompt_eval_count(llm, full_prompt)
+    prompt_eval_count = estimate_completion_prompt_eval_count(llm, full_prompt)
 
     if request.stream:
         async def generate_stream():

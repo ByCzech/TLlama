@@ -6,59 +6,23 @@ from fastapi.responses import StreamingResponse
 from tllama.schemas.openai import ChatCompletionRequest
 from tllama.backend import model_manager
 
-from tllama.routers.ollama import (
-    _normalize_max_tokens, _normalize_stop, _render_prompt_with_explicit_think,
-    _estimate_completion_prompt_eval_count)
+from tllama.helpers.common import (
+    get_iso_time,
+    normalize_stop,
+    normalize_max_tokens_from_options,
+    resolve_think_flag,
+    estimate_completion_prompt_eval_count,
+)
+from tllama.helpers.prompt_render import (
+    render_chat_prompt_with_explicit_think,
+    render_generate_prompt,
+)
+from tllama.helpers.openai_compat import openai_reasoning_effort_to_explicit_think, build_openai_chat_messages
 
 router = APIRouter(
     prefix="/v1",
     tags=["OpenAI API"]
 )
-
-
-def _openai_reasoning_effort_to_explicit_think(request) -> bool | None:
-    effort = getattr(request, "reasoning_effort", None)
-
-    # některé klientské struktury mohou mít request.reasoning.effort
-    reasoning_obj = getattr(request, "reasoning", None)
-    if effort is None and reasoning_obj is not None:
-        if isinstance(reasoning_obj, dict):
-            effort = reasoning_obj.get("effort")
-        else:
-            effort = getattr(reasoning_obj, "effort", None)
-
-    if effort is None:
-        return None
-
-    effort = str(effort).strip().lower()
-
-    # bezpečný první krok:
-    # jen "none" mapujeme na think=False
-    if effort == "none":
-        return False
-
-    # ostatní zatím necháme bez explicitního override
-    return None
-
-
-def _build_openai_chat_messages(request) -> list[dict]:
-    messages = []
-    for m in request.messages:
-        content = m.content
-
-        # pokud schema někdy používá content parts, zjednoduš na text
-        if isinstance(content, list):
-            parts = []
-            for part in content:
-                if isinstance(part, dict) and part.get("type") == "text":
-                    parts.append(part.get("text", ""))
-            content = "".join(parts)
-
-        messages.append({
-            "role": m.role,
-            "content": content if isinstance(content, str) else ""
-        })
-    return messages
 
 
 @router.get("/models")
@@ -83,10 +47,10 @@ async def chat_completions(request: ChatCompletionRequest):
     llm = await model_manager.get_model(request.model)
     metadata_info = model_manager.get_model_metadata(request.model) or {}
 
-    messages = _build_openai_chat_messages(request)
-    explicit_think = _openai_reasoning_effort_to_explicit_think(request)
+    messages = build_openai_chat_messages(request)
+    explicit_think = openai_reasoning_effort_to_explicit_think(request)
 
-    max_tokens = _normalize_max_tokens({
+    max_tokens = normalize_max_tokens_from_options({
         "num_predict": getattr(request, "max_tokens", None)
     })
 
@@ -94,7 +58,7 @@ async def chat_completions(request: ChatCompletionRequest):
     top_p = getattr(request, "top_p", None)
     stream = bool(getattr(request, "stream", False))
     response_format = getattr(request, "response_format", None)
-    stop = _normalize_stop(getattr(request, "stop", None))
+    user_stop = normalize_stop(getattr(request, "stop", None))
 
     gen_params = {
         "max_tokens": max_tokens,
@@ -121,20 +85,15 @@ async def chat_completions(request: ChatCompletionRequest):
         for msg in request.messages:
             shim_messages.append(msg)
 
-        shim_request = _ChatReqShim(
-            messages=shim_messages,
-            options={"stop": stop}
-        )
-
-        full_prompt, rendered_stop = _render_prompt_with_explicit_think(
+        full_prompt, rendered_stop = render_chat_prompt_with_explicit_think(
             llm=llm,
             metadata_info=metadata_info,
-            request=shim_request,
-            think_enabled=False,
-            user_stop=stop,
+            messages=messages,
+            think_enabled=explicit_think,
+            user_stop=user_stop,
         )
 
-        prompt_eval_count = _estimate_completion_prompt_eval_count(llm, full_prompt)
+        prompt_eval_count = estimate_completion_prompt_eval_count(llm, full_prompt)
 
         if stream:
             async def generate():
@@ -224,7 +183,7 @@ async def chat_completions(request: ChatCompletionRequest):
             response_iter = llm.create_chat_completion(
                 messages=messages,
                 stream=True,
-                stop=stop,
+                stop=user_stop,
                 **gen_params
             )
 
@@ -238,7 +197,7 @@ async def chat_completions(request: ChatCompletionRequest):
     response = llm.create_chat_completion(
         messages=messages,
         stream=False,
-        stop=stop,
+        stop=user_stop,
         **gen_params
     )
 
