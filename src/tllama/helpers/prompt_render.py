@@ -2,7 +2,7 @@ import jinja2
 from jinja2.sandbox import ImmutableSandboxedEnvironment
 from fastapi import HTTPException
 from tllama.schemas.ollama import OllamaChatRequest, OllamaGenerateRequest
-from tllama.helpers.common import normalize_stop
+from tllama.helpers.common import normalize_stop, strftime_now
 
 
 def _get_bos_eos_tokens(llm):
@@ -58,6 +58,7 @@ def render_chat_prompt_with_explicit_think(
             lstrip_blocks=True,
             undefined=jinja2.ChainableUndefined,
         )
+        env.globals["strftime_now"] = strftime_now
         tmpl = env.from_string(template)
         prompt = tmpl.render(**context)
     except Exception as e:
@@ -120,6 +121,7 @@ def render_generate_prompt(
             lstrip_blocks=True,
             undefined=jinja2.ChainableUndefined,
         )
+        env.globals["strftime_now"] = strftime_now
         tmpl = env.from_string(template)
         prompt = tmpl.render(**context)
     except Exception as e:

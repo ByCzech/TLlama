@@ -5,7 +5,11 @@ from llama_cpp import LlamaGrammar
 
 def get_iso_time():
     """Ollama wants specific time format."""
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(timezone.sshutc).isoformat()
+
+
+def strftime_now(fmt="%Y-%m-%d %H:%M:%S", *args, **kwargs):
+    return datetime.now(timezone.utc).strftime(fmt)
 
 
 def normalize_stop(value) -> list[str]:
