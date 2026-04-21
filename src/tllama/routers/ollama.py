@@ -19,6 +19,7 @@ from tllama.helpers.common import (
     normalize_message_content,
     resolve_think_flag,
     estimate_completion_prompt_eval_count,
+    build_completion_format_kwargs
 )
 from tllama.helpers.prompt_render import (
     render_chat_prompt_with_explicit_think,
@@ -85,6 +86,16 @@ async def ollama_chat(request: OllamaChatRequest):
 
     explicit_think = resolve_think_flag(request)
     user_stop = normalize_stop(opts.get("stop"))
+    request_format = getattr(request, "format", None)
+    has_structured_format = request_format is not None
+
+    if has_structured_format and explicit_think not in (None, False):
+        raise HTTPException(
+            status_code=400,
+            detail="format cannot be combined with think=true in /api/chat. Structured output uses completion path with thinking disabled."
+        )
+
+    force_completion_path = (explicit_think is False) or has_structured_format
 
     messages = [
         {
@@ -105,17 +116,14 @@ async def ollama_chat(request: OllamaChatRequest):
         "top_p": opts.get("top_p", 0.9),
     }
 
-    if request.format == "json":
-        base_gen_params["response_format"] = {"type": "json_object"}
-
     start_time = time.time_ns()
 
-    if explicit_think is False:
+    if force_completion_path:
         full_prompt, stop = render_chat_prompt_with_explicit_think(
             llm=llm,
             metadata_info=metadata_info,
             messages=messages,
-            think_enabled=explicit_think,
+            think_enabled=False if has_structured_format else explicit_think,
             user_stop=user_stop,
         )
 
@@ -125,6 +133,11 @@ async def ollama_chat(request: OllamaChatRequest):
             **base_gen_params,
             "stop": stop,
         }
+
+        try:
+            gen_params.update(build_completion_format_kwargs(request_format))
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid format schema: {e}")
 
         if request.stream:
             def chat_stream_generator():
@@ -224,7 +237,7 @@ async def ollama_chat(request: OllamaChatRequest):
                 'model': request.model,
                 'created_at': datetime.now(timezone.utc).isoformat(),
                 'done': True,
-                "done_reason": finish_reason,
+                'done_reason': finish_reason,
                 'total_duration': end_time - start_time,
                 'load_duration': 0,
                 'prompt_eval_count': None,

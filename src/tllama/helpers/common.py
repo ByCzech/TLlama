@@ -1,4 +1,6 @@
+import json
 from datetime import datetime, timezone
+from llama_cpp import LlamaGrammar
 
 
 def get_iso_time():
@@ -87,3 +89,27 @@ def estimate_completion_prompt_eval_count(llm, prompt: str) -> int:
     )
 
     return len(prompt_tokens) + (1 if add_bos else 0) + (1 if add_eos else 0)
+
+
+def build_completion_format_kwargs(request_format):
+    """
+    Completion path uses grammar, not response_format.
+    Supports:
+    - format == "json"
+    - format == {...json schema...}
+    """
+    if request_format == "json":
+        return {
+            "grammar": LlamaGrammar.from_json_schema(
+                json.dumps({"type": "object"})
+            )
+        }
+
+    if isinstance(request_format, dict):
+        return {
+            "grammar": LlamaGrammar.from_json_schema(
+                json.dumps(request_format)
+            )
+        }
+
+    return {}
