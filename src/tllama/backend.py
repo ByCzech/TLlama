@@ -12,24 +12,6 @@ from datetime import datetime, timezone, timedelta
 from tllama.helpers.llama_stats import load_llama_with_captured_stats
 
 
-def _now_iso():
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _future_iso(minutes: int = 5):
-    return (datetime.now(timezone.utc) + timedelta(minutes=minutes)).isoformat()
-
-
-def _normalize_num_ctx(value, default: int = 2048) -> int:
-    if value is None:
-        return default
-    try:
-        value = int(value)
-    except (TypeError, ValueError):
-        return default
-    return value if value > 0 else default
-
-
 class ModelManager:
     def __init__(self, models_dir: str = "./models"):
         self.models: Dict[str, Llama] = {}
@@ -40,6 +22,71 @@ class ModelManager:
 
     def _now_iso(self) -> str:
         return datetime.now(timezone.utc).isoformat()
+
+    def _future_iso(self, seconds: int) -> str:
+        return (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()
+
+    def _normalize_num_ctx(self, value, default: int = 0) -> int:
+        if value is None:
+            return default
+        try:
+            value = int(value)
+        except (TypeError, ValueError):
+            return default
+        return value if value > 0 else default
+
+
+    def _normalize_keep_alive(self, keep_alive: str | int | float | None) -> int | None:
+        """Normalize Ollama-style keep_alive to seconds.
+
+        Returns:
+            int:
+                Number of seconds for finite keep-alive values.
+            0:
+                Immediate unload semantics.
+            None:
+                Infinite keep-alive.
+        """
+        if keep_alive is None:
+            return 300
+
+        if isinstance(keep_alive, (int, float)):
+            if keep_alive < 0:
+                return None
+            return int(keep_alive)
+
+        value = str(keep_alive).strip().lower()
+
+        if value == "":
+            return 300
+
+        try:
+            numeric = float(value)
+            if numeric < 0:
+                return None
+            return int(numeric)
+        except ValueError:
+            pass
+
+        multipliers = {
+            "s": 1,
+            "m": 60,
+            "h": 3600,
+        }
+
+        suffix = value[-1]
+        if suffix in multipliers:
+            try:
+                numeric = float(value[:-1])
+            except ValueError:
+                raise ValueError(f"Invalid keep_alive value: {keep_alive}")
+
+            if numeric < 0:
+                return None
+
+            return int(numeric * multipliers[suffix])
+
+        raise ValueError(f"Invalid keep_alive value: {keep_alive}")
 
     def _build_model_file_info(self, model_name: str) -> Optional[Dict[str, Any]]:
         model_path = self.models_dir / f"{model_name}.gguf"
@@ -63,26 +110,30 @@ class ModelManager:
             "sha256": hash_sha256.hexdigest(),
         }
 
-    async def get_model(self, model_name: str, num_ctx: int | None = None) -> Llama:
+    async def get_model(
+        self,
+        model_name: str,
+        num_ctx: int | None = None,
+        keep_alive: str | int | float | None = "5m",
+    ) -> Llama:
         async with self._lock:
             model_info = self._build_model_file_info(model_name)
             if not model_info:
                 raise FileNotFoundError(f"Model '{model_name}' not found in {self.models_dir}")
 
             model_path = model_info["path"]
-            requested_n_ctx = _normalize_num_ctx(num_ctx, default=0)
+            requested_n_ctx = self._normalize_num_ctx(num_ctx, default=0)
+            keep_alive_seconds = self._normalize_keep_alive(keep_alive)
 
-            # už je loadnutý?
+            # Already loaded?
             if model_name in self.models:
                 current_n_ctx = self.active_models.get(model_name, {}).get("n_ctx")
 
-                # pokud klient výslovně chce jiný num_ctx, reload
+                # Klient want different num_ctx -> reload
                 if current_n_ctx != requested_n_ctx:
-                    del self.models[model_name]
-                    if model_name in self.active_models:
-                        del self.active_models[model_name]
+                    self.unload_model(model_name)
 
-            # po případném unloadu znovu zkontroluj
+            # After direct unload, check it again
             if model_name not in self.models:
                 print(f"DEBUG: Dynamic loading of model {model_name} with n_ctx={requested_n_ctx}...")
 
@@ -96,6 +147,12 @@ class ModelManager:
                 )
 
                 actual_n_ctx = llm.n_ctx()
+                now_iso = self._now_iso()
+
+                if keep_alive_seconds is None:
+                    expires_at = None
+                else:
+                    expires_at = self._future_iso(keep_alive_seconds)
 
                 self.models[model_name] = llm
                 self.active_models[model_name] = {
@@ -106,9 +163,10 @@ class ModelManager:
                     "size": model_info["size"],
                     "mtime": model_info["mtime"],
                     "sha256": model_info["sha256"],
-                    "loaded_at": _now_iso(),
-                    "last_used_at": _now_iso(),
-                    "expires_at": _future_iso(5),
+                    "loaded_at": now_iso,
+                    "last_used_at": now_iso,
+                    "expires_at": expires_at,
+                    "keep_alive": keep_alive_seconds,
                     "n_ctx": actual_n_ctx,
                     "n_gpu_layers": -1,
                     "use_mmap": False,
@@ -129,8 +187,16 @@ class ModelManager:
                     "cpu_rs_mib": load_stats.get("cpu_rs_mib", 0.0)
                 }
             else:
-                self.active_models[model_name]["last_used_at"] = _now_iso()
-                self.active_models[model_name]["expires_at"] = _future_iso(5)
+                now_iso = self._now_iso()
+
+                if keep_alive_seconds is None:
+                    expires_at = None
+                else:
+                    expires_at = self._future_iso(keep_alive_seconds)
+
+                self.active_models[model_name]["last_used_at"] = now_iso
+                self.active_models[model_name]["expires_at"] = expires_at
+                self.active_models[model_name]["keep_alive"] = keep_alive_seconds
 
             return self.models[model_name]
 
