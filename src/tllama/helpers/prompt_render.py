@@ -130,7 +130,7 @@ def render_generate_prompt(
             detail=f"generate template render failed: {type(e).__name__}: {e}"
         )
 
-    stop = normalize_stop(request.options.get("stop"))
+    stop = normalize_stop((request.options or {}).get("stop"))
     if eos_token and eos_token not in stop:
         stop.append(eos_token)
 
