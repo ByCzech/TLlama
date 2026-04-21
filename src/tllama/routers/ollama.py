@@ -110,7 +110,6 @@ async def ollama_chat(request: OllamaChatRequest):
 
     start_time = time.time_ns()
 
-    # think=false => explicitní render promptu
     if explicit_think is False:
         full_prompt, stop = render_chat_prompt_with_explicit_think(
             llm=llm,
@@ -128,7 +127,7 @@ async def ollama_chat(request: OllamaChatRequest):
         }
 
         if request.stream:
-            async def chat_stream_generator():
+            def chat_stream_generator():
                 response_iter = llm.create_completion(
                     prompt=full_prompt,
                     stream=True,
@@ -184,11 +183,9 @@ async def ollama_chat(request: OllamaChatRequest):
             "done": True,
             "done_reason": response["choices"][0].get("finish_reason"),
             "total_duration": end_time - start_time,
-            "prompt_eval_count": response.get("usage", {}).get("prompt_tokens"),
+            "prompt_eval_count": response.get("usage", {}).get("prompt_tokens", prompt_eval_count),
             "eval_count": response.get("usage", {}).get("completion_tokens")
         }
-
-    # default / think=true => původní fungující chat path
 
     gen_params = {
         **base_gen_params,
@@ -196,29 +193,38 @@ async def ollama_chat(request: OllamaChatRequest):
     }
 
     if request.stream:
-        async def chat_stream_generator():
+        def chat_stream_generator():
             response_iter = llm.create_chat_completion(
                 messages=messages,
                 stream=True,
                 **gen_params
             )
 
-            for chunk in response_iter:
-                delta = chunk["choices"][0].get("delta", {})
-                content = delta.get("content", "")
+            finish_reason = None
 
-                yield f"{json.dumps({
-                    'model': request.model,
-                    'created_at': datetime.now(timezone.utc).isoformat(),
-                    'message': {'role': 'assistant', 'content': content},
-                    'done': False
-                })}\n"
+            for chunk in response_iter:
+                choice = chunk["choices"][0]
+                delta = choice.get("delta", {})
+                content = delta.get("content", "")
+                chunk_finish_reason = choice.get("finish_reason")
+
+                if chunk_finish_reason is not None:
+                    finish_reason = chunk_finish_reason
+
+                if content:
+                    yield f"{json.dumps({
+                        'model': request.model,
+                        'created_at': datetime.now(timezone.utc).isoformat(),
+                        'message': {'role': 'assistant', 'content': content},
+                        'done': False
+                    })}\n"
 
             end_time = time.time_ns()
             yield f"{json.dumps({
                 'model': request.model,
                 'created_at': datetime.now(timezone.utc).isoformat(),
                 'done': True,
+                "done_reason": finish_reason,
                 'total_duration': end_time - start_time,
                 'load_duration': 0,
                 'prompt_eval_count': None,
@@ -239,6 +245,7 @@ async def ollama_chat(request: OllamaChatRequest):
         "created_at": datetime.now(timezone.utc).isoformat(),
         "message": response["choices"][0]["message"],
         "done": True,
+        "done_reason": response["choices"][0].get("finish_reason"),
         "total_duration": end_time - start_time,
         "prompt_eval_count": response.get("usage", {}).get("prompt_tokens"),
         "eval_count": response.get("usage", {}).get("completion_tokens")
