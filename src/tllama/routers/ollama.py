@@ -17,7 +17,6 @@ from tllama.helpers.common import (
     normalize_stop,
     normalize_max_tokens_from_options,
     normalize_message_content,
-    resolve_think_flag,
     estimate_completion_prompt_eval_count,
     build_completion_format_kwargs
 )
@@ -84,7 +83,7 @@ async def ollama_chat(request: OllamaChatRequest):
     )
     metadata_info = model_manager.get_model_metadata(request.model) or {}
 
-    explicit_think = resolve_think_flag(request)
+    explicit_think = None
     user_stop = normalize_stop(opts.get("stop"))
     request_format = getattr(request, "format", None)
     has_structured_format = request_format is not None
@@ -267,45 +266,76 @@ async def ollama_chat(request: OllamaChatRequest):
 
 @router.post("/generate")
 async def ollama_generate(request: OllamaGenerateRequest):
-    prompt_text = request.prompt or ""
+    """Handle Ollama-compatible /generate requests using the llama.cpp completion API.
 
+    Returns:
+        dict | StreamingResponse:
+            A standard JSON response for non-stream requests, or NDJSON stream output
+            for stream requests.
+
+    Raises:
+        HTTPException:
+            Raised when model loading fails, the format schema is invalid, template
+            rendering fails, or an unsupported input combination is used.
+    """
     opts = request.options or {}
+
     try:
-        llm = await model_manager.get_model(
-            request.model,
-            num_ctx=opts.get("num_ctx")
-        )
+        keep_alive_seconds = model_manager._normalize_keep_alive(request.keep_alive)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error loading model: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Invalid keep_alive value: {str(e)}")
 
-    metadata_info = model_manager.get_model_metadata(request.model) or {}
+    request_format = getattr(request, "format", None)
+    is_raw = request.raw is True
+    user_stop = normalize_stop(opts.get("stop"))
+    suffix_text = request.suffix or None
 
-    if not prompt_text.strip():
-        response_data = {
+    if is_raw and (
+        request.template is not None
+        or request.system is not None
+        or request.context is not None
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="raw mode does not support template, system, or context"
+        )
+
+    if not request.prompt:
+        if keep_alive_seconds == 0:
+            model_manager.unload_model(request.model)
+            return {
+                "model": request.model,
+                "created_at": get_iso_time(),
+                "response": "",
+                "done": True,
+                "done_reason": "unload"
+            }
+
+        try:
+            await model_manager.get_model(
+                request.model,
+                num_ctx=opts.get("num_ctx"),
+                keep_alive=request.keep_alive,
+            )
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Error loading model: {str(e)}")
+
+        return {
             "model": request.model,
             "created_at": get_iso_time(),
             "response": "",
-            "done": True
+            "done": True,
+            "done_reason": "load"
         }
 
-        if request.stream:
-            async def preload_stream():
-                yield f"{json.dumps(response_data)}\n"
-            return StreamingResponse(preload_stream(), media_type="application/x-ndjson")
-
-        return response_data
-
-    explicit_think = resolve_think_flag(request)
-    user_stop = normalize_stop(opts.get("stop"))
-    is_raw = bool(getattr(request, "raw", False))
-    has_template_override = bool(getattr(request, "template", None))
-
-    if is_raw:
-        full_prompt = prompt_text
-    else:
-        full_prompt = prompt_text
-        if request.system:
-            full_prompt = f"{request.system}\n\n{prompt_text}"
+    try:
+        llm = await model_manager.get_model(
+            request.model,
+            num_ctx=opts.get("num_ctx"),
+            keep_alive=request.keep_alive,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error loading model: {str(e)}")
 
     generation_kwargs = {
         "max_tokens": normalize_max_tokens_from_options(opts),
@@ -314,321 +344,107 @@ async def ollama_generate(request: OllamaGenerateRequest):
         "echo": False,
     }
 
-    request_format = getattr(request, "format", None)
     try:
-        if request_format == "json":
-            generation_kwargs["grammar"] = LlamaGrammar.from_json_schema(
-                json.dumps({"type": "object"})
-            )
-        elif isinstance(request_format, dict):
-            generation_kwargs["grammar"] = LlamaGrammar.from_json_schema(
-                json.dumps(request_format)
-            )
+        generation_kwargs.update(build_completion_format_kwargs(request_format))
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid format schema: {e}")
 
-    start_time = time.time_ns()
-
-    if is_raw and explicit_think is not None:
-        raise HTTPException(
-            status_code=400,
-            detail="raw=true cannot be combined with explicit think in this backend, because think control is implemented through prompt templating."
-        )
-
     if is_raw:
-        prompt_eval_count = estimate_completion_prompt_eval_count(llm, full_prompt)
-
-        if request.stream:
-            def generate_stream():
-                response_iter = llm.create_completion(
-                    prompt=full_prompt,
-                    stream=True,
-                    stop=user_stop,
-                    **generation_kwargs
-                )
-
-                finish_reason = None
-
-                for chunk in response_iter:
-                    choice = chunk["choices"][0]
-                    text = choice.get("text", "")
-                    chunk_finish_reason = choice.get("finish_reason")
-
-                    if chunk_finish_reason is not None:
-                        finish_reason = chunk_finish_reason
-
-                    if text:
-                        yield f"{json.dumps({
-                            'model': request.model,
-                            'created_at': get_iso_time(),
-                            'response': text,
-                            'done': False
-                        })}\n"
-
-                end_time = time.time_ns()
-                yield f"{json.dumps({
-                    'model': request.model,
-                    'created_at': get_iso_time(),
-                    'done': True,
-                    'done_reason': finish_reason,
-                    'total_duration': end_time - start_time,
-                    'prompt_eval_count': prompt_eval_count,
-                    'context': []
-                })}\n"
-
-            return StreamingResponse(generate_stream(), media_type="application/x-ndjson")
-
-        response = llm.create_completion(
-            prompt=full_prompt,
-            stream=False,
-            stop=user_stop,
-            **generation_kwargs
-        )
-        end_time = time.time_ns()
-
-        return {
-            "model": request.model,
-            "created_at": get_iso_time(),
-            "response": response["choices"][0].get("text", ""),
-            "done": True,
-            "done_reason": response["choices"][0].get("finish_reason"),
-            "total_duration": end_time - start_time,
-            "prompt_eval_count": response.get("usage", {}).get("prompt_tokens", prompt_eval_count),
-            "eval_count": response.get("usage", {}).get("completion_tokens"),
-            "context": []
-        }
-
-    should_render = explicit_think is not None or has_template_override
-
-    if should_render:
-        rendered_prompt, stop = render_generate_prompt(
+        prompt_for_completion = request.prompt or ""
+        stop_tokens = user_stop
+    else:
+        prompt_for_completion, stop_tokens = render_generate_prompt(
             llm=llm,
-            metadata_info=metadata_info,
+            metadata_info=model_manager.get_model_metadata(request.model) or {},
             request=request,
-            full_prompt=full_prompt,
-            explicit_think=explicit_think,
         )
 
-        prompt_eval_count = estimate_completion_prompt_eval_count(llm, rendered_prompt)
+    prompt_eval_count = estimate_completion_prompt_eval_count(llm, prompt_for_completion)
 
-        fmt = detect_reasoning_format(request.model, metadata_info)
-
-        if explicit_think not in (None, False):
-            if request.stream:
-                def generate_stream():
-                    response_iter = llm.create_completion(
-                        prompt=rendered_prompt,
-                        stream=True,
-                        stop=stop,
-                        **generation_kwargs
-                    )
-
-                    finish_reason = None
-
-                    splitter = ReasoningStreamSplitter(fmt)
-
-                    for chunk in response_iter:
-                        choice = chunk["choices"][0]
-                        text = choice.get("text", "")
-                        chunk_finish_reason = choice.get("finish_reason")
-
-                        if chunk_finish_reason is not None:
-                            finish_reason = chunk_finish_reason
-
-                        for kind, piece in splitter.push(text):
-                            if kind == "thinking":
-                                yield f"{json.dumps({
-                                    'model': request.model,
-                                    'created_at': get_iso_time(),
-                                    'thinking': piece,
-                                    'done': False
-                                })}\n"
-                            else:
-                                yield f"{json.dumps({
-                                    'model': request.model,
-                                    'created_at': get_iso_time(),
-                                    'response': piece,
-                                    'done': False
-                                })}\n"
-
-                    for kind, piece in splitter.finish():
-                        if kind == "thinking":
-                            yield f"{json.dumps({
-                                'model': request.model,
-                                'created_at': get_iso_time(),
-                                'thinking': piece,
-                                'done': False
-                            })}\n"
-                        else:
-                            yield f"{json.dumps({
-                                'model': request.model,
-                                'created_at': get_iso_time(),
-                                'response': piece,
-                                'done': False
-                            })}\n"
-
-                    end_time = time.time_ns()
-                    yield f"{json.dumps({
-                        'model': request.model,
-                        'created_at': get_iso_time(),
-                        'done': True,
-                        'done_reason': finish_reason,
-                        'total_duration': end_time - start_time,
-                        'prompt_eval_count': prompt_eval_count,
-                        'context': []
-                    })}\n"
-
-                return StreamingResponse(generate_stream(), media_type="application/x-ndjson")
-
-            response = llm.create_completion(
-                prompt=rendered_prompt,
-                stream=False,
-                stop=stop,
-                **generation_kwargs
-            )
-            end_time = time.time_ns()
-
-            full_text = response["choices"][0].get("text", "")
-            thinking_text, response_text = split_full_text_by_reasoning_format(full_text, fmt)
-
-            result = {
-                "model": request.model,
-                "created_at": get_iso_time(),
-                "response": response_text,
-                "done": True,
-                "done_reason": response["choices"][0].get("finish_reason"),
-                "total_duration": end_time - start_time,
-                "prompt_eval_count": response.get("usage", {}).get("prompt_tokens", prompt_eval_count),
-                "eval_count": response.get("usage", {}).get("completion_tokens"),
-                "context": []
-            }
-
-            if thinking_text:
-                result["thinking"] = thinking_text
-
-            return result
-
-        if request.stream:
-            def generate_stream():
-                response_iter = llm.create_completion(
-                    prompt=rendered_prompt,
-                    stream=True,
-                    stop=stop,
-                    **generation_kwargs
-                )
-
-                finish_reason = None
-
-                for chunk in response_iter:
-                    choice = chunk["choices"][0]
-                    text = choice.get("text", "")
-                    chunk_finish_reason = choice.get("finish_reason")
-
-                    if chunk_finish_reason is not None:
-                        finish_reason = chunk_finish_reason
-
-                    if text:
-                        yield f"{json.dumps({
-                            'model': request.model,
-                            'created_at': get_iso_time(),
-                            'response': text,
-                            'done': False
-                        })}\n"
-
-                end_time = time.time_ns()
-                yield f"{json.dumps({
-                    'model': request.model,
-                    'created_at': get_iso_time(),
-                    'done': True,
-                    'done_reason': finish_reason,
-                    'total_duration': end_time - start_time,
-                    'prompt_eval_count': prompt_eval_count,
-                    'context': []
-                })}\n"
-
-            return StreamingResponse(generate_stream(), media_type="application/x-ndjson")
-
-        response = llm.create_completion(
-            prompt=rendered_prompt,
-            stream=False,
-            stop=stop,
-            **generation_kwargs
-        )
-        end_time = time.time_ns()
-
-        return {
-            "model": request.model,
-            "created_at": get_iso_time(),
-            "response": response["choices"][0].get("text", ""),
-            "done": True,
-            "done_reason": response["choices"][0].get("finish_reason"),
-            "total_duration": end_time - start_time,
-            "prompt_eval_count": response.get("usage", {}).get("prompt_tokens", prompt_eval_count),
-            "eval_count": response.get("usage", {}).get("completion_tokens"),
-            "context": []
-        }
-
-    prompt_eval_count = estimate_completion_prompt_eval_count(llm, full_prompt)
+    start_time = time.time_ns()
 
     if request.stream:
         def generate_stream():
             response_iter = llm.create_completion(
-                prompt=full_prompt,
+                prompt=prompt_for_completion,
+                suffix=suffix_text,
                 stream=True,
-                stop=user_stop,
+                stop=stop_tokens,
                 **generation_kwargs
             )
 
             finish_reason = None
+            eval_count = None
 
-            for chunk in response_iter:
-                choice = chunk["choices"][0]
-                text = choice.get("text", "")
-                chunk_finish_reason = choice.get("finish_reason")
+            try:
+                for chunk in response_iter:
+                    choice = chunk["choices"][0]
+                    text = choice.get("text", "")
+                    chunk_finish_reason = choice.get("finish_reason")
 
-                if chunk_finish_reason is not None:
-                    finish_reason = chunk_finish_reason
+                    if chunk_finish_reason is not None:
+                        finish_reason = chunk_finish_reason
 
-                if text:
-                    yield f"{json.dumps({
-                        'model': request.model,
-                        'created_at': get_iso_time(),
-                        'response': text,
-                        'done': False
-                    })}\n"
+                    usage = chunk.get("usage") or {}
+                    if usage.get("completion_tokens") is not None:
+                        eval_count = usage.get("completion_tokens")
 
-            end_time = time.time_ns()
-            yield f"{json.dumps({
-                'model': request.model,
-                'created_at': get_iso_time(),
-                'done': True,
-                'done_reason': finish_reason,
-                'total_duration': end_time - start_time,
-                'prompt_eval_count': prompt_eval_count,
-                'context': []
-            })}\n"
+                    if text:
+                        yield f"{json.dumps({
+                            'model': request.model,
+                            'created_at': get_iso_time(),
+                            'response': text,
+                            'done': False
+                        })}\n"
+
+                end_time = time.time_ns()
+
+                yield f"{json.dumps({
+                    'model': request.model,
+                    'created_at': get_iso_time(),
+                    'done': True,
+                    'done_reason': finish_reason,
+                    'total_duration': end_time - start_time,
+                    'prompt_eval_count': prompt_eval_count,
+                    'eval_count': eval_count,
+                    'context': []
+                })}\n"
+            finally:
+                if keep_alive_seconds == 0:
+                    model_manager.unload_model(request.model)
 
         return StreamingResponse(generate_stream(), media_type="application/x-ndjson")
 
-    response = llm.create_completion(
-        prompt=full_prompt,
-        stream=False,
-        stop=user_stop,
-        **generation_kwargs
-    )
+    try:
+        response = llm.create_completion(
+            prompt=prompt_for_completion,
+            suffix=suffix_text,
+            stream=False,
+            stop=stop_tokens,
+            **generation_kwargs
+        )
+    finally:
+        if keep_alive_seconds == 0:
+            model_manager.unload_model(request.model)
+
     end_time = time.time_ns()
 
-    return {
+    response_text = response["choices"][0].get("text", "")
+    done_reason = response["choices"][0].get("finish_reason")
+
+    result = {
         "model": request.model,
         "created_at": get_iso_time(),
-        "response": response["choices"][0].get("text", ""),
+        "response": response_text,
         "done": True,
-        "done_reason": response["choices"][0].get("finish_reason"),
+        "done_reason": done_reason,
         "total_duration": end_time - start_time,
         "prompt_eval_count": response.get("usage", {}).get("prompt_tokens", prompt_eval_count),
         "eval_count": response.get("usage", {}).get("completion_tokens"),
         "context": []
     }
+
+    return result
 
 
 @router.post("/show")

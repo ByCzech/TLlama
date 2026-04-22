@@ -59,19 +59,6 @@ def normalize_message_content(content) -> str:
     return str(content)
 
 
-def resolve_think_flag(request) -> bool | str | None:
-    if getattr(request, "think", None) is not None:
-        return request.think
-
-    options = getattr(request, "options", {}) or {}
-    opt_think = options.get("think")
-
-    if isinstance(opt_think, (bool, str)):
-        return opt_think
-
-    return None
-
-
 def estimate_completion_prompt_eval_count(llm, prompt: str) -> int:
     bos_token_id = llm.token_bos()
     eos_token_id = llm.token_eos()

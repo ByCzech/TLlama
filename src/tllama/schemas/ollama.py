@@ -1,7 +1,7 @@
 from pydantic import BaseModel, Field, StrictBool, field_validator
 from typing import List, Optional, Any, Dict, Union, Literal
 
-ThinkValue = Optional[Union[bool, Literal["low", "medium", "high"]]]
+ThinkValue = StrictBool | Literal["none", "minimal", "low", "medium", "high", "xhigh",] | None
 FormatValue = Optional[Union[str, Dict[str, Any]]]
 KeepAliveValue = Optional[Union[str, int, float]]
 
