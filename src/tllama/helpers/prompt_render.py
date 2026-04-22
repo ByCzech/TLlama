@@ -24,18 +24,6 @@ def render_chat_prompt_with_explicit_think(
     think_enabled: bool,
     user_stop: list[str],
 ):
-    """Render a completion prompt from a model template and request data.
-
-    Returns:
-        tuple[str, list[str]]:
-            The rendered prompt string and the final stop token list to use for
-            completion generation.
-
-    Raises:
-        HTTPException:
-            Raised when the model template is unavailable or template rendering
-            fails.
-    """
     template = metadata_info.get("template")
     if not template:
         raise HTTPException(
@@ -94,6 +82,18 @@ def render_generate_prompt(
     request,
     mode: Literal["prompt", "messages"] = "prompt",
 ):
+    """Render a completion prompt from a model template and request data.
+
+    Returns:
+        tuple[str, list[str]]:
+            The rendered prompt string and the final stop token list to use for
+            completion generation.
+
+    Raises:
+        HTTPException:
+            Raised when the model template is unavailable or template rendering
+            fails.
+    """
     template = getattr(request, "template", None) or metadata_info.get("template")
     if not template:
         raise HTTPException(
@@ -187,11 +187,13 @@ def render_generate_prompt(
         "preserve_thinking": False,
 
         "Response": "",
-        "IsThinkSet": think_is_set,
-
-        "developer_instructions": developer_instructions,
-        "model_identity": model_identity,
+        "IsThinkSet": think_is_set
     }
+
+    if developer_instructions is not None:
+        context["developer_instructions"] = developer_instructions
+    if model_identity is not None:
+        context["model_identity"] = model_identity
 
     if think_is_set:
         context.update(
@@ -199,10 +201,11 @@ def render_generate_prompt(
                 "enable_thinking": think_enabled,
                 "thinking": think_enabled,
                 "Think": think_enabled,
-                "ThinkLevel": think_level,
-                "reasoning_effort": reasoning_effort,
+                "ThinkLevel": think_level
             }
         )
+        if reasoning_effort is not None:
+            context["reasoning_effort"] = reasoning_effort
 
     def raise_exception(message: str):
         raise ValueError(message)
