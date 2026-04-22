@@ -3,6 +3,7 @@ from typing import List, Optional, Any, Dict, Union, Literal
 
 ThinkValue = Optional[Union[bool, Literal["low", "medium", "high"]]]
 FormatValue = Optional[Union[str, Dict[str, Any]]]
+KeepAliveValue = Optional[Union[str, int, float]]
 
 
 class Message(BaseModel):
@@ -42,10 +43,9 @@ class OllamaGenerateRequest(BaseModel):
     think: ThinkValue = None
     format: FormatValue = None
     raw: Optional[bool] = False
-    keep_alive: Optional[Union[str, int, float]] = "5m"
+    keep_alive: KeepAliveValue = "5m"
     options: dict = Field(default_factory=dict)
     images: Optional[List[str]] = None
-    tools: Optional[List[Dict[str, Any]]] = None
     suffix: Optional[str] = None
 
     @field_validator("options", mode="before")
@@ -57,3 +57,8 @@ class OllamaGenerateRequest(BaseModel):
     @classmethod
     def prevent_none_prompt(cls, v):
         return "" if v is None else v
+
+    @field_validator("keep_alive", mode="before")
+    @classmethod
+    def prevent_none_keep_alive(cls, v):
+        return "5m" if v is None else v
