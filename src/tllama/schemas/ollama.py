@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, StrictBool, field_validator
 from typing import List, Optional, Any, Dict, Union, Literal
 
 ThinkValue = Optional[Union[bool, Literal["low", "medium", "high"]]]
@@ -42,7 +42,7 @@ class OllamaGenerateRequest(BaseModel):
     stream: bool = True
     think: ThinkValue = None
     format: FormatValue = None
-    raw: Optional[bool] = False
+    raw: StrictBool | None = False
     keep_alive: KeepAliveValue = "5m"
     options: dict = Field(default_factory=dict)
     images: Optional[List[str]] = None
