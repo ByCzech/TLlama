@@ -126,12 +126,9 @@ class ModelManager:
             keep_alive_seconds = self._normalize_keep_alive(keep_alive)
 
             # Already loaded?
-            if model_name in self.models:
-                current_n_ctx = self.active_models.get(model_name, {}).get("n_ctx")
-
-                # Klient want different num_ctx -> reload
-                if current_n_ctx != requested_n_ctx:
-                    self.unload_model(model_name)
+            current_n_ctx = self.active_models.get(model_name, {}).get("n_ctx")
+            if model_name in self.models and num_ctx is not None and requested_n_ctx != current_n_ctx:
+                self.unload_model(model_name)
 
             # After direct unload, check it again
             if model_name not in self.models:
