@@ -18,12 +18,14 @@ __all__ = ('model_manager', 'load_backend_config_from_env')
 
 DEFAULT_MODELS_DIR = "/var/lib/tllama/models"
 
+
 @dataclass(frozen=True)
 class BackendConfig:
     models_dir: str = DEFAULT_MODELS_DIR
     default_num_ctx: int = 0
     default_keep_alive: str | int | float | None = "5m"
     max_loaded_models: int = 1
+    janitor_interval_seconds: float = 10.0
 
 
 def _env_int(name: str, default: int) -> int:
@@ -36,12 +38,23 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_float(name: str, default: float) -> float:
+    value = os.getenv(name)
+    if value is None or value.strip() == "":
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def load_backend_config_from_env() -> BackendConfig:
     return BackendConfig(
-        models_dir=os.getenv("TLLAMA_MODELS_DIR", DEFAULT_MODELS_DIR),
-        default_num_ctx=_env_int("TLLAMA_DEFAULT_NUM_CTX", 0),
+        models_dir=os.getenv("TLLAMA_MODELS", DEFAULT_MODELS_DIR),
+        default_num_ctx=_env_int("TLLAMA_CONTEXT_LENGTH", 0),
         max_loaded_models=_env_int("TLLAMA_MAX_LOADED_MODELS", 1),
-        default_keep_alive=os.getenv("TLLAMA_DEFAULT_KEEP_ALIVE", "5m"),
+        default_keep_alive=os.getenv("TLLAMA_KEEP_ALIVE", "5m"),
+        janitor_interval_seconds=_env_float("TLLAMA_JANITOR_INTERVAL", 10.0),
     )
 
 
@@ -57,11 +70,49 @@ class ModelManager:
 
         self.active_models: Dict[str, Dict[str, Any]] = {}
 
+        self._janitor_task: asyncio.Task | None = None
+
     def _now_iso(self) -> str:
         return datetime.now(timezone.utc).isoformat()
 
     def _future_iso(self, seconds: int) -> str:
         return (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()
+
+    def _parse_iso_datetime(self, value: str | None) -> Optional[datetime]:
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _is_model_entry_expired(self, model_info: Dict[str, Any]) -> bool:
+        expires_at = self._parse_iso_datetime(model_info.get("expires_at"))
+        if expires_at is None:
+            return False
+        return expires_at <= datetime.now(timezone.utc)
+
+    def _unload_model_internal(self, model_name: str) -> bool:
+        llm = self.models.pop(model_name, None)
+        if llm is not None:
+            try:
+                del llm
+            except Exception:
+                pass
+
+        removed = False
+        if model_name in self.active_models:
+            del self.active_models[model_name]
+            removed = True
+
+        gc.collect()
+        return (llm is not None) or removed
+
+    def unload_all_models(self):
+        for model_name in list(self.models.keys()):
+            self._unload_model_internal(model_name)
+        self.active_models.clear()
+        gc.collect()
 
     def _normalize_num_ctx(self, value, default: int = 0) -> int:
         if value is None:
@@ -179,6 +230,12 @@ class ModelManager:
         keep_alive: str | int | float | None = "5m",
     ) -> Llama:
         async with self._lock:
+            if self._janitor_task is None or self._janitor_task.done():
+                self._janitor_task = asyncio.create_task(
+                    self._janitor_loop(),
+                    name="tllama-model-janitor",
+                )
+
             model_info = self._build_model_file_info(model_name)
             if not model_info:
                 raise FileNotFoundError(f"Model '{model_name}' not found in {self.models_dir}")
@@ -268,14 +325,7 @@ class ModelManager:
             return self.models[model_name]
 
     def unload_model(self, model_name: str):
-        llm = self.models.pop(model_name, None)
-        if llm is not None:
-            del llm
-
-        if model_name in self.active_models:
-            del self.active_models[model_name]
-
-        gc.collect()
+        self._unload_model_internal(model_name)
 
     def is_model_loaded(self, model_name: str) -> bool:
         return model_name in self.models
@@ -335,6 +385,50 @@ class ModelManager:
                 "sha256": hash_sha256.hexdigest()
             })
         return model_list
+
+    async def start(self):
+        async with self._lock:
+            if self._janitor_task is None or self._janitor_task.done():
+                self._janitor_task = asyncio.create_task(
+                    self._janitor_loop(),
+                    name="tllama-model-janitor",
+                )
+
+    async def shutdown(self):
+        janitor_task = None
+
+        async with self._lock:
+            if self._janitor_task is not None:
+                janitor_task = self._janitor_task
+                self._janitor_task = None
+
+        if janitor_task is not None:
+            janitor_task.cancel()
+            try:
+                await janitor_task
+            except asyncio.CancelledError:
+                pass
+
+        async with self._lock:
+            self.unload_all_models()
+
+    async def _janitor_loop(self):
+        try:
+            while True:
+                await asyncio.sleep(self.config.janitor_interval_seconds)
+
+                async with self._lock:
+                    expired_model_names = [
+                        model_name
+                        for model_name, model_info in self.active_models.items()
+                        if self._is_model_entry_expired(model_info)
+                    ]
+
+                    for model_name in expired_model_names:
+                        print(f"DEBUG: Auto-unloading expired model {model_name}")
+                        self._unload_model_internal(model_name)
+        except asyncio.CancelledError:
+            raise
 
 
 model_manager = ModelManager(load_backend_config_from_env())
