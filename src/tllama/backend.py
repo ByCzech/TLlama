@@ -11,51 +11,11 @@ from llama_cpp import Llama
 from typing import Dict, Optional, Any, List
 from datetime import datetime, timezone, timedelta
 
+from tllama.config import BackendConfig, load_backend_config_from_env
 from tllama.helpers.llama_stats import load_llama_with_captured_stats
 
 
 __all__ = ('model_manager', 'load_backend_config_from_env')
-
-DEFAULT_MODELS_DIR = "/var/lib/tllama/models"
-
-
-@dataclass(frozen=True)
-class BackendConfig:
-    models_dir: str = DEFAULT_MODELS_DIR
-    default_num_ctx: int = 0
-    default_keep_alive: str | int | float | None = "5m"
-    max_loaded_models: int = 1
-    janitor_interval_seconds: float = 10.0
-
-
-def _env_int(name: str, default: int) -> int:
-    value = os.getenv(name)
-    if value is None or value.strip() == "":
-        return default
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _env_float(name: str, default: float) -> float:
-    value = os.getenv(name)
-    if value is None or value.strip() == "":
-        return default
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def load_backend_config_from_env() -> BackendConfig:
-    return BackendConfig(
-        models_dir=os.getenv("TLLAMA_MODELS", DEFAULT_MODELS_DIR),
-        default_num_ctx=_env_int("TLLAMA_CONTEXT_LENGTH", 0),
-        max_loaded_models=_env_int("TLLAMA_MAX_LOADED_MODELS", 1),
-        default_keep_alive=os.getenv("TLLAMA_KEEP_ALIVE", "5m"),
-        janitor_interval_seconds=_env_float("TLLAMA_JANITOR_INTERVAL", 10.0),
-    )
 
 
 class ModelManager:
@@ -244,11 +204,11 @@ class ModelManager:
 
             effective_num_ctx = num_ctx
             if effective_num_ctx is None:
-                effective_num_ctx = self.config.default_num_ctx
+                effective_num_ctx = self.config.context_length
 
             effective_keep_alive = keep_alive
             if effective_keep_alive is None:
-                effective_keep_alive = self.config.default_keep_alive
+                effective_keep_alive = self.config.keep_alive
 
             requested_n_ctx = self._normalize_num_ctx(effective_num_ctx, default=0)
             keep_alive_seconds = self._normalize_keep_alive(effective_keep_alive)

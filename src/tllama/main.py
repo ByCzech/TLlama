@@ -1,13 +1,23 @@
-import os
 import uvicorn
 
 from fastapi import FastAPI, Response
+
 from .routers import openai, ollama
-from pydantic import TypeAdapter
+from tllama.backend import model_manager
+from tllama.config import load_app_config_from_env
 
 app = FastAPI(title="Multi AI Proxy Server")
 
-# OpenAI router
+
+@app.on_event("startup")
+async def on_startup():
+    await model_manager.start()
+
+
+@app.on_event("shutdown")
+async def on_shutdown():
+    await model_manager.shutdown()
+
 app.include_router(openai.router)
 app.include_router(ollama.router)
 
@@ -28,6 +38,19 @@ async def health_check():
 
 
 def start_server():
+    config = load_app_config_from_env()
+
+    kwargs = {
+        "host": config.host,
+        "port": config.port,
+    }
+
+    if config.reload:
+        kwargs["reload"] = True
+
+    if config.debug:
+        kwargs["log_level"] = "debug"
+
     if ":" in os.getenv('TLLAMA_HOST', '127.0.0.1'):
         host = os.getenv('TLLAMA_HOST', '127.0.0.1').split(':')[0]
         port = int(os.getenv('TLLAMA_HOST', '127.0.0.1').split(':')[1])
@@ -38,10 +61,6 @@ def start_server():
         host=host,
         port=port
     )
-    if os.getenv('TLLAMA_APP_RELOAD', False):
-        kwargs['reload'] = TypeAdapter(bool).validate_python(os.getenv('TLLAMA_APP_RELOAD', False))
-    if os.getenv('TLLAMA_DEBUG', False) and os.getenv('TLLAMA_DEBUG', '0').isdecimal() and os.getenv('TLLAMA_DEBUG', False):
-        kwargs['log_level'] = "debug"
 
     uvicorn.run("tllama.main:app", **kwargs)
 
