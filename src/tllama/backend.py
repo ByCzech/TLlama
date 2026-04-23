@@ -18,6 +18,13 @@ from tllama.helpers.llama_stats import load_llama_with_captured_stats
 __all__ = ('model_manager', 'load_backend_config_from_env')
 
 
+@dataclass(frozen=True)
+class CachedMetadataEntry:
+    fingerprint: str
+    cached_at_monotonic: float
+    value: Dict[str, Any]
+
+
 class ModelManager:
     def __init__(self, config: BackendConfig | None = None):
         self.config = config or load_backend_config_from_env()
@@ -31,6 +38,8 @@ class ModelManager:
         self.active_models: Dict[str, Dict[str, Any]] = {}
 
         self._janitor_task: asyncio.Task | None = None
+
+        self._metadata_cache: Dict[str, CachedMetadataEntry] = {}
 
     def _now_iso(self) -> str:
         return datetime.now(timezone.utc).isoformat()
@@ -158,6 +167,43 @@ class ModelManager:
     def _build_model_file_info(self, model_name: str) -> Optional[Dict[str, Any]]:
         model_path = self.models_dir / f"{model_name}.gguf"
         return self._build_model_file_info_from_path(model_path)
+
+    def _filter_metadata_raw_for_cache(self, meta: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Keep only small scalar metadata values in cache.
+        This avoids holding large/raw structures in memory.
+        """
+        filtered: Dict[str, Any] = {}
+
+        for key, value in (meta or {}).items():
+            if isinstance(value, (str, int, float, bool)) or value is None:
+                filtered[key] = value
+
+        return filtered
+
+    def _get_cached_metadata_entry(self, model_name: str, fingerprint: str) -> Optional[Dict[str, Any]]:
+        entry = self._metadata_cache.get(model_name)
+        if entry is None:
+            return None
+
+        if entry.fingerprint != fingerprint:
+            return None
+
+        age_seconds = time.monotonic() - entry.cached_at_monotonic
+        if age_seconds > self.config.metadata_cache_ttl_seconds:
+            return None
+
+        return entry.value
+
+    def _set_cached_metadata_entry(self, model_name: str, fingerprint: str, value: Dict[str, Any]) -> None:
+        self._metadata_cache[model_name] = CachedMetadataEntry(
+            fingerprint=fingerprint,
+            cached_at_monotonic=time.monotonic(),
+            value=value,
+        )
+
+    def _invalidate_metadata_cache_entry(self, model_name: str) -> None:
+        self._metadata_cache.pop(model_name, None)
 
     def _load_model_sync(self, model_path: str, requested_n_ctx: int):
         return load_llama_with_captured_stats(
@@ -314,7 +360,7 @@ class ModelManager:
                 "params": params,
                 "bits": bits,
                 "template": template,
-                "metadata_raw": meta,
+                "metadata_raw": self._filter_metadata_raw_for_cache(meta),
             }
         finally:
             if temp_llm is not None:
@@ -331,11 +377,18 @@ class ModelManager:
     ) -> Optional[Dict[str, Any]]:
         """
         Get model metadata without loading the full model into inference memory.
-        Runs off the event loop and safely handles scan failures.
+        Runs off the event loop and uses a lightweight TTL cache.
         """
         model_info = self._build_model_file_info(model_name)
         if not model_info:
             return None
+
+        fingerprint = model_info["sha256"]
+
+        async with self._lock:
+            cached_value = self._get_cached_metadata_entry(model_name, fingerprint)
+            if cached_value is not None:
+                return cached_value
 
         effective_timeout = (
             self.config.model_scan_timeout_seconds
@@ -344,7 +397,7 @@ class ModelManager:
         )
 
         try:
-            return await asyncio.wait_for(
+            metadata = await asyncio.wait_for(
                 asyncio.to_thread(self._get_model_metadata_sync, model_info["path"]),
                 timeout=effective_timeout,
             )
@@ -354,6 +407,14 @@ class ModelManager:
         except Exception as e:
             print(f"DEBUG: Metadata scan failed for model {model_name}: {e}")
             return None
+
+        if metadata is None:
+            return None
+
+        async with self._lock:
+            self._set_cached_metadata_entry(model_name, fingerprint, metadata)
+
+        return metadata
 
     def _list_local_models_sync(self) -> List[Dict[str, Any]]:
         """
