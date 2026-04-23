@@ -11,6 +11,7 @@ from fastapi.responses import StreamingResponse
 from llama_cpp import LlamaGrammar
 from tllama.schemas.ollama import OllamaChatRequest, OllamaGenerateRequest
 from tllama.backend import model_manager
+from tllama.lib.llama_wrap import create_chat_completion_ex
 
 from tllama.helpers.common import (
     get_iso_time,
@@ -20,14 +21,20 @@ from tllama.helpers.common import (
     estimate_completion_prompt_eval_count,
     build_completion_format_kwargs
 )
+
 from tllama.helpers.prompt_render import (
     render_chat_prompt_with_explicit_think,
     render_generate_prompt,
 )
-from tllama.helpers.reasoning_stream import (
+from tllama.helpers.reasoning_split import (
     detect_reasoning_format,
     ReasoningStreamSplitter,
     split_full_text_by_reasoning_format,
+)
+from tllama.helpers.ollama_chat import (
+    normalize_chat_messages,
+    build_chat_kwargs_ex,
+    build_chat_response_format_kwargs
 )
 
 router = APIRouter(
@@ -76,191 +83,237 @@ async def list_models_ollama():
 
 @router.post("/chat")
 async def ollama_chat(request: OllamaChatRequest):
+    """Handle Ollama-compatible /chat requests via create_chat_completion_ex()."""
     opts = request.options or {}
-    llm = await model_manager.get_model(
-        request.model,
-        num_ctx=opts.get("num_ctx")
-    )
-    metadata_info = model_manager.get_model_metadata(request.model) or {}
 
-    explicit_think = None
-    user_stop = normalize_stop(opts.get("stop"))
-    request_format = getattr(request, "format", None)
-    has_structured_format = request_format is not None
+    try:
+        keep_alive_seconds = model_manager._normalize_keep_alive(request.keep_alive)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid keep_alive value: {str(e)}")
 
-    if has_structured_format and explicit_think not in (None, False):
-        raise HTTPException(
-            status_code=400,
-            detail="format cannot be combined with think=true in /api/chat. Structured output uses completion path with thinking disabled."
-        )
+    if not request.messages:
+        if keep_alive_seconds == 0:
+            model_manager.unload_model(request.model)
+            return {
+                "model": request.model,
+                "created_at": get_iso_time(),
+                "message": {"role": "assistant", "content": ""},
+                "done": True,
+                "done_reason": "unload",
+            }
 
-    force_completion_path = (explicit_think is False) or has_structured_format
+        try:
+            await model_manager.get_model(
+                request.model,
+                num_ctx=opts.get("num_ctx"),
+                keep_alive=request.keep_alive,
+            )
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Error loading model: {str(e)}")
 
-    messages = [
-        {
-            "role": m.role,
-            "content": normalize_message_content(m.content),
-            "images": m.images,
-            "thinking": m.thinking,
-            "tool_calls": m.tool_calls,
-            "tool_name": m.tool_name,
-            "tool_call_id": m.tool_call_id,
+        return {
+            "model": request.model,
+            "created_at": get_iso_time(),
+            "message": {"role": "assistant", "content": ""},
+            "done": True,
+            "done_reason": "load",
         }
-        for m in request.messages
-    ]
 
-    base_gen_params = {
-        "max_tokens": normalize_max_tokens_from_options(opts),
+    try:
+        llm = await model_manager.get_model(
+            request.model,
+            num_ctx=opts.get("num_ctx"),
+            keep_alive=request.keep_alive,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error loading model: {str(e)}")
+
+    metadata_info = model_manager.get_model_metadata(request.model) or {}
+    reasoning_format = detect_reasoning_format(request.model, metadata_info)
+    messages = normalize_chat_messages(request.messages)
+    kwargs_ex = build_chat_kwargs_ex(request)
+
+    gen_params = {
         "temperature": opts.get("temperature", 0.8),
         "top_p": opts.get("top_p", 0.9),
+        "top_k": opts.get("top_k", 40),
+        "min_p": opts.get("min_p", 0.05),
+        "typical_p": opts.get("typical_p", 1.0),
+        "presence_penalty": opts.get("presence_penalty", 0.0),
+        "frequency_penalty": opts.get("frequency_penalty", 0.0),
+        "repeat_penalty": opts.get("repeat_penalty", 1.0),
+        "tfs_z": opts.get("tfs_z", 1.0),
+        "mirostat_mode": opts.get("mirostat", 0),
+        "mirostat_tau": opts.get("mirostat_tau", 5.0),
+        "mirostat_eta": opts.get("mirostat_eta", 0.1),
+        "seed": opts.get("seed"),
+        "max_tokens": normalize_max_tokens_from_options(opts),
     }
+
+    user_stop = normalize_stop(opts.get("stop"))
+    if user_stop:
+        gen_params["stop"] = user_stop
+
+    if request.tools:
+        gen_params["tools"] = request.tools
+
+    try:
+        gen_params.update(build_chat_response_format_kwargs(getattr(request, "format", None)))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid format schema: {e}")
 
     start_time = time.time_ns()
 
-    if force_completion_path:
-        full_prompt, stop = render_chat_prompt_with_explicit_think(
-            llm=llm,
-            metadata_info=metadata_info,
-            messages=messages,
-            think_enabled=False if has_structured_format else explicit_think,
-            user_stop=user_stop,
-        )
+    if request.stream:
+        def chat_stream_generator():
+            finish_reason = None
+            eval_count = None
+            splitter = ReasoningStreamSplitter(reasoning_format, think_value=request.think)
 
-        prompt_eval_count = estimate_completion_prompt_eval_count(llm, full_prompt)
-
-        gen_params = {
-            **base_gen_params,
-            "stop": stop,
-        }
-
-        try:
-            gen_params.update(build_completion_format_kwargs(request_format))
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Invalid format schema: {e}")
-
-        if request.stream:
-            def chat_stream_generator():
-                response_iter = llm.create_completion(
-                    prompt=full_prompt,
+            try:
+                response_iter = create_chat_completion_ex(
+                    llm,
+                    messages=messages,
                     stream=True,
-                    **gen_params
+                    kwargs_ex=kwargs_ex,
+                    **gen_params,
                 )
-
-                finish_reason = None
 
                 for chunk in response_iter:
                     choice = chunk["choices"][0]
-                    text = choice.get("text", "")
+                    delta = choice.get("delta", {})
                     chunk_finish_reason = choice.get("finish_reason")
 
                     if chunk_finish_reason is not None:
                         finish_reason = chunk_finish_reason
 
-                    if text:
+                    usage = chunk.get("usage") or {}
+                    if usage.get("completion_tokens") is not None:
+                        eval_count = usage.get("completion_tokens")
+
+                    if delta.get("tool_calls") is not None:
                         yield f"{json.dumps({
                             'model': request.model,
-                            'created_at': datetime.now(timezone.utc).isoformat(),
-                            'message': {'role': 'assistant', 'content': text},
+                            'created_at': get_iso_time(),
+                            'message': {
+                                'role': 'assistant',
+                                'tool_calls': delta['tool_calls']
+                            },
                             'done': False
                         })}\n"
+
+                    content = delta.get("content", "")
+                    for kind, piece in splitter.push(content):
+                        if kind == "thinking":
+                            payload = {
+                                "model": request.model,
+                                "created_at": get_iso_time(),
+                                "message": {
+                                    "role": "assistant",
+                                    "content": "",
+                                    "thinking": piece,
+                                },
+                                "done": False,
+                            }
+                        else:
+                            payload = {
+                                "model": request.model,
+                                "created_at": get_iso_time(),
+                                "message": {
+                                    "role": "assistant",
+                                    "content": piece,
+                                },
+                                "done": False,
+                            }
+
+                        yield f"{json.dumps(payload)}\n"
+
+                for kind, piece in splitter.finish():
+                    if kind == "thinking":
+                        payload = {
+                            "model": request.model,
+                            "created_at": get_iso_time(),
+                            "message": {
+                                "role": "assistant",
+                                "content": "",
+                                "thinking": piece,
+                            },
+                            "done": False,
+                        }
+                    else:
+                        payload = {
+                            "model": request.model,
+                            "created_at": get_iso_time(),
+                            "message": {
+                                "role": "assistant",
+                                "content": piece,
+                            },
+                            "done": False,
+                        }
+
+                    yield f"{json.dumps(payload)}\n"
 
                 end_time = time.time_ns()
                 yield f"{json.dumps({
                     'model': request.model,
-                    'created_at': datetime.now(timezone.utc).isoformat(),
+                    'created_at': get_iso_time(),
                     'done': True,
                     'done_reason': finish_reason,
                     'total_duration': end_time - start_time,
-                    'load_duration': 0,
-                    'prompt_eval_count': prompt_eval_count,
-                    'eval_count': None
+                    'prompt_eval_count': None,
+                    'eval_count': eval_count,
                 })}\n"
 
-            return StreamingResponse(chat_stream_generator(), media_type="application/x-ndjson")
-
-        response = llm.create_completion(
-            prompt=full_prompt,
-            stream=False,
-            **gen_params
-        )
-        end_time = time.time_ns()
-
-        return {
-            "model": request.model,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "message": {
-                "role": "assistant",
-                "content": response["choices"][0].get("text", "")
-            },
-            "done": True,
-            "done_reason": response["choices"][0].get("finish_reason"),
-            "total_duration": end_time - start_time,
-            "prompt_eval_count": response.get("usage", {}).get("prompt_tokens", prompt_eval_count),
-            "eval_count": response.get("usage", {}).get("completion_tokens")
-        }
-
-    gen_params = {
-        **base_gen_params,
-        "stop": user_stop
-    }
-
-    if request.stream:
-        def chat_stream_generator():
-            response_iter = llm.create_chat_completion(
-                messages=messages,
-                stream=True,
-                **gen_params
-            )
-
-            finish_reason = None
-
-            for chunk in response_iter:
-                choice = chunk["choices"][0]
-                delta = choice.get("delta", {})
-                content = delta.get("content", "")
-                chunk_finish_reason = choice.get("finish_reason")
-
-                if chunk_finish_reason is not None:
-                    finish_reason = chunk_finish_reason
-
-                if content:
-                    yield f"{json.dumps({
-                        'model': request.model,
-                        'created_at': datetime.now(timezone.utc).isoformat(),
-                        'message': {'role': 'assistant', 'content': content},
-                        'done': False
-                    })}\n"
-
-            end_time = time.time_ns()
-            yield f"{json.dumps({
-                'model': request.model,
-                'created_at': datetime.now(timezone.utc).isoformat(),
-                'done': True,
-                'done_reason': finish_reason,
-                'total_duration': end_time - start_time,
-                'load_duration': 0,
-                'prompt_eval_count': None,
-                'eval_count': None
-            })}\n"
+            finally:
+                if keep_alive_seconds == 0:
+                    model_manager.unload_model(request.model)
 
         return StreamingResponse(chat_stream_generator(), media_type="application/x-ndjson")
 
-    response = llm.create_chat_completion(
-        messages=messages,
-        stream=False,
-        **gen_params
-    )
+    try:
+        response = create_chat_completion_ex(
+            llm,
+            messages=messages,
+            stream=False,
+            kwargs_ex=kwargs_ex,
+            **gen_params,
+        )
+    finally:
+        if keep_alive_seconds == 0:
+            model_manager.unload_model(request.model)
+
     end_time = time.time_ns()
+
+    choice = response["choices"][0]
+    choice_message = choice.get("message", {}) or {}
+    full_content = choice_message.get("content", "") or ""
+
+    thinking_text, response_text = split_full_text_by_reasoning_format(
+        full_content,
+        reasoning_format,
+        think_value=request.think,
+    )
+
+    message = {
+        "role": "assistant",
+        "content": response_text,
+    }
+
+    if thinking_text:
+        message["thinking"] = thinking_text
+
+    if choice_message.get("tool_calls") is not None:
+        message["tool_calls"] = choice_message["tool_calls"]
 
     return {
         "model": request.model,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "message": response["choices"][0]["message"],
+        "created_at": get_iso_time(),
+        "message": message,
         "done": True,
-        "done_reason": response["choices"][0].get("finish_reason"),
+        "done_reason": choice.get("finish_reason"),
         "total_duration": end_time - start_time,
         "prompt_eval_count": response.get("usage", {}).get("prompt_tokens"),
-        "eval_count": response.get("usage", {}).get("completion_tokens")
+        "eval_count": response.get("usage", {}).get("completion_tokens"),
     }
 
 
@@ -359,6 +412,8 @@ async def ollama_generate(request: OllamaGenerateRequest):
             request=request,
         )
 
+    reasoning_format = detect_reasoning_format(request.model, model_manager.get_model_metadata(request.model) or {})
+
     prompt_eval_count = estimate_completion_prompt_eval_count(llm, prompt_for_completion)
 
     start_time = time.time_ns()
@@ -375,6 +430,7 @@ async def ollama_generate(request: OllamaGenerateRequest):
 
             finish_reason = None
             eval_count = None
+            splitter = ReasoningStreamSplitter(reasoning_format, think_value=request.think)
 
             try:
                 for chunk in response_iter:
@@ -389,11 +445,37 @@ async def ollama_generate(request: OllamaGenerateRequest):
                     if usage.get("completion_tokens") is not None:
                         eval_count = usage.get("completion_tokens")
 
-                    if text:
+                    for kind, piece in splitter.push(text):
+                        if kind == "thinking":
+                            yield f"{json.dumps({
+                                'model': request.model,
+                                'created_at': get_iso_time(),
+                                'response': '',
+                                'thinking': piece,
+                                'done': False
+                            })}\n"
+                        else:
+                            yield f"{json.dumps({
+                                'model': request.model,
+                                'created_at': get_iso_time(),
+                                'response': piece,
+                                'done': False
+                            })}\n"
+
+                for kind, piece in splitter.finish():
+                    if kind == "thinking":
                         yield f"{json.dumps({
                             'model': request.model,
                             'created_at': get_iso_time(),
-                            'response': text,
+                            'response': '',
+                            'thinking': piece,
+                            'done': False
+                        })}\n"
+                    else:
+                        yield f"{json.dumps({
+                            'model': request.model,
+                            'created_at': get_iso_time(),
+                            'response': piece,
                             'done': False
                         })}\n"
 
@@ -429,7 +511,12 @@ async def ollama_generate(request: OllamaGenerateRequest):
 
     end_time = time.time_ns()
 
-    response_text = response["choices"][0].get("text", "")
+    full_text = response["choices"][0].get("text", "")
+    thinking_text, response_text = split_full_text_by_reasoning_format(
+        full_text,
+        reasoning_format,
+        think_value=request.think,
+    )
     done_reason = response["choices"][0].get("finish_reason")
 
     result = {
@@ -443,6 +530,9 @@ async def ollama_generate(request: OllamaGenerateRequest):
         "eval_count": response.get("usage", {}).get("completion_tokens"),
         "context": []
     }
+
+    if thinking_text:
+        result["thinking"] = thinking_text
 
     return result
 
