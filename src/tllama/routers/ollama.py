@@ -50,7 +50,7 @@ async def get_version():
 
 @router.get("/tags")
 async def list_models_ollama():
-    local_models = model_manager.list_local_models()
+    local_models = await model_manager.list_local_models()
 
     formatted_models = []
     for m in local_models:
@@ -128,7 +128,7 @@ async def ollama_chat(request: OllamaChatRequest):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Error loading model: {str(e)}")
 
-    metadata_info = model_manager.get_model_metadata(request.model) or {}
+    metadata_info = await model_manager.get_model_metadata(request.model) or {}
     reasoning_format = detect_reasoning_format(request.model, metadata_info)
     messages = normalize_chat_messages(request.messages)
     kwargs_ex = build_chat_kwargs_ex(request)

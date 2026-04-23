@@ -135,27 +135,29 @@ class ModelManager:
 
         raise ValueError(f"Invalid keep_alive value: {keep_alive}")
 
-    def _build_model_file_info(self, model_name: str) -> Optional[Dict[str, Any]]:
-        model_path = self.models_dir / f"{model_name}.gguf"
-
-        if not model_path.exists():
+    def _build_model_file_info_from_path(self, file_path: Path) -> Optional[Dict[str, Any]]:
+        if not file_path.exists():
             return None
 
-        stats = model_path.stat()
+        stats = file_path.stat()
 
         hash_sha256 = sha256()
-        hash_sha256.update(model_path.name.encode("utf-8"))
+        hash_sha256.update(file_path.name.encode("utf-8"))
         hash_sha256.update(str(stats.st_size).encode("utf-8"))
         hash_sha256.update(str(stats.st_mtime).encode("utf-8"))
 
         return {
-            "id": model_name,
-            "filename": model_path.name,
-            "path": str(model_path),
+            "id": file_path.stem,
+            "filename": file_path.name,
+            "path": str(file_path),
             "size": stats.st_size,
             "mtime": int(stats.st_mtime),
             "sha256": hash_sha256.hexdigest(),
         }
+
+    def _build_model_file_info(self, model_name: str) -> Optional[Dict[str, Any]]:
+        model_path = self.models_dir / f"{model_name}.gguf"
+        return self._build_model_file_info_from_path(model_path)
 
     def _load_model_sync(self, model_path: str, requested_n_ctx: int):
         return load_llama_with_captured_stats(
@@ -296,55 +298,107 @@ class ModelManager:
     def list_loaded_models(self) -> List[Dict[str, Any]]:
         return list(self.active_models.values())
 
-    def get_model_metadata(self, model_name: str):
-        """
-        Get model metadata without loading into memory.
-        """
-        model_path = str(self.models_dir / f"{model_name}.gguf")
-
-        if not os.path.exists(model_path):
-            return None
-
+    def _get_model_metadata_sync(self, model_path: str) -> Optional[Dict[str, Any]]:
+        temp_llm = None
         try:
             temp_llm = Llama(model_path=model_path, vocab_only=True, verbose=False)
-            meta = temp_llm.metadata
+            meta = dict(temp_llm.metadata or {})
 
             arch = meta.get("general.architecture", "llama")
             params = meta.get("general.parameter_count", 0)
             bits = meta.get("general.quantization_version", "unknown")
             template = meta.get("tokenizer.chat_template", "")
 
-            del temp_llm
-
             return {
                 "arch": arch,
                 "params": params,
                 "bits": bits,
                 "template": template,
-                "metadata_raw": meta
+                "metadata_raw": meta,
             }
-        except Exception:
+        finally:
+            if temp_llm is not None:
+                try:
+                    del temp_llm
+                except Exception:
+                    pass
+            gc.collect()
+
+    async def get_model_metadata(
+        self,
+        model_name: str,
+        timeout_seconds: float | None = None,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get model metadata without loading the full model into inference memory.
+        Runs off the event loop and safely handles scan failures.
+        """
+        model_info = self._build_model_file_info(model_name)
+        if not model_info:
             return None
 
-    def list_local_models(self):
-        """Scan models GGUF dir."""
-        model_list = []
-        for file in self.models_dir.glob("*.gguf"):
-            stats = file.stat()
+        effective_timeout = (
+            self.config.model_scan_timeout_seconds
+            if timeout_seconds is None
+            else timeout_seconds
+        )
 
-            hash_sha256 = sha256()
-            hash_sha256.update(file.name.encode("utf-8"))
-            hash_sha256.update(str(stats.st_size).encode("utf-8"))
-            hash_sha256.update(str(stats.st_mtime).encode("utf-8"))
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(self._get_model_metadata_sync, model_info["path"]),
+                timeout=effective_timeout,
+            )
+        except asyncio.TimeoutError:
+            print(f"DEBUG: Metadata scan timed out for model {model_name}")
+            return None
+        except Exception as e:
+            print(f"DEBUG: Metadata scan failed for model {model_name}: {e}")
+            return None
 
-            model_list.append({
-                "id": file.stem,
-                "filename": file.name,
-                "size": stats.st_size,
-                "mtime": int(stats.st_mtime),
-                "sha256": hash_sha256.hexdigest()
-            })
+    def _list_local_models_sync(self) -> List[Dict[str, Any]]:
+        """
+        Scan the local model directory for GGUF files.
+        Each model is isolated so one broken file does not break the whole listing.
+        """
+        model_list: List[Dict[str, Any]] = []
+
+        for file in sorted(self.models_dir.glob("*.gguf")):
+            try:
+                model_info = self._build_model_file_info_from_path(file)
+                if model_info is None:
+                    continue
+
+                model_list.append({
+                    "id": model_info["id"],
+                    "filename": model_info["filename"],
+                    "size": model_info["size"],
+                    "mtime": model_info["mtime"],
+                    "sha256": model_info["sha256"],
+                })
+            except Exception as e:
+                print(f"DEBUG: Failed to inspect model file {file}: {e}")
+
         return model_list
+
+    async def list_local_models(self) -> List[Dict[str, Any]]:
+        return await asyncio.to_thread(self._list_local_models_sync)
+
+    async def list_local_models_with_metadata(self) -> List[Dict[str, Any]]:
+        """
+        Return local models enriched with metadata.
+        Metadata failures are isolated per model.
+        """
+        models = await self.list_local_models()
+        enriched: List[Dict[str, Any]] = []
+
+        for model in models:
+            item = dict(model)
+            metadata = await self.get_model_metadata(model["id"])
+            if metadata:
+                item.update(metadata)
+            enriched.append(item)
+
+        return enriched
 
     async def start(self):
         async with self._lock:

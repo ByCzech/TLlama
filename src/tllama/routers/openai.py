@@ -34,7 +34,7 @@ router = APIRouter(
 
 @router.get("/models")
 async def list_models_openai():
-    local_models = model_manager.list_local_models()
+    local_models = await model_manager.list_local_models()
 
     return {
         "object": "list",
@@ -52,7 +52,7 @@ async def list_models_openai():
 @router.post("/chat/completions")
 async def chat_completions(request: ChatCompletionRequest):
     llm = await model_manager.get_model(request.model)
-    metadata_info = model_manager.get_model_metadata(request.model) or {}
+    metadata_info = await model_manager.get_model_metadata(request.model) or {}
 
     messages = build_openai_chat_messages(request)
     explicit_think = openai_reasoning_effort_to_explicit_think(request)

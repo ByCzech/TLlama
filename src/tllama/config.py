@@ -75,6 +75,7 @@ class BackendConfig:
     keep_alive: str | int | float | None = "5m"
     max_loaded_models: int = 1
     janitor_interval_seconds: float = 10.0
+    model_scan_timeout_seconds: float = 5.0
 
 
 @dataclass(frozen=True)
@@ -92,6 +93,7 @@ def load_backend_config_from_env() -> BackendConfig:
         keep_alive=_env_str("TLLAMA_KEEP_ALIVE", "5m"),
         max_loaded_models=_env_int("TLLAMA_MAX_LOADED_MODELS", 1),
         janitor_interval_seconds=_env_float("TLLAMA_JANITOR_INTERVAL", 10.0),
+        model_scan_timeout_seconds=_env_float("TLLAMA_MODEL_SCAN_TIMEOUT", 5.0),
     )
 
 
