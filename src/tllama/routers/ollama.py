@@ -54,7 +54,7 @@ async def list_models_ollama():
 
     formatted_models = []
     for m in local_models:
-        metadata_info = model_manager.get_model_metadata(m['id'])
+        metadata_info = await model_manager.get_model_metadata(m['id'])
         if not metadata_info:
             continue
 
@@ -543,7 +543,7 @@ async def show_model_info(request: dict):
     if not model_name:
         raise HTTPException(status_code=400, detail="Missing model name")
 
-    metadata_info = model_manager.get_model_metadata(model_name)
+    metadata_info = await model_manager.get_model_metadata(model_name)
     if not metadata_info:
         raise HTTPException(status_code=404, detail="Model doesn't exist")
 
@@ -570,7 +570,7 @@ async def list_running_models():
 
     formatted = []
     for m in loaded_models:
-        metadata_info = model_manager.get_model_metadata(m["id"]) or {}
+        metadata_info = await model_manager.get_model_metadata(m["id"]) or {}
 
         p_size = "unknown"
         params = metadata_info.get("params", 0)
