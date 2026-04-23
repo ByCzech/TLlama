@@ -33,7 +33,7 @@ def start_server():
         port = int(os.getenv('TLLAMA_HOST', '127.0.0.1').split(':')[1])
     else:
         host = '127.0.0.1'
-        port = 8000
+        port = 54800
     kwargs = dict(
         host=host,
         port=port
