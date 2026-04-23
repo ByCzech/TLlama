@@ -31,7 +31,7 @@ from tllama.helpers.reasoning_split import (
     ReasoningStreamSplitter,
     split_full_text_by_reasoning_format,
 )
-from tllama.helpers.ollama_chat import (
+from tllama.helpers.chat import (
     normalize_chat_messages,
     build_chat_kwargs_ex,
     build_chat_response_format_kwargs
@@ -175,8 +175,8 @@ async def ollama_chat(request: OllamaChatRequest):
                     llm,
                     messages=messages,
                     stream=True,
-                    kwargs_ex=kwargs_ex,
                     **gen_params,
+                    **kwargs_ex
                 )
 
                 for chunk in response_iter:
@@ -275,8 +275,8 @@ async def ollama_chat(request: OllamaChatRequest):
             llm,
             messages=messages,
             stream=False,
-            kwargs_ex=kwargs_ex,
             **gen_params,
+            **kwargs_ex
         )
     finally:
         if keep_alive_seconds == 0:
