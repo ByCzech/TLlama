@@ -1,7 +1,9 @@
 import os
 import time
 import asyncio
+import gc
 
+from dataclasses import dataclass
 from pathlib import Path
 from hashlib import sha256
 
@@ -12,12 +14,47 @@ from datetime import datetime, timezone, timedelta
 from tllama.helpers.llama_stats import load_llama_with_captured_stats
 
 
+__all__ = ('model_manager', 'load_backend_config_from_env')
+
+DEFAULT_MODELS_DIR = "/var/lib/tllama/models"
+
+@dataclass(frozen=True)
+class BackendConfig:
+    models_dir: str = DEFAULT_MODELS_DIR
+    default_num_ctx: int = 0
+    default_keep_alive: str | int | float | None = "5m"
+    max_loaded_models: int = 1
+
+
+def _env_int(name: str, default: int) -> int:
+    value = os.getenv(name)
+    if value is None or value.strip() == "":
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def load_backend_config_from_env() -> BackendConfig:
+    return BackendConfig(
+        models_dir=os.getenv("TLLAMA_MODELS_DIR", DEFAULT_MODELS_DIR),
+        default_num_ctx=_env_int("TLLAMA_DEFAULT_NUM_CTX", 0),
+        max_loaded_models=_env_int("TLLAMA_MAX_LOADED_MODELS", 1),
+        default_keep_alive=os.getenv("TLLAMA_DEFAULT_KEEP_ALIVE", "5m"),
+    )
+
+
 class ModelManager:
-    def __init__(self, models_dir: str = "./models"):
+    def __init__(self, config: BackendConfig | None = None):
+        self.config = config or load_backend_config_from_env()
+
         self.models: Dict[str, Llama] = {}
         self._lock = asyncio.Lock()
-        self.models_dir = Path(models_dir)
+
+        self.models_dir = Path(self.config.models_dir)
         self.models_dir.mkdir(exist_ok=True)
+
         self.active_models: Dict[str, Dict[str, Any]] = {}
 
     def _now_iso(self) -> str:
@@ -34,7 +71,6 @@ class ModelManager:
         except (TypeError, ValueError):
             return default
         return value if value > 0 else default
-
 
     def _normalize_keep_alive(self, keep_alive: str | int | float | None) -> int | None:
         """Normalize Ollama-style keep_alive to seconds.
@@ -110,6 +146,32 @@ class ModelManager:
             "sha256": hash_sha256.hexdigest(),
         }
 
+    def _load_model_sync(self, model_path: str, requested_n_ctx: int):
+        return load_llama_with_captured_stats(
+            Llama,
+            model_path=model_path,
+            n_ctx=requested_n_ctx,
+            n_gpu_layers=-1,
+            use_mmap=False,
+            verbose=True,
+        )
+
+    def _ensure_capacity_for_load(self, requested_model_name: str) -> None:
+        if requested_model_name in self.models:
+            return
+
+        if self.config.max_loaded_models <= 1:
+            for loaded_model_name in list(self.models.keys()):
+                if loaded_model_name != requested_model_name:
+                    self.unload_model(loaded_model_name)
+            return
+
+        if len(self.models) >= self.config.max_loaded_models:
+            raise RuntimeError(
+                f"Loaded model limit reached ({self.config.max_loaded_models}). "
+                "Unload a model first or increase TLLAMA_MAX_LOADED_MODELS."
+            )
+
     async def get_model(
         self,
         model_name: str,
@@ -122,25 +184,33 @@ class ModelManager:
                 raise FileNotFoundError(f"Model '{model_name}' not found in {self.models_dir}")
 
             model_path = model_info["path"]
-            requested_n_ctx = self._normalize_num_ctx(num_ctx, default=0)
-            keep_alive_seconds = self._normalize_keep_alive(keep_alive)
 
-            # Already loaded?
+            effective_num_ctx = num_ctx
+            if effective_num_ctx is None:
+                effective_num_ctx = self.config.default_num_ctx
+
+            effective_keep_alive = keep_alive
+            if effective_keep_alive is None:
+                effective_keep_alive = self.config.default_keep_alive
+
+            requested_n_ctx = self._normalize_num_ctx(effective_num_ctx, default=0)
+            keep_alive_seconds = self._normalize_keep_alive(effective_keep_alive)
+
             current_n_ctx = self.active_models.get(model_name, {}).get("n_ctx")
+
+            # Reload only when caller explicitly requested a different context size
             if model_name in self.models and num_ctx is not None and requested_n_ctx != current_n_ctx:
                 self.unload_model(model_name)
 
-            # After direct unload, check it again
             if model_name not in self.models:
-                print(f"DEBUG: Dynamic loading of model {model_name} with n_ctx={requested_n_ctx}...")
+                self._ensure_capacity_for_load(model_name)
 
-                llm, load_stats, load_log = load_llama_with_captured_stats(
-                    Llama,
-                    model_path=model_path,
-                    n_ctx=requested_n_ctx,
-                    n_gpu_layers=-1,
-                    use_mmap=False,
-                    verbose=True,
+                print(f"DEBUG: Loading model {model_name} with n_ctx={requested_n_ctx}...")
+
+                llm, load_stats, load_log = await asyncio.to_thread(
+                    self._load_model_sync,
+                    model_path,
+                    requested_n_ctx,
                 )
 
                 actual_n_ctx = llm.n_ctx()
@@ -168,7 +238,7 @@ class ModelManager:
                     "n_gpu_layers": -1,
                     "use_mmap": False,
 
-                    # stats from log
+                    # stats from load log
                     "processor": load_stats.get("processor", "100% CPU"),
                     "offloaded_layers": load_stats.get("offloaded_layers", 0),
                     "total_layers": load_stats.get("total_layers", 0),
@@ -198,10 +268,14 @@ class ModelManager:
             return self.models[model_name]
 
     def unload_model(self, model_name: str):
-        if model_name in self.models:
-            del self.models[model_name]
+        llm = self.models.pop(model_name, None)
+        if llm is not None:
+            del llm
+
         if model_name in self.active_models:
             del self.active_models[model_name]
+
+        gc.collect()
 
     def is_model_loaded(self, model_name: str) -> bool:
         return model_name in self.models
@@ -263,4 +337,4 @@ class ModelManager:
         return model_list
 
 
-model_manager = ModelManager()
+model_manager = ModelManager(load_backend_config_from_env())
