@@ -11,21 +11,18 @@ if TYPE_CHECKING:
 from tllama.helpers.common import normalize_message_content
 
 
-def build_chat_kwargs_ex(request: OllamaChatRequest) -> dict[str, Any]:
-    """
-    Build extra formatter/template variables for create_chat_completion_ex().
-
-    These values are forwarded into the underlying chat handler/template layer.
-    """
-    think = getattr(request, "think", None)
-    if think is None:
+def build_think_kwargs_ex(think_value) -> dict[str, Any]:
+    if think_value is None:
         return {}
 
     kwargs_ex: dict[str, Any] = {
         "IsThinkSet": True,
     }
 
-    think_disabled = think is False or (isinstance(think, str) and think.strip().lower() in {"false", "none"})
+    think_disabled = (
+        think_value is False
+        or (isinstance(think_value, str) and think_value.strip().lower() in {"false", "none"})
+    )
     think_enabled = not think_disabled
 
     kwargs_ex["enable_thinking"] = think_enabled
@@ -35,13 +32,17 @@ def build_chat_kwargs_ex(request: OllamaChatRequest) -> dict[str, Any]:
     if think_disabled:
         kwargs_ex["ThinkLevel"] = "none"
         kwargs_ex["reasoning_effort"] = "none"
-    elif isinstance(think, str):
-        level = think.strip().lower()
+    elif isinstance(think_value, str):
+        level = think_value.strip().lower()
         if level not in {"", "true"}:
             kwargs_ex["ThinkLevel"] = level
             kwargs_ex["reasoning_effort"] = level
 
     return kwargs_ex
+
+
+def build_chat_kwargs_ex(request: OllamaChatRequest) -> dict[str, Any]:
+    return build_think_kwargs_ex(getattr(request, "think", None))
 
 
 def build_chat_response_format_kwargs(format_value) -> dict[str, Any]:
