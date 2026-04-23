@@ -39,7 +39,7 @@ def start_server():
         port=port
     )
     if os.getenv('TLLAMA_APP_RELOAD', False):
-        kwargs['reload'] = TypeAdapter(bool).validate_python(os.getenv('TLLAMA_UVICORN_RELOAD'))
+        kwargs['reload'] = TypeAdapter(bool).validate_python(os.getenv('TLLAMA_APP_RELOAD', False))
     if os.getenv('TLLAMA_DEBUG', False) and os.getenv('TLLAMA_DEBUG', '0').isdecimal() and os.getenv('TLLAMA_DEBUG', False):
         kwargs['log_level'] = "debug"
 
