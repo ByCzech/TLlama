@@ -164,6 +164,96 @@ class ModelManager:
         model_path = self.models_dir / f"{model_name}.gguf"
         return self._build_model_file_info_from_path(model_path)
 
+    def _to_float_mib(self, value: Any) -> float:
+        try:
+            return float(value or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _mib_to_bytes(self, value_mib: float) -> int:
+        return int(round(value_mib * 1024 * 1024))
+
+    def _build_memory_accounting(self, load_stats: Dict[str, Any]) -> Dict[str, Any]:
+        gpu_model_mib = self._to_float_mib(load_stats.get("gpu_model_mib"))
+        gpu_kv_mib = self._to_float_mib(load_stats.get("gpu_kv_mib"))
+        gpu_compute_mib = self._to_float_mib(load_stats.get("gpu_compute_mib"))
+        gpu_output_mib = self._to_float_mib(load_stats.get("gpu_output_mib"))
+        gpu_rs_mib = self._to_float_mib(load_stats.get("gpu_rs_mib"))
+
+        cpu_model_mib = self._to_float_mib(load_stats.get("cpu_model_mib"))
+        cpu_kv_mib = self._to_float_mib(load_stats.get("cpu_kv_mib"))
+        cpu_compute_mib = self._to_float_mib(load_stats.get("cpu_compute_mib"))
+        cpu_output_mib = self._to_float_mib(load_stats.get("cpu_output_mib"))
+        cpu_rs_mib = self._to_float_mib(load_stats.get("cpu_rs_mib"))
+
+        gpu_total_mib = (
+            gpu_model_mib +
+            gpu_kv_mib +
+            gpu_compute_mib +
+            gpu_output_mib +
+            gpu_rs_mib
+        )
+
+        cpu_total_mib = (
+            cpu_model_mib +
+            cpu_kv_mib +
+            cpu_compute_mib +
+            cpu_output_mib +
+            cpu_rs_mib
+        )
+
+        total_runtime_mib = gpu_total_mib + cpu_total_mib
+
+        return {
+            "gpu_total_mib": gpu_total_mib,
+            "cpu_total_mib": cpu_total_mib,
+            "total_runtime_mib": total_runtime_mib,
+
+            "gpu_total_bytes": self._mib_to_bytes(gpu_total_mib),
+            "cpu_total_bytes": self._mib_to_bytes(cpu_total_mib),
+            "total_runtime_bytes": self._mib_to_bytes(total_runtime_mib),
+        }
+
+    def _with_runtime_totals(self, model_info: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Return a copy of loaded model info with stable total memory fields.
+        This is useful for ps/status endpoints.
+        """
+        item = dict(model_info)
+
+        gpu_total_mib = (
+            self._to_float_mib(item.get("gpu_model_mib")) +
+            self._to_float_mib(item.get("gpu_kv_mib")) +
+            self._to_float_mib(item.get("gpu_compute_mib")) +
+            self._to_float_mib(item.get("gpu_output_mib")) +
+            self._to_float_mib(item.get("gpu_rs_mib"))
+        )
+
+        cpu_total_mib = (
+            self._to_float_mib(item.get("cpu_model_mib")) +
+            self._to_float_mib(item.get("cpu_kv_mib")) +
+            self._to_float_mib(item.get("cpu_compute_mib")) +
+            self._to_float_mib(item.get("cpu_output_mib")) +
+            self._to_float_mib(item.get("cpu_rs_mib"))
+        )
+
+        total_runtime_mib = gpu_total_mib + cpu_total_mib
+
+        item["gpu_total_mib"] = gpu_total_mib
+        item["cpu_total_mib"] = cpu_total_mib
+        item["total_runtime_mib"] = total_runtime_mib
+
+        item["gpu_total_bytes"] = self._mib_to_bytes(gpu_total_mib)
+        item["cpu_total_bytes"] = self._mib_to_bytes(cpu_total_mib)
+        item["total_runtime_bytes"] = self._mib_to_bytes(total_runtime_mib)
+
+        # Ollama-like convenience aliases
+        item["size_vram"] = item["gpu_total_bytes"]
+        item["size_ram"] = item["cpu_total_bytes"]
+        item["size"] = item["total_runtime_bytes"]
+
+        return item
+
     def _filter_metadata_raw_for_cache(self, meta: Dict[str, Any]) -> Dict[str, Any]:
         """
         Keep only small scalar metadata values in cache.
@@ -299,7 +389,7 @@ class ModelManager:
                     "n_gpu_layers": -1,
                     "use_mmap": False,
 
-                    # stats from load log
+                    # Stats from load log
                     "processor": load_stats.get("processor", "100% CPU"),
                     "offloaded_layers": load_stats.get("offloaded_layers", 0),
                     "total_layers": load_stats.get("total_layers", 0),
@@ -312,7 +402,9 @@ class ModelManager:
                     "cpu_kv_mib": load_stats.get("cpu_kv_mib", 0.0),
                     "cpu_compute_mib": load_stats.get("cpu_compute_mib", 0.0),
                     "cpu_output_mib": load_stats.get("cpu_output_mib", 0.0),
-                    "cpu_rs_mib": load_stats.get("cpu_rs_mib", 0.0)
+                    "cpu_rs_mib": load_stats.get("cpu_rs_mib", 0.0),
+
+                    **self._build_memory_accounting(load_stats),
                 }
             else:
                 now_iso = self._now_iso()
@@ -335,10 +427,13 @@ class ModelManager:
         return model_name in self.models
 
     def get_loaded_model_info(self, model_name: str) -> Optional[Dict[str, Any]]:
-        return self.active_models.get(model_name)
+        model_info = self.active_models.get(model_name)
+        if model_info is None:
+            return None
+        return self._with_runtime_totals(model_info)
 
     def list_loaded_models(self) -> List[Dict[str, Any]]:
-        return list(self.active_models.values())
+        return [self._with_runtime_totals(model_info) for model_info in self.active_models.values()]
 
     def _get_model_metadata_sync(self, model_path: str) -> Optional[Dict[str, Any]]:
         temp_llm = None
