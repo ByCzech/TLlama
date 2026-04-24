@@ -63,11 +63,6 @@ class ModelManager:
 
     def _unload_model_internal(self, model_name: str) -> bool:
         llm = self.models.pop(model_name, None)
-        if llm is not None:
-            try:
-                del llm
-            except Exception:
-                pass
 
         removed = False
         if model_name in self.active_models:
@@ -75,6 +70,7 @@ class ModelManager:
             removed = True
 
         gc.collect()
+
         return (llm is not None) or removed
 
     def unload_all_models(self):
