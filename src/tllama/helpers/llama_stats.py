@@ -55,6 +55,12 @@ def parse_llama_verbose_load_log(log_text: str) -> dict:
         "gpu_output_mib": 0.0,
         "cpu_rs_mib": 0.0,
         "gpu_rs_mib": 0.0,
+        "gpu_host_model_mib": 0.0,
+        "gpu_host_kv_mib": 0.0,
+        "gpu_host_compute_mib": 0.0,
+        "gpu_host_output_mib": 0.0,
+        "gpu_host_rs_mib": 0.0,
+        "gpu_host_mib": 0.0,
         "processor": "100% CPU",
     }
 
@@ -67,14 +73,27 @@ def parse_llama_verbose_load_log(log_text: str) -> dict:
     if m:
         result["n_ctx"] = int(m.group(1))
 
-    def is_cpu_backend(backend: str) -> bool:
-        return backend.upper().startswith("CPU")
+    def is_true_cpu_backend(backend: str) -> bool:
+        upper = backend.upper()
+        return upper == "CPU" or upper.startswith("CPU_")
+
+    def is_host_helper_backend(backend: str) -> bool:
+        return backend.upper().endswith("_HOST")
+
+    def is_device_gpu_backend(backend: str) -> bool:
+        return not is_true_cpu_backend(backend) and not is_host_helper_backend(backend)
 
     def add_buffer(kind: str, backend: str, mib: float):
         result["buffers"].setdefault(backend, {})
         result["buffers"][backend][kind] = result["buffers"][backend].get(kind, 0.0) + mib
 
-        bucket = "cpu" if is_cpu_backend(backend) else "gpu"
+        if is_true_cpu_backend(backend):
+            bucket = "cpu"
+        elif is_host_helper_backend(backend):
+            bucket = "gpu_host"
+        else:
+            bucket = "gpu"
+
         result[f"{bucket}_{kind}_mib"] += mib
 
     for kind, pattern in (
@@ -94,6 +113,15 @@ def parse_llama_verbose_load_log(log_text: str) -> dict:
         result["cpu_output_mib"] +
         result["cpu_rs_mib"]
     )
+
+    result["gpu_host_mib"] = (
+        result["gpu_host_model_mib"] +
+        result["gpu_host_kv_mib"] +
+        result["gpu_host_compute_mib"] +
+        result["gpu_host_output_mib"] +
+        result["gpu_host_rs_mib"]
+    )
+
     result["gpu_mib"] = (
         result["gpu_model_mib"] +
         result["gpu_kv_mib"] +
@@ -102,11 +130,15 @@ def parse_llama_verbose_load_log(log_text: str) -> dict:
         result["gpu_rs_mib"]
     )
 
-    if result["offloaded_layers"] > 0 or result["gpu_model_mib"] > 0 or result["gpu_kv_mib"] > 0:
-        if result["total_layers"] and result["offloaded_layers"] == result["total_layers"]:
-            result["processor"] = "GPU"
-        else:
-            result["processor"] = "GPU+CPU"
+    gpu_loaded_mib = result["gpu_model_mib"] + result["gpu_kv_mib"]
+    cpu_loaded_mib = result["cpu_model_mib"] + result["cpu_kv_mib"]
+
+    if gpu_loaded_mib > 0 and cpu_loaded_mib == 0:
+        result["processor"] = "GPU"
+    elif gpu_loaded_mib > 0 and cpu_loaded_mib > 0:
+        result["processor"] = "GPU+CPU"
+    else:
+        result["processor"] = "CPU"
 
     return result
 
