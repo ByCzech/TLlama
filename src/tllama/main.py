@@ -1,22 +1,26 @@
 import uvicorn
 
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Response
 
 from .routers import openai, ollama
 from tllama.backend import model_manager
 from tllama.config import load_app_config_from_env
 
-app = FastAPI(title="Multi AI Proxy Server")
 
-
-@app.on_event("startup")
-async def on_startup():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     await model_manager.start()
+    try:
+        yield
+    finally:
+        await model_manager.shutdown()
 
+app = FastAPI(
+    title="Multi AI Proxy Server",
+    lifespan=lifespan
+)
 
-@app.on_event("shutdown")
-async def on_shutdown():
-    await model_manager.shutdown()
 
 app.include_router(openai.router)
 app.include_router(ollama.router)
