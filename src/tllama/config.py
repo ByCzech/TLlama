@@ -77,6 +77,8 @@ class BackendConfig:
     janitor_interval_seconds: float = 10.0
     model_scan_timeout_seconds: float = 5.0
     metadata_cache_ttl_seconds: float = 300.0
+    flash_attention: bool = False
+    kv_cache_type: str | None = None
 
 
 @dataclass(frozen=True)
@@ -96,6 +98,10 @@ def load_backend_config_from_env() -> BackendConfig:
         janitor_interval_seconds=_env_float("TLLAMA_JANITOR_INTERVAL", 10.0),
         model_scan_timeout_seconds=_env_float("TLLAMA_MODEL_SCAN_TIMEOUT", 5.0),
         metadata_cache_ttl_seconds=_env_float("TLLAMA_METADATA_CACHE_TTL", 300.0),
+        flash_attention=_env_bool("TLLAMA_FLASH_ATTENTION", False),
+        kv_cache_type=(
+            _env_str("TLLAMA_KV_CACHE_TYPE", "").strip().lower() or None
+        ),
     )
 
 

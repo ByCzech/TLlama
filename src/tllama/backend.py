@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from hashlib import sha256
 
-from llama_cpp import Llama
+from llama_cpp import Llama, llama_cpp as llama_cpp_lib
 from typing import Dict, Optional, Any, List
 from datetime import datetime, timezone, timedelta
 
@@ -398,13 +398,10 @@ class ModelManager:
         self._metadata_cache.pop(model_name, None)
 
     def _load_model_sync(self, model_path: str, requested_n_ctx: int):
+        llama_kwargs = self._build_llama_load_kwargs(model_path, requested_n_ctx)
         return load_llama_with_captured_stats(
             Llama,
-            model_path=model_path,
-            n_ctx=requested_n_ctx,
-            n_gpu_layers=-1,
-            use_mmap=False,
-            verbose=True,
+            **llama_kwargs,
         )
 
     def _ensure_capacity_for_load(self, requested_model_name: str) -> None:
@@ -494,6 +491,8 @@ class ModelManager:
                     "n_ctx": actual_n_ctx,
                     "n_gpu_layers": -1,
                     "use_mmap": False,
+                    "flash_attention": self.config.flash_attention,
+                    "kv_cache_type": self.config.kv_cache_type,
 
                     # Stats from load log
                     "processor": load_stats.get("processor", "100% CPU"),
@@ -663,6 +662,53 @@ class ModelManager:
 
         return enriched
 
+
+    def _resolve_kv_cache_type(self, value: str | None) -> int | None:
+        if not value:
+            return None
+
+        normalized = value.strip().lower()
+
+        name_map = {
+            "f16": "GGML_TYPE_F16",
+            "q8_0": "GGML_TYPE_Q8_0",
+            "q4_0": "GGML_TYPE_Q4_0",
+        }
+
+        constant_name = name_map.get(normalized)
+        if constant_name is None:
+            raise ValueError(
+                f"Unsupported TLLAMA_KV_CACHE_TYPE value: {value}. "
+                "Supported values: f16, q8_0, q4_0."
+            )
+
+        resolved = getattr(llama_cpp_lib, constant_name, None)
+        if resolved is None:
+            raise ValueError(
+                f"KV cache type constant {constant_name} is not available in this llama-cpp-python build."
+            )
+
+        return int(resolved)
+
+    def _build_llama_load_kwargs(self, model_path: str, requested_n_ctx: int) -> Dict[str, Any]:
+        kwargs: Dict[str, Any] = {
+            "model_path": model_path,
+            "n_ctx": requested_n_ctx,
+            "n_gpu_layers": -1,
+            "use_mmap": False,
+            "verbose": True,
+        }
+
+        if self.config.flash_attention:
+            kwargs["flash_attn"] = True
+
+        kv_cache_type = self._resolve_kv_cache_type(self.config.kv_cache_type)
+        if kv_cache_type is not None:
+            kwargs["type_k"] = kv_cache_type
+            kwargs["type_v"] = kv_cache_type
+
+        return kwargs
+
     async def start(self):
         async with self._lock:
             if self._janitor_task is None or self._janitor_task.done():
@@ -709,4 +755,3 @@ class ModelManager:
 
 
 model_manager = ModelManager(load_backend_config_from_env())
-
