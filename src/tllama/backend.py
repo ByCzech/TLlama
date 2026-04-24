@@ -777,23 +777,99 @@ class ModelManager:
 
         if len(parts) < 3:
             raise ValueError(
-                "Expected HuggingFace pull reference in format 'repo/modeldir/filename'"
+                "Expected HuggingFace pull reference in format 'namespace/repo/filename' "
+                "or 'namespace/repo/path/to/file[.gguf]'"
             )
 
-        target_path = self.hf_models_dir.joinpath(*parts)
+        namespace = parts[0]
+        repo = parts[1]
+        filename_parts = parts[2:]
+
+        filename_parts[-1] = self._normalize_pull_filename(filename_parts[-1])
+        filename = "/".join(filename_parts)
+
+        target_path = self.hf_models_dir.joinpath(namespace, repo, *filename_parts)
 
         return {
             "model_ref": "/".join(parts),
-            "repo": parts[0],
-            "model_dir": "/".join(parts[1:-1]),
-            "filename": parts[-1],
+            "namespace": namespace,
+            "repo": repo,
+            "repo_id": f"{namespace}/{repo}",
+            "filename": filename,
             "target_dir": target_path.parent,
             "target_path": target_path,
         }
 
-    def ensure_directory(self, path: Path) -> None:
-        path.mkdir(parents=True, exist_ok=True)
+    def _pull_hf_file_sync(
+        self,
+        repo_id: str,
+        filename: str,
+        token: str | None = None,
+        revision: str | None = None,
+    ) -> str:
+        try:
+            from huggingface_hub import hf_hub_download
+        except ImportError as e:
+            raise RuntimeError(
+                "huggingface_hub is not installed. Install it to enable HuggingFace pulls."
+            ) from e
+
+        namespace, repo = repo_id.split("/", 1)
+        target_root = self.hf_models_dir / namespace / repo
+        target_root.mkdir(parents=True, exist_ok=True)
+
+        return hf_hub_download(
+            repo_id=repo_id,
+            filename=filename,
+            revision=revision,
+            token=token,
+            local_dir=target_root,
+            local_dir_use_symlinks=False,
+        )
+
+    async def pull_hf_file(
+        self,
+        repo_id: str,
+        filename: str,
+        token: str | None = None,
+        revision: str | None = None,
+    ) -> str:
+        return await asyncio.to_thread(
+            self._pull_hf_file_sync,
+            repo_id,
+            filename,
+            token,
+            revision,
+        )
+
+    def _normalize_pull_filename(self, filename: str) -> str:
+        cleaned = (filename or "").strip()
+        if not cleaned:
+            raise ValueError("Missing filename in model reference")
+
+        if cleaned.lower().endswith(".gguf"):
+            return cleaned
+
+        return f"{cleaned}.gguf"
+
+    def resolve_model_storage_path(self, model_ref: str) -> Path:
+        """
+        Resolve a model reference to its on-disk path inside known repositories.
+        Supports HuggingFace-style nested refs and simple Local/TLlama refs.
+        """
+        parts = self._split_model_reference(model_ref)
+
+        # HuggingFace: namespace/repo/path/to/file[.gguf]
+        if len(parts) >= 3:
+            filename_parts = parts[2:]
+            filename_parts[-1] = self._normalize_pull_filename(filename_parts[-1])
+            return self.hf_models_dir.joinpath(parts[0], parts[1], *filename_parts)
+
+        # Local or TLlama simple refs can be added later if needed.
+        raise ValueError(
+            "Expected model reference in format 'namespace/repo/file' "
+            "or 'namespace/repo/path/to/file[.gguf]'"
+        )
 
 
 model_manager = ModelManager(load_backend_config_from_env())
-

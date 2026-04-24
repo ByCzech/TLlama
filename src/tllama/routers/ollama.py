@@ -620,30 +620,44 @@ async def pull_model_ollama(request: Request):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    # Prepared for future authenticated HF pull support.
-    auth_provided = bool(username or password)
-
-    model_manager.ensure_directory(target_info["target_dir"])
-
-    print("DEBUG /api/pull target_info:")
-    print({
-        "model_ref": target_info["model_ref"],
-        "repo": target_info["repo"],
-        "model_dir": target_info["model_dir"],
-        "filename": target_info["filename"],
-        "target_dir": str(target_info["target_dir"]),
-        "target_path": str(target_info["target_path"]),
-        "auth_provided": auth_provided,
-    })
+    # Hugging Face uses token auth. For now, allow the password field
+    # to act as a token placeholder if provided.
+    hf_token = password or None
 
     if stream is False:
+        try:
+            local_path = await model_manager.pull_hf_file(
+                repo_id=target_info["repo_id"],
+                filename=target_info["filename"],
+                token=hf_token,
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
         return JSONResponse({
             "status": "success",
+            "path": local_path,
         })
 
-    def generate():
-        yield json.dumps({"status": "resolving model reference"}) + "\n"
-        yield json.dumps({"status": "creating target directory"}) + "\n"
-        yield json.dumps({"status": "success"}) + "\n"
+    async def generate():
+        yield json.dumps({"status": "resolving repository"}) + "\n"
+        yield json.dumps({"status": "downloading model"}) + "\n"
+
+        try:
+            local_path = await model_manager.pull_hf_file(
+                repo_id=target_info["repo_id"],
+                filename=target_info["filename"],
+                token=hf_token,
+            )
+        except Exception as e:
+            yield json.dumps({
+                "status": f"error: {str(e)}"
+            }) + "\n"
+            return
+
+        yield json.dumps({
+            "status": "success",
+            "path": local_path,
+        }) + "\n"
 
     return StreamingResponse(generate(), media_type="application/x-ndjson")
