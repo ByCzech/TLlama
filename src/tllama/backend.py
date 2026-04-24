@@ -41,6 +41,14 @@ class ModelManager:
 
         self._metadata_cache: Dict[str, CachedMetadataEntry] = {}
 
+        self.hf_models_dir = self.models_dir / "HuggingFace"
+        self.local_models_dir = self.models_dir / "Local"
+        self.tllama_models_dir = self.models_dir / "TLlama"
+
+        self.hf_models_dir.mkdir(parents=True, exist_ok=True)
+        self.local_models_dir.mkdir(parents=True, exist_ok=True)
+        self.tllama_models_dir.mkdir(parents=True, exist_ok=True)
+
     def _now_iso(self) -> str:
         return datetime.now(timezone.utc).isoformat()
 
@@ -662,7 +670,6 @@ class ModelManager:
 
         return enriched
 
-
     def _resolve_kv_cache_type(self, value: str | None) -> int | None:
         if not value:
             return None
@@ -753,5 +760,40 @@ class ModelManager:
         except asyncio.CancelledError:
             raise
 
+    def _split_model_reference(self, model_ref: str) -> List[str]:
+        cleaned = (model_ref or "").strip().strip("/")
+        parts = [part.strip() for part in cleaned.split("/") if part.strip()]
+
+        if not parts:
+            raise ValueError("Empty model reference")
+
+        if any(part in {".", ".."} for part in parts):
+            raise ValueError("Invalid model reference")
+
+        return parts
+
+    def resolve_hf_pull_target(self, model_ref: str) -> Dict[str, Any]:
+        parts = self._split_model_reference(model_ref)
+
+        if len(parts) < 3:
+            raise ValueError(
+                "Expected HuggingFace pull reference in format 'repo/modeldir/filename'"
+            )
+
+        target_path = self.hf_models_dir.joinpath(*parts)
+
+        return {
+            "model_ref": "/".join(parts),
+            "repo": parts[0],
+            "model_dir": "/".join(parts[1:-1]),
+            "filename": parts[-1],
+            "target_dir": target_path.parent,
+            "target_path": target_path,
+        }
+
+    def ensure_directory(self, path: Path) -> None:
+        path.mkdir(parents=True, exist_ok=True)
+
 
 model_manager = ModelManager(load_backend_config_from_env())
+

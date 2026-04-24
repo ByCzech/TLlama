@@ -6,8 +6,8 @@ import jinja2
 from jinja2.sandbox import ImmutableSandboxedEnvironment
 
 from datetime import datetime, timezone
-from fastapi import APIRouter, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import StreamingResponse, JSONResponse
 from llama_cpp import LlamaGrammar
 from tllama.schemas.ollama import OllamaChatRequest, OllamaGenerateRequest
 from tllama.backend import model_manager
@@ -601,3 +601,49 @@ async def list_running_models():
         })
 
     return {"models": formatted}
+
+
+@router.post("/pull")
+async def pull_model_ollama(request: Request):
+    payload = await request.json()
+
+    model_ref = (payload.get("name") or payload.get("model") or "").strip()
+    username = (payload.get("username") or "").strip()
+    password = (payload.get("password") or "").strip()
+    stream = payload.get("stream", True)
+
+    if not model_ref:
+        raise HTTPException(status_code=400, detail="Missing model name")
+
+    try:
+        target_info = model_manager.resolve_hf_pull_target(model_ref)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Prepared for future authenticated HF pull support.
+    auth_provided = bool(username or password)
+
+    model_manager.ensure_directory(target_info["target_dir"])
+
+    print("DEBUG /api/pull target_info:")
+    print({
+        "model_ref": target_info["model_ref"],
+        "repo": target_info["repo"],
+        "model_dir": target_info["model_dir"],
+        "filename": target_info["filename"],
+        "target_dir": str(target_info["target_dir"]),
+        "target_path": str(target_info["target_path"]),
+        "auth_provided": auth_provided,
+    })
+
+    if stream is False:
+        return JSONResponse({
+            "status": "success",
+        })
+
+    def generate():
+        yield json.dumps({"status": "resolving model reference"}) + "\n"
+        yield json.dumps({"status": "creating target directory"}) + "\n"
+        yield json.dumps({"status": "success"}) + "\n"
+
+    return StreamingResponse(generate(), media_type="application/x-ndjson")
