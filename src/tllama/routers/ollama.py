@@ -54,13 +54,17 @@ async def list_models_ollama():
 
     formatted_models = []
     for m in local_models:
-        metadata_info = await model_manager.get_model_metadata(m['id'])
-        if not metadata_info:
-            continue
+        metadata_info = await model_manager.get_model_metadata(m["id"]) or {}
 
         p_size = "unknown"
-        if isinstance(metadata_info["params"], (int, str)) and int(metadata_info["params"]) > 0:
-            p_size = f"{round(int(metadata_info['params']) / 1e9)}b"
+        params_value = metadata_info.get("params")
+        try:
+            if params_value is not None and int(params_value) > 0:
+                p_size = f"{round(int(params_value) / 1e9)}b"
+        except (TypeError, ValueError):
+            p_size = "unknown"
+
+        family = metadata_info.get("arch", "unknown")
 
         formatted_models.append({
             "name": f"{m['id']}",
@@ -71,10 +75,10 @@ async def list_models_ollama():
             "details": {
                 "parent_model": "",
                 "format": "gguf",
-                "family": metadata_info["arch"],
-                "families": [metadata_info["arch"]],
+                "family": family,
+                "families": [family],
                 "parameter_size": p_size,
-                "quantization_level": metadata_info["bits"]
+                "quantization_level": metadata_info.get("bits", "unknown")
             }
         })
 
@@ -545,11 +549,24 @@ async def show_model_info(request: dict):
     if not model_name:
         raise HTTPException(status_code=400, detail="Missing model name")
 
-    metadata_info = await model_manager.get_model_metadata(model_name)
-    if not metadata_info:
-        raise HTTPException(status_code=404, detail="Model doesn't exist")
+    metadata_info = await model_manager.get_model_metadata(model_name) or {}
 
-    template = metadata_info.get("template", None) or "{{ .System }}\nUser: {{ .Prompt }}\nAssistant: "
+    if not metadata_info:
+        model_info = model_manager._build_model_file_info(model_name)
+        if not model_info:
+            raise HTTPException(status_code=404, detail="Model doesn't exist")
+
+    template = metadata_info.get("template") or "{{ .System }}\nUser: {{ .Prompt }}\nAssistant: "
+
+    parameter_size = "unknown"
+    params_value = metadata_info.get("params")
+    try:
+        if params_value is not None and int(params_value) > 0:
+            parameter_size = f"{round(int(params_value) / 1e9)}B"
+    except (TypeError, ValueError):
+        parameter_size = "unknown"
+
+    family = metadata_info.get("arch", "unknown")
 
     return {
         "modelfile": f'FROM {model_name}\nTEMPLATE """{template}"""',
@@ -558,10 +575,10 @@ async def show_model_info(request: dict):
         "details": {
             "parent_model": "",
             "format": "gguf",
-            "family": metadata_info["arch"],
-            "families": [metadata_info["arch"]],
-            "parameter_size": f"{round(int(metadata_info['params']) / 1e9)}B" if metadata_info["params"] else "unknown",
-            "quantization_level": metadata_info["bits"]
+            "family": family,
+            "families": [family],
+            "parameter_size": parameter_size,
+            "quantization_level": metadata_info.get("bits", "unknown")
         }
     }
 
