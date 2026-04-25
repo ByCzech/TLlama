@@ -169,7 +169,11 @@ class ModelManager:
         }
 
     def _build_model_file_info(self, model_name: str) -> Optional[Dict[str, Any]]:
-        model_path = self.models_dir / f"{model_name}.gguf"
+        try:
+            model_path = self.resolve_model_storage_path(model_name)
+        except ValueError:
+            return None
+
         return self._build_model_file_info_from_path(model_path)
 
     def _to_float_mib(self, value: Any) -> float:
@@ -627,26 +631,39 @@ class ModelManager:
 
     def _list_local_models_sync(self) -> List[Dict[str, Any]]:
         """
-        Scan the local model directory for GGUF files.
-        Each model is isolated so one broken file does not break the whole listing.
+        Scan all known repositories for GGUF files.
+        One broken file must not break the whole listing.
         """
         model_list: List[Dict[str, Any]] = []
 
-        for file in sorted(self.models_dir.glob("*.gguf")):
+        for file_path in self._iter_repository_model_files():
             try:
-                model_info = self._build_model_file_info_from_path(file)
+                model_info = self._build_model_file_info_from_path(file_path)
                 if model_info is None:
+                    continue
+
+                model_info["id"] = self._build_model_ref_from_path(file_path)
+
+                if file_path.is_relative_to(self.hf_models_dir):
+                    model_info["repository"] = "HuggingFace"
+                elif file_path.is_relative_to(self.local_models_dir):
+                    model_info["repository"] = "Local"
+                elif file_path.is_relative_to(self.tllama_models_dir):
+                    model_info["repository"] = "TLlama"
+                else:
                     continue
 
                 model_list.append({
                     "id": model_info["id"],
                     "filename": model_info["filename"],
+                    "path": model_info["path"],
                     "size": model_info["size"],
                     "mtime": model_info["mtime"],
                     "sha256": model_info["sha256"],
+                    "repository": model_info["repository"],
                 })
             except Exception as e:
-                print(f"DEBUG: Failed to inspect model file {file}: {e}")
+                print(f"DEBUG: Failed to inspect model file {file_path}: {e}")
 
         return model_list
 
@@ -855,21 +872,152 @@ class ModelManager:
     def resolve_model_storage_path(self, model_ref: str) -> Path:
         """
         Resolve a model reference to its on-disk path inside known repositories.
-        Supports HuggingFace-style nested refs and simple Local/TLlama refs.
+
+        Supported forms:
+        - HuggingFace: namespace/repo/path/to/file[.gguf]
+        - Local:       Local/name            -> Local/name/model.gguf
+        - Local:       Local/path/to/file    -> Local/path/to/file.gguf
+        - TLlama:      TLlama/name           -> TLlama/name/model.gguf
+        - TLlama:      TLlama/path/to/file   -> TLlama/path/to/file.gguf
         """
         parts = self._split_model_reference(model_ref)
+        first = parts[0]
 
-        # HuggingFace: namespace/repo/path/to/file[.gguf]
+        def _normalized_file_path(base_dir: Path, rel_parts: List[str]) -> Path:
+            normalized_parts = list(rel_parts)
+            normalized_parts[-1] = self._normalize_pull_filename(normalized_parts[-1])
+            return base_dir.joinpath(*normalized_parts)
+
+        if first == "Local":
+            rel_parts = parts[1:]
+            if not rel_parts:
+                raise ValueError("Missing Local model path")
+
+            candidates = [
+                _normalized_file_path(self.local_models_dir, rel_parts),
+                self.local_models_dir.joinpath(*rel_parts, "model.gguf"),
+            ]
+
+            for candidate in candidates:
+                if candidate.exists():
+                    return candidate
+
+            return candidates[0]
+
+        if first == "TLlama":
+            rel_parts = parts[1:]
+            if not rel_parts:
+                raise ValueError("Missing TLlama model path")
+
+            candidates = [
+                _normalized_file_path(self.tllama_models_dir, rel_parts),
+                self.tllama_models_dir.joinpath(*rel_parts, "model.gguf"),
+            ]
+
+            for candidate in candidates:
+                if candidate.exists():
+                    return candidate
+
+            return candidates[0]
+
         if len(parts) >= 3:
-            filename_parts = parts[2:]
-            filename_parts[-1] = self._normalize_pull_filename(filename_parts[-1])
-            return self.hf_models_dir.joinpath(parts[0], parts[1], *filename_parts)
+            normalized_parts = list(parts)
+            normalized_parts[-1] = self._normalize_pull_filename(normalized_parts[-1])
+            return self.hf_models_dir.joinpath(*normalized_parts)
 
-        # Local or TLlama simple refs can be added later if needed.
         raise ValueError(
-            "Expected model reference in format 'namespace/repo/file' "
-            "or 'namespace/repo/path/to/file[.gguf]'"
+            "Unsupported model reference. Expected one of: "
+            "'namespace/repo/file', 'namespace/repo/path/to/file[.gguf]', "
+            "'Local/name', 'Local/path/to/file', "
+            "'TLlama/name', or 'TLlama/path/to/file'."
         )
+
+    def _remove_empty_parents(self, start_dir: Path, stop_dir: Path) -> None:
+        current = start_dir
+
+        while True:
+            try:
+                if current == stop_dir or stop_dir not in current.parents:
+                    break
+
+                current.rmdir()
+            except OSError:
+                # Directory is not empty or cannot be removed; stop quietly.
+                break
+
+            current = current.parent
+
+    def delete_model_file(self, model_ref: str) -> Dict[str, Any]:
+        target_path = self.resolve_model_storage_path(model_ref)
+
+        if not target_path.exists():
+            raise FileNotFoundError(f"Model file not found: {target_path}")
+
+        if not target_path.is_file():
+            raise ValueError(f"Target is not a file: {target_path}")
+
+        try:
+            target_path.unlink()
+        except FileNotFoundError:
+            pass
+
+        # Best-effort cleanup of empty parent directories, but do not fail
+        # if other files remain in the directory tree.
+        repo_root = self._get_repo_root_for_path(target_path)
+        self._remove_empty_parents(target_path.parent, repo_root)
+
+        return {
+            "model_ref": model_ref,
+            "deleted_path": str(target_path),
+        }
+
+    async def delete_model(self, model_ref: str) -> Dict[str, Any]:
+        return await asyncio.to_thread(self.delete_model_file, model_ref)
+
+    def _strip_gguf_suffix(self, value: str) -> str:
+        return value[:-5] if value.lower().endswith(".gguf") else value
+
+    def _build_relative_ref_without_suffix(self, base_dir: Path, file_path: Path) -> str:
+        rel = file_path.relative_to(base_dir)
+        parts = list(rel.parts)
+        parts[-1] = self._strip_gguf_suffix(parts[-1])
+        return "/".join(parts)
+
+    def _build_model_ref_from_path(self, file_path: Path) -> str:
+        if file_path.is_relative_to(self.hf_models_dir):
+            return self._build_relative_ref_without_suffix(self.hf_models_dir, file_path)
+
+        if file_path.is_relative_to(self.local_models_dir):
+            rel = file_path.relative_to(self.local_models_dir)
+            if rel.name.lower() == "model.gguf" and len(rel.parts) >= 2:
+                return f"Local/{'/'.join(rel.parts[:-1])}"
+            return f"Local/{self._build_relative_ref_without_suffix(self.local_models_dir, file_path)}"
+
+        if file_path.is_relative_to(self.tllama_models_dir):
+            rel = file_path.relative_to(self.tllama_models_dir)
+            if rel.name.lower() == "model.gguf" and len(rel.parts) >= 2:
+                return f"TLlama/{'/'.join(rel.parts[:-1])}"
+            return f"TLlama/{self._build_relative_ref_without_suffix(self.tllama_models_dir, file_path)}"
+
+        raise ValueError(f"File path is outside known model repositories: {file_path}")
+
+    def _iter_repository_model_files(self):
+        for repo_dir in (self.hf_models_dir, self.local_models_dir, self.tllama_models_dir):
+            if not repo_dir.exists():
+                continue
+
+            for file_path in sorted(repo_dir.rglob("*.gguf")):
+                if file_path.is_file():
+                    yield file_path
+
+    def _get_repo_root_for_path(self, file_path: Path) -> Path:
+        if file_path.is_relative_to(self.hf_models_dir):
+            return self.hf_models_dir
+        if file_path.is_relative_to(self.local_models_dir):
+            return self.local_models_dir
+        if file_path.is_relative_to(self.tllama_models_dir):
+            return self.tllama_models_dir
+        raise ValueError(f"File path is outside known model repositories: {file_path}")
 
 
 model_manager = ModelManager(load_backend_config_from_env())

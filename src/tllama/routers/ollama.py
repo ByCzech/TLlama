@@ -550,7 +550,7 @@ async def show_model_info(request: dict):
     template = metadata_info.get("template", None) or "{{ .System }}\nUser: {{ .Prompt }}\nAssistant: "
 
     return {
-        "modelfile": f"FROM {model_name}.gguf\nTEMPLATE \"\"\"{template}\"\"\"",
+        "modelfile": f'FROM {model_name}\nTEMPLATE """{template}"""',
         "parameters": "stop                           \"<|end_of_text|>\"",
         "template": template,
         "details": {
@@ -607,7 +607,7 @@ async def list_running_models():
 async def pull_model_ollama(request: Request):
     payload = await request.json()
 
-    model_ref = (payload.get("name") or payload.get("model") or "").strip()
+    model_ref = (payload.get("model") or payload.get("name") or "").strip()
     username = (payload.get("username") or "").strip()
     password = (payload.get("password") or "").strip()
     stream = payload.get("stream", True)
@@ -661,3 +661,34 @@ async def pull_model_ollama(request: Request):
         }) + "\n"
 
     return StreamingResponse(generate(), media_type="application/x-ndjson")
+
+
+@router.delete("/delete")
+async def delete_model_ollama(request: Request):
+    payload = await request.json()
+
+    model_ref = (payload.get("name") or payload.get("model") or "").strip()
+    if not model_ref:
+        raise HTTPException(status_code=400, detail="Missing model name")
+
+    # Best-effort unload if the loaded model key matches the incoming ref.
+    # If not loaded, this is harmless.
+    try:
+        if model_manager.is_model_loaded(model_ref):
+            model_manager.unload_model(model_ref)
+    except Exception:
+        pass
+
+    try:
+        result = await model_manager.delete_model(model_ref)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return {
+        "status": "success",
+        "deleted": result["deleted_path"],
+    }
