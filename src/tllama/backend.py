@@ -2,6 +2,7 @@ import os
 import time
 import asyncio
 import gc
+import shutil
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -961,6 +962,8 @@ class ModelManager:
         except FileNotFoundError:
             pass
 
+        self._cleanup_hf_repo_auxiliary(target_path)
+
         # Best-effort cleanup of empty parent directories, but do not fail
         # if other files remain in the directory tree.
         repo_root = self._get_repo_root_for_path(target_path)
@@ -1018,6 +1021,35 @@ class ModelManager:
         if file_path.is_relative_to(self.tllama_models_dir):
             return self.tllama_models_dir
         raise ValueError(f"File path is outside known model repositories: {file_path}")
+
+    def _get_hf_repo_dir_for_file(self, file_path: Path) -> Path | None:
+        if not file_path.is_relative_to(self.hf_models_dir):
+            return None
+
+        rel = file_path.relative_to(self.hf_models_dir)
+        if len(rel.parts) < 2:
+            return None
+
+        return self.hf_models_dir / rel.parts[0] / rel.parts[1]
+
+    def _cleanup_hf_repo_auxiliary(self, file_path: Path) -> None:
+        """
+        Best-effort cleanup for HuggingFace repo-local helper data.
+
+        If no GGUF files remain in the HuggingFace repo subtree, remove the
+        repo-local .cache directory so normal empty-parent cleanup can finish.
+        """
+        repo_dir = self._get_hf_repo_dir_for_file(file_path)
+        if repo_dir is None or not repo_dir.exists():
+            return
+
+        has_remaining_models = any(repo_dir.rglob("*.gguf"))
+        if has_remaining_models:
+            return
+
+        cache_dir = repo_dir / ".cache"
+        if cache_dir.exists():
+            shutil.rmtree(cache_dir, ignore_errors=True)
 
 
 model_manager = ModelManager(load_backend_config_from_env())
