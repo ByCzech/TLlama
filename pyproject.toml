@@ -25,4 +25,4 @@ dependencies = [
 where = ["src"]
 
 [tool.setuptools_scm]
-fallback_version = "0.0.0-unknown"
+fallback_version = "0.0.0-dev"
