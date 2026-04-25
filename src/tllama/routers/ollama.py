@@ -402,17 +402,19 @@ async def ollama_generate(request: OllamaGenerateRequest):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid format schema: {e}")
 
+    metadata_info = await model_manager.get_model_metadata(request.model) or {}
+
     if is_raw:
         prompt_for_completion = request.prompt or ""
         stop_tokens = user_stop
     else:
         prompt_for_completion, stop_tokens = render_generate_prompt(
             llm=llm,
-            metadata_info=model_manager.get_model_metadata(request.model) or {},
+            metadata_info=metadata_info,
             request=request,
         )
 
-    reasoning_format = detect_reasoning_format(request.model, model_manager.get_model_metadata(request.model) or {})
+    reasoning_format = detect_reasoning_format(request.model, metadata_info)
 
     prompt_eval_count = estimate_completion_prompt_eval_count(llm, prompt_for_completion)
 
