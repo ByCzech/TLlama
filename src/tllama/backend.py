@@ -14,6 +14,7 @@ from datetime import datetime, timezone, timedelta
 
 from tllama.config import BackendConfig, load_backend_config_from_env
 from tllama.helpers.llama_stats import load_llama_with_captured_stats
+from tllama.helpers.gguf_metadata import read_gguf_metadata, build_model_metadata_payload
 
 
 __all__ = ('model_manager', 'load_backend_config_from_env')
@@ -559,30 +560,10 @@ class ModelManager:
         return [self._with_runtime_totals(model_info) for model_info in self.active_models.values()]
 
     def _get_model_metadata_sync(self, model_path: str) -> Optional[Dict[str, Any]]:
-        temp_llm = None
-        try:
-            temp_llm = Llama(model_path=model_path, vocab_only=True, verbose=False)
-            meta = dict(temp_llm.metadata or {})
-
-            arch = meta.get("general.architecture", "llama")
-            params = meta.get("general.parameter_count", 0)
-            bits = meta.get("general.quantization_version", "unknown")
-            template = meta.get("tokenizer.chat_template", "")
-
-            return {
-                "arch": arch,
-                "params": params,
-                "bits": bits,
-                "template": template,
-                "metadata_raw": self._filter_metadata_raw_for_cache(meta),
-            }
-        finally:
-            if temp_llm is not None:
-                try:
-                    del temp_llm
-                except Exception:
-                    pass
-            gc.collect()
+        meta = read_gguf_metadata(model_path)
+        payload = build_model_metadata_payload(meta)
+        payload["metadata_raw"] = self._filter_metadata_raw_for_cache(payload.get("metadata_raw", {}))
+        return payload
 
     async def get_model_metadata(
         self,
