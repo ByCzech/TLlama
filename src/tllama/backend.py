@@ -561,9 +561,7 @@ class ModelManager:
 
     def _get_model_metadata_sync(self, model_path: str) -> Optional[Dict[str, Any]]:
         meta = read_gguf_metadata(model_path)
-        payload = build_model_metadata_payload(meta)
-        payload["metadata_raw"] = self._filter_metadata_raw_for_cache(payload.get("metadata_raw", {}))
-        return payload
+        return build_model_metadata_payload(meta)
 
     async def get_model_metadata(
         self,
