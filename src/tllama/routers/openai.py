@@ -70,6 +70,8 @@ async def chat_completions(request: ChatCompletionRequest):
     user_stop = normalize_stop(getattr(request, "stop", None))
     tools = getattr(request, "tools", None)
     tool_choice = getattr(request, "tool_choice", None)
+    functions = getattr(request, "functions", None)
+    function_call = getattr(request, "function_call", None)
 
     gen_params = {
         "max_tokens": max_tokens,
@@ -87,6 +89,10 @@ async def chat_completions(request: ChatCompletionRequest):
         gen_params["tools"] = tools
     if tool_choice is not None:
         gen_params["tool_choice"] = tool_choice
+    if functions is not None:
+        gen_params["functions"] = functions
+    if function_call is not None:
+        gen_params["function_call"] = function_call
 
     created = int(time.time())
     completion_id = f"chatcmpl-{created}"
