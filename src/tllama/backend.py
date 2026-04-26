@@ -950,44 +950,49 @@ class ModelManager:
         - TLlama:      TLlama/path/to/file   -> TLlama/path/to/file.gguf
         """
         parts = self._split_model_reference(model_ref)
-        first = parts[0]
 
         def _normalized_file_path(base_dir: Path, rel_parts: List[str]) -> Path:
             normalized_parts = list(rel_parts)
             normalized_parts[-1] = self._normalize_pull_filename(normalized_parts[-1])
             return base_dir.joinpath(*normalized_parts)
 
-        if first == "Local":
-            rel_parts = parts[1:]
-            if not rel_parts:
-                raise ValueError("Missing Local model path")
-
-            candidates = [
-                _normalized_file_path(self.local_models_dir, rel_parts),
-                self.local_models_dir.joinpath(*rel_parts, "model.gguf"),
-            ]
-
+        def _first_existing_or_default(candidates: List[Path]) -> Path:
             for candidate in candidates:
                 if candidate.exists():
                     return candidate
-
             return candidates[0]
 
-        if first == "TLlama":
-            rel_parts = parts[1:]
-            if not rel_parts:
-                raise ValueError("Missing TLlama model path")
-
-            candidates = [
-                _normalized_file_path(self.tllama_models_dir, rel_parts),
-                self.tllama_models_dir.joinpath(*rel_parts, "model.gguf"),
+        # Prefixless Local reference.
+        # Example: "MyModel-Instruct-Q4_K_L"
+        if len(parts) == 1:
+            local_candidates = [
+                _normalized_file_path(self.local_models_dir, parts),
+                self.local_models_dir.joinpath(*parts, "model.gguf"),
             ]
 
-            for candidate in candidates:
-                if candidate.exists():
-                    return candidate
+            tllama_legacy_candidates = [
+                self.tllama_models_dir.joinpath(*parts, "model.gguf"),
+            ]
 
-            return candidates[0]
+            return _first_existing_or_default(local_candidates + tllama_legacy_candidates)
+
+        # Prefixless TLlama reference.
+        # Example: "collection/model-file"
+        #
+        # If a matching Local nested file exists and the TLlama file does not, keep it
+        # usable as a fallback. Explicit "Local/..." remains the unambiguous form.
+        if len(parts) == 2:
+            tllama_candidates = [
+                _normalized_file_path(self.tllama_models_dir, parts),
+                self.tllama_models_dir.joinpath(*parts, "model.gguf"),
+            ]
+
+            local_fallback_candidates = [
+                _normalized_file_path(self.local_models_dir, parts),
+                self.local_models_dir.joinpath(*parts, "model.gguf"),
+            ]
+
+            return _first_existing_or_default(tllama_candidates + local_fallback_candidates)
 
         if len(parts) >= 3:
             normalized_parts = list(parts)
@@ -1064,14 +1069,14 @@ class ModelManager:
         if file_path.is_relative_to(self.local_models_dir):
             rel = file_path.relative_to(self.local_models_dir)
             if rel.name.lower() == "model.gguf" and len(rel.parts) >= 2:
-                return f"Local/{'/'.join(rel.parts[:-1])}"
-            return f"Local/{self._build_relative_ref_without_suffix(self.local_models_dir, file_path)}"
+                return "/".join(rel.parts[:-1])
+            return self._build_relative_ref_without_suffix(self.local_models_dir, file_path)
 
         if file_path.is_relative_to(self.tllama_models_dir):
             rel = file_path.relative_to(self.tllama_models_dir)
             if rel.name.lower() == "model.gguf" and len(rel.parts) >= 2:
-                return f"TLlama/{'/'.join(rel.parts[:-1])}"
-            return f"TLlama/{self._build_relative_ref_without_suffix(self.tllama_models_dir, file_path)}"
+                return "/".join(rel.parts[:-1])
+            return self._build_relative_ref_without_suffix(self.tllama_models_dir, file_path)
 
         raise ValueError(f"File path is outside known model repositories: {file_path}")
 
