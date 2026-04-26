@@ -15,7 +15,11 @@ from datetime import datetime, timezone, timedelta
 from tllama.config import BackendConfig, load_backend_config_from_env
 from tllama.helpers.llama_stats import load_llama_with_captured_stats
 from tllama.helpers.gguf_metadata import read_gguf_metadata, build_model_metadata_payload
-
+from tllama.helpers.metadata_cache import (
+    load_metadata_cache,
+    save_metadata_cache,
+    delete_metadata_cache
+)
 
 __all__ = ('model_manager', 'load_backend_config_from_env')
 
@@ -36,6 +40,9 @@ class ModelManager:
 
         self.models_dir = Path(self.config.models_dir)
         self.models_dir.mkdir(exist_ok=True)
+
+        self.metadata_cache_dir = self.models_dir / ".tllama" / "metadata-cache"
+        self.metadata_cache_dir.mkdir(parents=True, exist_ok=True)
 
         self.active_models: Dict[str, Dict[str, Any]] = {}
 
@@ -583,26 +590,42 @@ class ModelManager:
             if cached_value is not None:
                 return cached_value
 
-        effective_timeout = (
-            self.config.model_scan_timeout_seconds
-            if timeout_seconds is None
-            else timeout_seconds
+        persistent_cached_value = await asyncio.to_thread(
+            load_metadata_cache,
+            self.metadata_cache_dir,
+            model_info["path"],
         )
 
+        if persistent_cached_value is not None:
+            async with self._lock:
+                self._set_cached_metadata_entry(model_name, fingerprint, persistent_cached_value)
+            return persistent_cached_value
+
         try:
-            metadata = await asyncio.wait_for(
-                asyncio.to_thread(self._get_model_metadata_sync, model_info["path"]),
-                timeout=effective_timeout,
-            )
+            scan_task = asyncio.to_thread(self._get_model_metadata_sync, model_info["path"])
+
+            if timeout_seconds is None:
+                metadata = await scan_task
+            else:
+                metadata = await asyncio.wait_for(scan_task, timeout=timeout_seconds)
+
         except asyncio.TimeoutError:
             print(f"DEBUG: Metadata scan timed out for model {model_name}")
             return None
-        except Exception as e:
-            print(f"DEBUG: Metadata scan failed for model {model_name}: {e}")
+        except Exception as exc:
+            print(f"DEBUG: Metadata scan failed for model {model_name}: {exc}")
             return None
 
         if metadata is None:
             return None
+
+        await asyncio.to_thread(
+            save_metadata_cache,
+            self.metadata_cache_dir,
+            model_name,
+            model_info["path"],
+            metadata,
+        )
 
         async with self._lock:
             self._set_cached_metadata_entry(model_name, fingerprint, metadata)
@@ -940,6 +963,9 @@ class ModelManager:
             target_path.unlink()
         except FileNotFoundError:
             pass
+
+        delete_metadata_cache(self.metadata_cache_dir, target_path)
+        self._invalidate_metadata_cache_entry(model_ref)
 
         self._cleanup_hf_repo_auxiliary(target_path)
 
