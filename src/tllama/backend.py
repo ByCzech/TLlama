@@ -632,6 +632,72 @@ class ModelManager:
 
         return metadata
 
+    async def ensure_metadata_cache_for_path(
+        self,
+        model_path: str | Path,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Ensure that persistent metadata cache exists for a known model file.
+
+        This is intended for post-download indexing. Cache creation is best-effort:
+        failures are logged and returned as None, but they must not make the model
+        pull fail.
+        """
+        file_path = Path(model_path)
+
+        try:
+            model_name = self._build_model_ref_from_path(file_path)
+            model_info = self._build_model_file_info_from_path(file_path)
+        except Exception as exc:
+            print(f"DEBUG: Cannot resolve metadata cache target for {file_path}: {exc}")
+            return None
+
+        if model_info is None:
+            return None
+
+        fingerprint = model_info["sha256"]
+
+        async with self._lock:
+            cached_value = self._get_cached_metadata_entry(model_name, fingerprint)
+            if cached_value is not None:
+                return cached_value
+
+        persistent_cached_value = await asyncio.to_thread(
+            load_metadata_cache,
+            self.metadata_cache_dir,
+            model_info["path"],
+        )
+
+        if persistent_cached_value is not None:
+            async with self._lock:
+                self._set_cached_metadata_entry(model_name, fingerprint, persistent_cached_value)
+            return persistent_cached_value
+
+        try:
+            metadata = await asyncio.to_thread(
+                self._get_model_metadata_sync,
+                model_info["path"],
+            )
+        except Exception as exc:
+            print(f"DEBUG: Metadata cache creation failed for {model_name}: {exc}")
+            return None
+
+        if metadata is None:
+            return None
+
+        await asyncio.to_thread(
+            save_metadata_cache,
+            self.metadata_cache_dir,
+            model_name,
+            model_info["path"],
+            metadata,
+        )
+
+        async with self._lock:
+            self._set_cached_metadata_entry(model_name, fingerprint, metadata)
+
+        return metadata
+
     def _list_local_models_sync(self) -> List[Dict[str, Any]]:
         """
         Scan all known repositories for GGUF files.
@@ -1058,3 +1124,4 @@ class ModelManager:
 
 
 model_manager = ModelManager(load_backend_config_from_env())
+

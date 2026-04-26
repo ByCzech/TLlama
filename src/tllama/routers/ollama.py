@@ -653,6 +653,8 @@ async def pull_model_ollama(request: Request):
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
+        await model_manager.ensure_metadata_cache_for_path(local_path)
+
         return JSONResponse({
             "status": "success",
             "path": local_path,
@@ -673,6 +675,14 @@ async def pull_model_ollama(request: Request):
                 "status": f"error: {str(e)}"
             }) + "\n"
             return
+
+        yield json.dumps({"status": "creating metadata cache"}) + "\n"
+
+        metadata = await model_manager.ensure_metadata_cache_for_path(local_path)
+        if metadata is None:
+            yield json.dumps({"status": "metadata cache unavailable"}) + "\n"
+        else:
+            yield json.dumps({"status": "metadata cache ready"}) + "\n"
 
         yield json.dumps({
             "status": "success",
