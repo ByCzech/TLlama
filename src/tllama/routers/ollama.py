@@ -56,14 +56,6 @@ async def list_models_ollama():
     for m in local_models:
         metadata_info = await model_manager.get_model_metadata(m["id"]) or {}
 
-        p_size = "unknown"
-        params_value = metadata_info.get("params")
-        try:
-            if params_value is not None and int(params_value) > 0:
-                p_size = f"{round(int(params_value) / 1e9)}b"
-        except (TypeError, ValueError):
-            p_size = "unknown"
-
         family = metadata_info.get("arch", "unknown")
 
         formatted_models.append({
@@ -77,8 +69,8 @@ async def list_models_ollama():
                 "format": "gguf",
                 "family": family,
                 "families": [family],
-                "parameter_size": p_size,
-                "quantization_level": metadata_info.get("bits", "unknown")
+                "parameter_size": metadata_info.get("parameter_size", "unknown"),
+                "quantization_level": metadata_info.get("bits", "unknown"),
             }
         })
 
@@ -558,14 +550,6 @@ async def show_model_info(request: dict):
 
     template = metadata_info.get("template") or "{{ .System }}\nUser: {{ .Prompt }}\nAssistant: "
 
-    parameter_size = "unknown"
-    params_value = metadata_info.get("params")
-    try:
-        if params_value is not None and int(params_value) > 0:
-            parameter_size = f"{round(int(params_value) / 1e9)}B"
-    except (TypeError, ValueError):
-        parameter_size = "unknown"
-
     family = metadata_info.get("arch", "unknown")
 
     return {
@@ -577,8 +561,8 @@ async def show_model_info(request: dict):
             "format": "gguf",
             "family": family,
             "families": [family],
-            "parameter_size": parameter_size,
-            "quantization_level": metadata_info.get("bits", "unknown")
+            "parameter_size": metadata_info.get("parameter_size", "unknown"),
+            "quantization_level": metadata_info.get("bits", "unknown"),
         }
     }
 

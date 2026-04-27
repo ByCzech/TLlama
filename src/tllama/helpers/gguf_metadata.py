@@ -264,6 +264,14 @@ def build_model_metadata_payload(meta: Dict[str, Any]) -> Dict[str, Any]:
     template = _as_str(meta.get("tokenizer.chat_template"), "")
 
     params = _as_int(meta.get("general.parameter_count"), 0)
+    size_label = _as_str(meta.get("general.size_label"), "")
+    bits = _quantization_level_from_metadata(meta)
+
+    parameter_size = size_label
+    if not parameter_size and params > 0:
+        parameter_size = f"{round(params / 1e9)}B"
+    if not parameter_size:
+        parameter_size = "unknown"
     bits = _quantization_level_from_metadata(meta)
 
     display_name = _as_str(
@@ -283,6 +291,8 @@ def build_model_metadata_payload(meta: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "arch": arch,
         "params": params,
+        "parameter_size": parameter_size,
+        "size_label": size_label,
         "bits": bits,
         "template": template,
         "context_length": context_length,
