@@ -20,7 +20,7 @@ dependencies = [
 
 [project.scripts]
 # Register tllama cmdline command
-#tllama = "tllama.main:main"
+tllama = "tllama.main:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
