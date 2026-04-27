@@ -501,12 +501,12 @@ Advanced features such as automatic tool calls, vision, and audio are still unde
 
 ## Related Files
 
-- `docs/api-compatibility.md`
-- `docs/configuration.md`
-- `docs/development.md`
-- `docs/metadata-cache.md`
-- `docs/model-repositories.md`
-- `docs/usage.md`
+- [`docs/api-compatibility.md`](docs/api-compatibility.md)
+- [`docs/configuration.md`](docs/configuration.md)
+- [`docs/development.md`](docs/development.md)
+- [`docs/metadata-cache.md`](docs/metadata-cache.md)
+- [`docs/model-repositories.md`](docs/model-repositories.md)
+- [`docs/usage.md`](docs/usage.md)
 
 ---
 
