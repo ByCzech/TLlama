@@ -499,6 +499,17 @@ Advanced features such as automatic tool calls, vision, and audio are still unde
 
 ---
 
+## Related Files
+
+- `docs/api-compatibility.md`
+- `docs/configuration.md`
+- `docs/development.md`
+- `docs/metadata-cache.md`
+- `docs/model-repositories.md`
+- `docs/usage.md`
+
+---
+
 ## License
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
