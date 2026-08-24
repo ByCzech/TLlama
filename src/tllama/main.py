@@ -6,6 +6,7 @@ from fastapi import FastAPI, Response
 from .routers import openai, ollama
 from tllama.backend import model_manager
 from tllama.config import load_app_config_from_env
+from tllama.middleware import UndeclaredJsonBodyMiddleware
 
 
 @asynccontextmanager
@@ -20,6 +21,8 @@ app = FastAPI(
     title="Multi AI Proxy Server",
     lifespan=lifespan
 )
+
+app.add_middleware(UndeclaredJsonBodyMiddleware)
 
 
 app.include_router(openai.router)
