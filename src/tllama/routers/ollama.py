@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 from llama_cpp import LlamaGrammar
 from tllama.schemas.ollama import OllamaChatRequest, OllamaGenerateRequest
-from tllama.backend import model_manager
+from tllama.backend import model_manager, HF_LOOKUP_MISSING
 from tllama.lib.llama_wrap import create_chat_completion_ex
 
 from tllama.helpers.common import (
@@ -636,6 +636,20 @@ async def pull_model_ollama(request: Request):
         filename=target_info["filename"],
         token=hf_token,
     )
+
+    # hf_hub_download creates the whole directory chain implied by the file
+    # name before it checks that the file exists, and leaves it behind when
+    # the check fails. A reference built from a browser URL therefore litters
+    # the model store with empty blob/main and resolve/main trees. Refuse here
+    # instead, but only when the repository actually answered.
+    if hf_file_info.status == HF_LOOKUP_MISSING:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"'{target_info['filename']}' not found in repository "
+                f"'{target_info['repo_id']}'"
+            ),
+        )
 
     if stream is False:
         try:

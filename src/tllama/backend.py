@@ -30,6 +30,21 @@ __all__ = ('model_manager', 'load_backend_config_from_env')
 # reads efficient on multi-gigabyte GGUF files.
 _CONTENT_HASH_CHUNK_SIZE = 8 * 1024 * 1024
 
+# Outcome of asking HuggingFace about a file. MISSING and UNKNOWN must stay
+# distinct: the first means the repository answered and has no such path, so
+# the pull can be refused before anything touches the disk. The second means
+# the question could not be asked, which is never a reason to refuse.
+HF_LOOKUP_FOUND = "found"
+HF_LOOKUP_MISSING = "missing"
+HF_LOOKUP_UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True)
+class HfFileLookup:
+    status: str
+    sha256: str | None = None
+    size: int | None = None
+
 
 @dataclass(frozen=True)
 class CachedMetadataEntry:
@@ -1013,7 +1028,7 @@ class ModelManager:
         filename: str,
         token: str | None = None,
         revision: str | None = None,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> "HfFileLookup":
         """
         Look up the published sha256 and size of a file on HuggingFace.
 
@@ -1022,13 +1037,15 @@ class ModelManager:
         rather than a replacement. This lets a pull record the digest without
         reading the downloaded file back.
 
-        Returns None whenever the information is unavailable, so the caller
-        falls back to hashing locally.
+        Only an empty answer from a repository that did reply is reported as
+        MISSING. Anything else, including every error, is UNKNOWN, so a
+        network or credential problem can never be mistaken for a bad model
+        reference.
         """
         try:
             from huggingface_hub import HfApi
         except ImportError:
-            return None
+            return HfFileLookup(HF_LOOKUP_UNKNOWN)
 
         try:
             entries = HfApi().get_paths_info(
@@ -1039,7 +1056,10 @@ class ModelManager:
             )
         except Exception as exc:
             print(f"DEBUG: HuggingFace file info lookup failed for {repo_id}/{filename}: {exc}")
-            return None
+            return HfFileLookup(HF_LOOKUP_UNKNOWN)
+
+        if not entries:
+            return HfFileLookup(HF_LOOKUP_MISSING)
 
         for entry in entries:
             lfs = getattr(entry, "lfs", None)
@@ -1047,11 +1067,13 @@ class ModelManager:
                 continue
 
             try:
-                return {"sha256": str(lfs.sha256), "size": int(lfs.size)}
+                return HfFileLookup(HF_LOOKUP_FOUND, str(lfs.sha256), int(lfs.size))
             except (AttributeError, TypeError, ValueError):
                 continue
 
-        return None
+        # The path exists but carries no usable LFS metadata, for instance a
+        # directory or a small non-LFS file. Not a reason to refuse the pull.
+        return HfFileLookup(HF_LOOKUP_UNKNOWN)
 
     async def fetch_hf_file_info(
         self,
@@ -1059,7 +1081,7 @@ class ModelManager:
         filename: str,
         token: str | None = None,
         revision: str | None = None,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> "HfFileLookup":
         return await asyncio.to_thread(
             self._fetch_hf_file_info_sync,
             repo_id,
@@ -1071,7 +1093,7 @@ class ModelManager:
     async def store_hf_digest(
         self,
         model_path: str | Path,
-        hf_file_info: Optional[Dict[str, Any]],
+        hf_file_info: Optional["HfFileLookup"],
     ) -> Optional[Dict[str, Any]]:
         """
         Record a digest taken from HuggingFace for a freshly pulled file.
@@ -1085,11 +1107,11 @@ class ModelManager:
         The stored source is "hf" precisely so that a later verification can
         tell a claimed digest from a measured one.
         """
-        if not hf_file_info:
+        if hf_file_info is None or hf_file_info.status != HF_LOOKUP_FOUND:
             return None
 
-        sha256_hex = hf_file_info.get("sha256")
-        expected_size = hf_file_info.get("size")
+        sha256_hex = hf_file_info.sha256
+        expected_size = hf_file_info.size
 
         if not sha256_hex or expected_size is None:
             return None
