@@ -10,6 +10,18 @@ from typing import Any, Dict, Optional
 
 
 SCHEMA_VERSION = 1
+"""Layout version of the GGUF metadata cache document."""
+
+DIGEST_SCHEMA_VERSION = 1
+"""Layout version of the content digest cache document.
+
+Kept separate from SCHEMA_VERSION on purpose. Metadata is cheap to rebuild
+from a GGUF header, the content digest costs a full read of a multi-gigabyte
+file. Bumping one must never invalidate the other.
+"""
+
+_METADATA_SECTION = "metadata"
+_DIGEST_SECTION = "digest"
 
 
 def _utc_now_iso() -> str:
@@ -24,9 +36,15 @@ def _cache_key(model_path: Path) -> str:
 
 
 def get_metadata_cache_path(cache_dir: Path, model_path: str | Path) -> Path:
-    """Return the JSON cache file path for a model file."""
+    """Return the JSON metadata cache file path for a model file."""
     path = Path(model_path)
     return cache_dir / f"{_cache_key(path)}.json"
+
+
+def get_digest_cache_path(cache_dir: Path, model_path: str | Path) -> Path:
+    """Return the JSON content digest cache file path for a model file."""
+    path = Path(model_path)
+    return cache_dir / f"{_cache_key(path)}.digest.json"
 
 
 def build_model_file_fingerprint(model_path: str | Path) -> Dict[str, Any]:
@@ -41,12 +59,16 @@ def build_model_file_fingerprint(model_path: str | Path) -> Dict[str, Any]:
     }
 
 
-def _is_valid_cache_document(document: Any, fingerprint: Dict[str, Any]) -> bool:
-    """Check whether a metadata cache document matches the current model file."""
+def _is_valid_cache_document(
+    document: Any,
+    fingerprint: Dict[str, Any],
+    schema_version: int,
+) -> bool:
+    """Check whether a cache document matches the current model file."""
     if not isinstance(document, dict):
         return False
 
-    if document.get("schema_version") != SCHEMA_VERSION:
+    if document.get("schema_version") != schema_version:
         return False
 
     model = document.get("model")
@@ -60,67 +82,64 @@ def _is_valid_cache_document(document: Any, fingerprint: Dict[str, Any]) -> bool
     )
 
 
-def load_metadata_cache(
-    cache_dir: str | Path,
-    model_path: str | Path,
+def _load_cache_document(
+    cache_path: Path,
+    model_path: Path,
+    schema_version: int,
+    section: str,
 ) -> Optional[Dict[str, Any]]:
     """
-    Load cached model metadata if the cache file exists and is still valid.
+    Load one section of a cache document if it exists and is still valid.
 
     Invalid, stale or unreadable cache files are treated as cache misses.
     """
-    cache_dir = Path(cache_dir)
-    model_path = Path(model_path)
-
     try:
         fingerprint = build_model_file_fingerprint(model_path)
-        cache_path = get_metadata_cache_path(cache_dir, model_path)
 
         with cache_path.open("r", encoding="utf-8") as handle:
             document = json.load(handle)
 
-        if not _is_valid_cache_document(document, fingerprint):
+        if not _is_valid_cache_document(document, fingerprint, schema_version):
             return None
 
-        metadata = document.get("metadata")
-        if not isinstance(metadata, dict):
+        payload = document.get(section)
+        if not isinstance(payload, dict):
             return None
 
-        return metadata
+        return payload
     except FileNotFoundError:
         return None
     except Exception:
         return None
 
 
-def save_metadata_cache(
-    cache_dir: str | Path,
+def _save_cache_document(
+    cache_dir: Path,
+    cache_path: Path,
     model_name: str,
-    model_path: str | Path,
-    metadata: Dict[str, Any],
+    model_path: Path,
+    schema_version: int,
+    section: str,
+    payload: Dict[str, Any],
 ) -> None:
     """
-    Save model metadata to a JSON cache file using an atomic replace.
+    Save one cache document using an atomic replace.
 
     Cache write failures are intentionally non-fatal for the application.
     """
-    cache_dir = Path(cache_dir)
-    model_path = Path(model_path)
-
     try:
         cache_dir.mkdir(parents=True, exist_ok=True)
 
         fingerprint = build_model_file_fingerprint(model_path)
-        cache_path = get_metadata_cache_path(cache_dir, model_path)
 
         document = {
-            "schema_version": SCHEMA_VERSION,
+            "schema_version": schema_version,
             "created_at": _utc_now_iso(),
             "model": {
                 "name": model_name,
                 **fingerprint,
             },
-            "metadata": metadata,
+            section: payload,
         }
 
         fd, tmp_name = tempfile.mkstemp(
@@ -151,15 +170,101 @@ def save_metadata_cache(
         return
 
 
-def delete_metadata_cache(
-    cache_dir: str | Path,
-    model_path: str | Path,
-) -> None:
-    """Delete a model metadata cache file if it exists."""
+def _delete_cache_document(cache_path: Path) -> None:
+    """Delete a cache document if it exists."""
     try:
-        cache_path = get_metadata_cache_path(Path(cache_dir), model_path)
         cache_path.unlink()
     except FileNotFoundError:
         return
     except Exception:
         return
+
+
+def load_metadata_cache(
+    cache_dir: str | Path,
+    model_path: str | Path,
+) -> Optional[Dict[str, Any]]:
+    """Load cached GGUF metadata if the cache file exists and is still valid."""
+    cache_dir = Path(cache_dir)
+    model_path = Path(model_path)
+
+    return _load_cache_document(
+        cache_path=get_metadata_cache_path(cache_dir, model_path),
+        model_path=model_path,
+        schema_version=SCHEMA_VERSION,
+        section=_METADATA_SECTION,
+    )
+
+
+def save_metadata_cache(
+    cache_dir: str | Path,
+    model_name: str,
+    model_path: str | Path,
+    metadata: Dict[str, Any],
+) -> None:
+    """Save GGUF metadata to its JSON cache file."""
+    cache_dir = Path(cache_dir)
+    model_path = Path(model_path)
+
+    _save_cache_document(
+        cache_dir=cache_dir,
+        cache_path=get_metadata_cache_path(cache_dir, model_path),
+        model_name=model_name,
+        model_path=model_path,
+        schema_version=SCHEMA_VERSION,
+        section=_METADATA_SECTION,
+        payload=metadata,
+    )
+
+
+def delete_metadata_cache(
+    cache_dir: str | Path,
+    model_path: str | Path,
+) -> None:
+    """Delete a model metadata cache file if it exists."""
+    _delete_cache_document(get_metadata_cache_path(Path(cache_dir), model_path))
+
+
+def load_digest_cache(
+    cache_dir: str | Path,
+    model_path: str | Path,
+) -> Optional[Dict[str, Any]]:
+    """Load the cached content digest if the cache file exists and is still valid."""
+    cache_dir = Path(cache_dir)
+    model_path = Path(model_path)
+
+    return _load_cache_document(
+        cache_path=get_digest_cache_path(cache_dir, model_path),
+        model_path=model_path,
+        schema_version=DIGEST_SCHEMA_VERSION,
+        section=_DIGEST_SECTION,
+    )
+
+
+def save_digest_cache(
+    cache_dir: str | Path,
+    model_name: str,
+    model_path: str | Path,
+    digest: Dict[str, Any],
+) -> None:
+    """Save a model content digest to its JSON cache file."""
+    cache_dir = Path(cache_dir)
+    model_path = Path(model_path)
+
+    _save_cache_document(
+        cache_dir=cache_dir,
+        cache_path=get_digest_cache_path(cache_dir, model_path),
+        model_name=model_name,
+        model_path=model_path,
+        schema_version=DIGEST_SCHEMA_VERSION,
+        section=_DIGEST_SECTION,
+        payload=digest,
+    )
+
+
+def delete_digest_cache(
+    cache_dir: str | Path,
+    model_path: str | Path,
+) -> None:
+    """Delete a model content digest cache file if it exists."""
+    _delete_cache_document(get_digest_cache_path(Path(cache_dir), model_path))

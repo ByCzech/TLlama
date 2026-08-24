@@ -18,10 +18,17 @@ from tllama.helpers.gguf_metadata import read_gguf_metadata, build_model_metadat
 from tllama.helpers.metadata_cache import (
     load_metadata_cache,
     save_metadata_cache,
-    delete_metadata_cache
+    delete_metadata_cache,
+    load_digest_cache,
+    save_digest_cache,
+    delete_digest_cache
 )
 
 __all__ = ('model_manager', 'load_backend_config_from_env')
+
+# Read size used when hashing model files. Large enough to keep sequential
+# reads efficient on multi-gigabyte GGUF files.
+_CONTENT_HASH_CHUNK_SIZE = 8 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -566,6 +573,78 @@ class ModelManager:
     def list_loaded_models(self) -> List[Dict[str, Any]]:
         return [self._with_runtime_totals(model_info) for model_info in self.active_models.values()]
 
+    def _compute_content_sha256(self, file_path: str | Path) -> str:
+        """
+        Hash the full contents of a model file.
+
+        This is the portable identity of the model: the same bytes yield the
+        same digest regardless of where the file lives, how it got there or
+        when it was written. It is deliberately not derived from path, name
+        or mtime.
+        """
+        digest = sha256()
+
+        with open(file_path, "rb", buffering=0) as handle:
+            while True:
+                chunk = handle.read(_CONTENT_HASH_CHUNK_SIZE)
+                if not chunk:
+                    break
+                digest.update(chunk)
+
+        return digest.hexdigest()
+
+    def _build_model_digest_sync(self, model_path: str | Path) -> Dict[str, Any]:
+        return {
+            "content_sha256": self._compute_content_sha256(model_path),
+            "source": "local",
+        }
+
+    async def get_model_digest(self, model_path: str | Path) -> Optional[Dict[str, Any]]:
+        """
+        Return the content digest of a model file, computing it when missing.
+
+        Takes a filesystem path rather than a model reference on purpose: the
+        digest is a property of the bytes on disk and must not depend on name
+        resolution or on the GGUF header being parseable.
+
+        The cost of the full read is paid once. The result is stored next to
+        the metadata cache in its own document, which invalidates on
+        size + mtime_ns, so a changed file is rehashed and an unchanged one
+        is never hashed twice.
+
+        Returns None only when the file itself cannot be read.
+        """
+        file_path = Path(model_path)
+
+        cached = await asyncio.to_thread(
+            load_digest_cache,
+            self.metadata_cache_dir,
+            file_path,
+        )
+        if cached is not None:
+            return cached
+
+        try:
+            digest = await asyncio.to_thread(self._build_model_digest_sync, file_path)
+        except Exception as exc:
+            print(f"DEBUG: Digest computation failed for {file_path}: {exc}")
+            return None
+
+        try:
+            model_name = self._build_model_ref_from_path(file_path)
+        except ValueError:
+            model_name = str(file_path)
+
+        await asyncio.to_thread(
+            save_digest_cache,
+            self.metadata_cache_dir,
+            model_name,
+            file_path,
+            digest,
+        )
+
+        return digest
+
     def _get_model_metadata_sync(self, model_path: str) -> Optional[Dict[str, Any]]:
         meta = read_gguf_metadata(model_path)
         return build_model_metadata_payload(meta)
@@ -1036,6 +1115,7 @@ class ModelManager:
             pass
 
         delete_metadata_cache(self.metadata_cache_dir, target_path)
+        delete_digest_cache(self.metadata_cache_dir, target_path)
         self._invalidate_metadata_cache_entry(model_ref)
 
         self._cleanup_hf_repo_auxiliary(target_path)

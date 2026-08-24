@@ -55,6 +55,7 @@ async def list_models_ollama():
     formatted_models = []
     for m in local_models:
         metadata_info = await model_manager.get_model_metadata(m["id"]) or {}
+        digest_info = await model_manager.get_model_digest(m["path"]) or {}
 
         family = metadata_info.get("arch", "unknown")
 
@@ -63,7 +64,7 @@ async def list_models_ollama():
             "model": f"{m['id']}",
             "modified_at": datetime.fromtimestamp(m["mtime"], timezone.utc).isoformat(),
             "size": m["size"],
-            "digest": f"{m['sha256']}",
+            "digest": digest_info.get("content_sha256", ""),
             "details": {
                 "parent_model": "",
                 "format": "gguf",
@@ -574,6 +575,7 @@ async def list_running_models():
     formatted = []
     for m in loaded_models:
         metadata_info = await model_manager.get_model_metadata(m["id"]) or {}
+        digest_info = await model_manager.get_model_digest(m["path"]) or {}
 
         p_size = "unknown"
         params = metadata_info.get("params", 0)
@@ -588,7 +590,7 @@ async def list_running_models():
             "name": m["model"],
             "model": m["model"],
             "size": m["size"],
-            "digest": m["sha256"],
+            "digest": digest_info.get("content_sha256", ""),
             "context_length": m["n_ctx"],
             "details": {
                 "parent_model": "",
