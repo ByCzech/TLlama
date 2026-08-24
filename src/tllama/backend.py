@@ -39,7 +39,7 @@ class ModelManager:
         self._lock = asyncio.Lock()
 
         self.models_dir = Path(self.config.models_dir)
-        self.models_dir.mkdir(exist_ok=True)
+        self.models_dir.mkdir(parents=True, exist_ok=True)
 
         self.metadata_cache_dir = self.models_dir / ".tllama" / "metadata-cache"
         self.metadata_cache_dir.mkdir(parents=True, exist_ok=True)
