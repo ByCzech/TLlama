@@ -1007,6 +1007,126 @@ class ModelManager:
             revision,
         )
 
+    def _fetch_hf_file_info_sync(
+        self,
+        repo_id: str,
+        filename: str,
+        token: str | None = None,
+        revision: str | None = None,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Look up the published sha256 and size of a file on HuggingFace.
+
+        The LFS oid is the sha256 of the file contents and is still published
+        for Xet-backed repositories, where the Xet hash is an additional field
+        rather than a replacement. This lets a pull record the digest without
+        reading the downloaded file back.
+
+        Returns None whenever the information is unavailable, so the caller
+        falls back to hashing locally.
+        """
+        try:
+            from huggingface_hub import HfApi
+        except ImportError:
+            return None
+
+        try:
+            entries = HfApi().get_paths_info(
+                repo_id,
+                [filename],
+                revision=revision,
+                token=token,
+            )
+        except Exception as exc:
+            print(f"DEBUG: HuggingFace file info lookup failed for {repo_id}/{filename}: {exc}")
+            return None
+
+        for entry in entries:
+            lfs = getattr(entry, "lfs", None)
+            if lfs is None:
+                continue
+
+            try:
+                return {"sha256": str(lfs.sha256), "size": int(lfs.size)}
+            except (AttributeError, TypeError, ValueError):
+                continue
+
+        return None
+
+    async def fetch_hf_file_info(
+        self,
+        repo_id: str,
+        filename: str,
+        token: str | None = None,
+        revision: str | None = None,
+    ) -> Optional[Dict[str, Any]]:
+        return await asyncio.to_thread(
+            self._fetch_hf_file_info_sync,
+            repo_id,
+            filename,
+            token,
+            revision,
+        )
+
+    async def store_hf_digest(
+        self,
+        model_path: str | Path,
+        hf_file_info: Optional[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Record a digest taken from HuggingFace for a freshly pulled file.
+
+        HuggingFace publishes the sha256, but hf_hub_download only verifies a
+        download against the expected size, so the value is a claim about the
+        bytes rather than a measurement of them. The size is checked before
+        the claim is accepted; on mismatch nothing is stored and the digest is
+        computed locally on next use.
+
+        The stored source is "hf" precisely so that a later verification can
+        tell a claimed digest from a measured one.
+        """
+        if not hf_file_info:
+            return None
+
+        sha256_hex = hf_file_info.get("sha256")
+        expected_size = hf_file_info.get("size")
+
+        if not sha256_hex or expected_size is None:
+            return None
+
+        file_path = Path(model_path)
+
+        try:
+            actual_size = file_path.stat().st_size
+        except OSError as exc:
+            print(f"DEBUG: Cannot stat {file_path} for digest recording: {exc}")
+            return None
+
+        if actual_size != expected_size:
+            print(
+                f"DEBUG: Size mismatch for {file_path} "
+                f"(published {expected_size}, on disk {actual_size}); "
+                "digest will be computed locally"
+            )
+            return None
+
+        digest = {"content_sha256": sha256_hex, "source": "hf"}
+
+        try:
+            model_name = self._build_model_ref_from_path(file_path)
+        except ValueError:
+            model_name = str(file_path)
+
+        await asyncio.to_thread(
+            save_digest_cache,
+            self.metadata_cache_dir,
+            model_name,
+            file_path,
+            digest,
+        )
+
+        return digest
+
     def _normalize_pull_filename(self, filename: str) -> str:
         cleaned = (filename or "").strip()
         if not cleaned:

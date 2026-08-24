@@ -629,6 +629,14 @@ async def pull_model_ollama(request: Request):
     # to act as a token placeholder if provided.
     hf_token = password or None
 
+    # Published sha256 and size, looked up before the transfer. Best effort:
+    # when unavailable the digest is simply computed from the file later.
+    hf_file_info = await model_manager.fetch_hf_file_info(
+        repo_id=target_info["repo_id"],
+        filename=target_info["filename"],
+        token=hf_token,
+    )
+
     if stream is False:
         try:
             local_path = await model_manager.pull_hf_file(
@@ -638,6 +646,9 @@ async def pull_model_ollama(request: Request):
             )
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
+
+        if await model_manager.store_hf_digest(local_path, hf_file_info) is None:
+            await model_manager.get_model_digest(local_path)
 
         await model_manager.ensure_metadata_cache_for_path(local_path)
 
@@ -661,6 +672,14 @@ async def pull_model_ollama(request: Request):
                 "status": f"error: {str(e)}"
             }) + "\n"
             return
+
+        if await model_manager.store_hf_digest(local_path, hf_file_info) is None:
+            # The published digest was unusable. Hash the file here, while it
+            # is still warm, rather than leaving the cost to a later listing.
+            yield json.dumps({"status": "computing sha256 digest"}) + "\n"
+
+            if await model_manager.get_model_digest(local_path) is None:
+                yield json.dumps({"status": "digest unavailable"}) + "\n"
 
         yield json.dumps({"status": "creating metadata cache"}) + "\n"
 
