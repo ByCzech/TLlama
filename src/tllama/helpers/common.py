@@ -104,3 +104,65 @@ def build_completion_format_kwargs(request_format):
         }
 
     return {}
+
+
+DEFAULT_KEEP_ALIVE_SECONDS = 300
+
+
+def normalize_keep_alive(keep_alive: str | int | float | None) -> int | None:
+    """Normalize an Ollama-style keep_alive value to seconds.
+
+    Accepts a bare number of seconds or a duration string with an s, m or h
+    suffix, matching the Ollama API.
+
+    Returns:
+        int:
+            Number of seconds for finite keep-alive values.
+        0:
+            Immediate unload semantics.
+        None:
+            Infinite keep-alive, for any negative value.
+
+    Raises:
+        ValueError: The value is not a recognised keep_alive form.
+    """
+    if keep_alive is None:
+        return DEFAULT_KEEP_ALIVE_SECONDS
+
+    if isinstance(keep_alive, (int, float)):
+        if keep_alive < 0:
+            return None
+        return int(keep_alive)
+
+    value = str(keep_alive).strip().lower()
+
+    if value == "":
+        return DEFAULT_KEEP_ALIVE_SECONDS
+
+    try:
+        numeric = float(value)
+        if numeric < 0:
+            return None
+        return int(numeric)
+    except ValueError:
+        pass
+
+    multipliers = {
+        "s": 1,
+        "m": 60,
+        "h": 3600,
+    }
+
+    suffix = value[-1]
+    if suffix in multipliers:
+        try:
+            numeric = float(value[:-1])
+        except ValueError:
+            raise ValueError(f"Invalid keep_alive value: {keep_alive}")
+
+        if numeric < 0:
+            return None
+
+        return int(numeric * multipliers[suffix])
+
+    raise ValueError(f"Invalid keep_alive value: {keep_alive}")

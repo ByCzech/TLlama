@@ -13,6 +13,7 @@ from typing import Dict, Optional, Any, List
 from datetime import datetime, timezone, timedelta
 
 from tllama.config import BackendConfig, load_backend_config_from_env
+from tllama.helpers.common import normalize_keep_alive
 from tllama.helpers.llama_stats import load_llama_with_captured_stats
 from tllama.helpers.gguf_metadata import read_gguf_metadata, build_model_metadata_payload
 from tllama.helpers.metadata_cache import (
@@ -127,57 +128,21 @@ class ModelManager:
             return default
         return value if value > 0 else default
 
-    def _normalize_keep_alive(self, keep_alive: str | int | float | None) -> int | None:
-        """Normalize Ollama-style keep_alive to seconds.
+    def resolve_keep_alive(self, keep_alive: str | int | float | None) -> int | None:
+        """Resolve a request-level keep_alive to seconds.
 
-        Returns:
-            int:
-                Number of seconds for finite keep-alive values.
-            0:
-                Immediate unload semantics.
-            None:
-                Infinite keep-alive.
+        None means the caller did not ask for anything, in which case the
+        configured TLLAMA_KEEP_ALIVE applies. Any other value overrides it,
+        which is how Ollama treats OLLAMA_KEEP_ALIVE.
+
+        Public because the HTTP layer needs the very same answer to decide
+        whether a request means "unload now". Computing it in two places is
+        what let the two drift apart.
         """
         if keep_alive is None:
-            return 300
+            keep_alive = self.config.keep_alive
 
-        if isinstance(keep_alive, (int, float)):
-            if keep_alive < 0:
-                return None
-            return int(keep_alive)
-
-        value = str(keep_alive).strip().lower()
-
-        if value == "":
-            return 300
-
-        try:
-            numeric = float(value)
-            if numeric < 0:
-                return None
-            return int(numeric)
-        except ValueError:
-            pass
-
-        multipliers = {
-            "s": 1,
-            "m": 60,
-            "h": 3600,
-        }
-
-        suffix = value[-1]
-        if suffix in multipliers:
-            try:
-                numeric = float(value[:-1])
-            except ValueError:
-                raise ValueError(f"Invalid keep_alive value: {keep_alive}")
-
-            if numeric < 0:
-                return None
-
-            return int(numeric * multipliers[suffix])
-
-        raise ValueError(f"Invalid keep_alive value: {keep_alive}")
+        return normalize_keep_alive(keep_alive)
 
     def _build_model_file_info_from_path(self, file_path: Path) -> Optional[Dict[str, Any]]:
         if not file_path.exists():
@@ -467,7 +432,7 @@ class ModelManager:
         self,
         model_name: str,
         num_ctx: int | None = None,
-        keep_alive: str | int | float | None = "5m",
+        keep_alive: str | int | float | None = None,
     ) -> Llama:
         async with self._lock:
             if self._janitor_task is None or self._janitor_task.done():
@@ -486,12 +451,8 @@ class ModelManager:
             if effective_num_ctx is None:
                 effective_num_ctx = self.config.context_length
 
-            effective_keep_alive = keep_alive
-            if effective_keep_alive is None:
-                effective_keep_alive = self.config.keep_alive
-
             requested_n_ctx = self._normalize_num_ctx(effective_num_ctx, default=0)
-            keep_alive_seconds = self._normalize_keep_alive(effective_keep_alive)
+            keep_alive_seconds = self.resolve_keep_alive(keep_alive)
 
             current_n_ctx = self.active_models.get(model_name, {}).get("n_ctx")
 

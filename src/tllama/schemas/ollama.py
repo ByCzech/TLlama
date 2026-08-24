@@ -24,7 +24,7 @@ class OllamaChatRequest(BaseModel):
     think: ThinkValue = None
     format: FormatValue = None
     options: dict = Field(default_factory=dict)
-    keep_alive: Optional[Union[str, int, float]] = "5m"
+    keep_alive: KeepAliveValue = None
     tools: Optional[List[Dict[str, Any]]] = None
 
     @field_validator("options", mode="before")
@@ -43,7 +43,7 @@ class OllamaGenerateRequest(BaseModel):
     think: ThinkValue = None
     format: FormatValue = None
     raw: StrictBool | None = False
-    keep_alive: KeepAliveValue = "5m"
+    keep_alive: KeepAliveValue = None
     options: dict = Field(default_factory=dict)
     images: Optional[List[str]] = None
     suffix: Optional[str] = None
@@ -57,8 +57,3 @@ class OllamaGenerateRequest(BaseModel):
     @classmethod
     def prevent_none_prompt(cls, v):
         return "" if v is None else v
-
-    @field_validator("keep_alive", mode="before")
-    @classmethod
-    def prevent_none_keep_alive(cls, v):
-        return "5m" if v is None else v

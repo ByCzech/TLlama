@@ -84,7 +84,7 @@ async def ollama_chat(request: OllamaChatRequest):
     opts = request.options or {}
 
     try:
-        keep_alive_seconds = model_manager._normalize_keep_alive(request.keep_alive)
+        keep_alive_seconds = model_manager.resolve_keep_alive(request.keep_alive)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid keep_alive value: {str(e)}")
 
@@ -331,7 +331,7 @@ async def ollama_generate(request: OllamaGenerateRequest):
     opts = request.options or {}
 
     try:
-        keep_alive_seconds = model_manager._normalize_keep_alive(request.keep_alive)
+        keep_alive_seconds = model_manager.resolve_keep_alive(request.keep_alive)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid keep_alive value: {str(e)}")
 
