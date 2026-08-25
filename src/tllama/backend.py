@@ -292,92 +292,10 @@ class ModelManager:
     def _with_runtime_totals(self, model_info: Dict[str, Any]) -> Dict[str, Any]:
         """
         Return a copy of loaded model info with:
-        - Ollama-like ps fields (size, size_vram)
+        - Ollama-like ps fields (size, size_vram, size_ram)
         - debug/runtime totals
         """
-        item = dict(model_info)
-
-        gpu_model_mib = self._to_float_mib(item.get("gpu_model_mib"))
-        gpu_kv_mib = self._to_float_mib(item.get("gpu_kv_mib"))
-        gpu_compute_mib = self._to_float_mib(item.get("gpu_compute_mib"))
-        gpu_output_mib = self._to_float_mib(item.get("gpu_output_mib"))
-        gpu_rs_mib = self._to_float_mib(item.get("gpu_rs_mib"))
-
-        gpu_host_model_mib = self._to_float_mib(item.get("gpu_host_model_mib"))
-        gpu_host_kv_mib = self._to_float_mib(item.get("gpu_host_kv_mib"))
-        gpu_host_compute_mib = self._to_float_mib(item.get("gpu_host_compute_mib"))
-        gpu_host_output_mib = self._to_float_mib(item.get("gpu_host_output_mib"))
-        gpu_host_rs_mib = self._to_float_mib(item.get("gpu_host_rs_mib"))
-
-        cpu_model_mib = self._to_float_mib(item.get("cpu_model_mib"))
-        cpu_kv_mib = self._to_float_mib(item.get("cpu_kv_mib"))
-        cpu_compute_mib = self._to_float_mib(item.get("cpu_compute_mib"))
-        cpu_output_mib = self._to_float_mib(item.get("cpu_output_mib"))
-        cpu_rs_mib = self._to_float_mib(item.get("cpu_rs_mib"))
-
-        # True residency buckets
-        gpu_loaded_mib = gpu_model_mib + gpu_kv_mib
-        cpu_loaded_mib = cpu_model_mib + cpu_kv_mib
-        loaded_total_mib = gpu_loaded_mib + cpu_loaded_mib
-
-        # Ollama-like ps-facing size fields
-        ps_size_mib = (
-            gpu_loaded_mib +
-            cpu_loaded_mib +
-            gpu_compute_mib +
-            gpu_rs_mib +
-            gpu_host_model_mib +
-            gpu_host_output_mib
-        )
-
-        # For Ollama-like PROCESSOR split, only true CPU-loaded model/KV memory
-        # should count as CPU. GPU host/helper buffers are still GPU-associated.
-        ps_size_vram_mib = max(ps_size_mib - cpu_loaded_mib, 0.0)
-
-        # Full runtime/debug totals
-        gpu_total_runtime_mib = (
-            gpu_model_mib +
-            gpu_kv_mib +
-            gpu_compute_mib +
-            gpu_output_mib +
-            gpu_rs_mib +
-            gpu_host_model_mib +
-            gpu_host_kv_mib +
-            gpu_host_compute_mib +
-            gpu_host_output_mib +
-            gpu_host_rs_mib
-        )
-
-        cpu_total_runtime_mib = (
-            cpu_model_mib +
-            cpu_kv_mib +
-            cpu_compute_mib +
-            cpu_output_mib +
-            cpu_rs_mib
-        )
-
-        total_runtime_mib = gpu_total_runtime_mib + cpu_total_runtime_mib
-
-        item["gpu_loaded_mib"] = gpu_loaded_mib
-        item["cpu_loaded_mib"] = cpu_loaded_mib
-        item["loaded_total_mib"] = loaded_total_mib
-
-        item["gpu_loaded_bytes"] = self._mib_to_bytes(gpu_loaded_mib)
-        item["cpu_loaded_bytes"] = self._mib_to_bytes(cpu_loaded_mib)
-        item["loaded_total_bytes"] = self._mib_to_bytes(loaded_total_mib)
-
-        item["ps_size_vram_mib"] = ps_size_vram_mib
-        item["ps_size_mib"] = ps_size_mib
-        item["ps_size_vram_bytes"] = self._mib_to_bytes(ps_size_vram_mib)
-        item["ps_size_bytes"] = self._mib_to_bytes(ps_size_mib)
-
-        item["gpu_total_runtime_mib"] = gpu_total_runtime_mib
-        item["cpu_total_runtime_mib"] = cpu_total_runtime_mib
-        item["total_runtime_mib"] = total_runtime_mib
-
-        item["gpu_total_runtime_bytes"] = self._mib_to_bytes(gpu_total_runtime_mib)
-        item["cpu_total_runtime_bytes"] = self._mib_to_bytes(cpu_total_runtime_mib)
-        item["total_runtime_bytes"] = self._mib_to_bytes(total_runtime_mib)
+        item = {**model_info, **self._build_memory_accounting(model_info)}
 
         # Ollama-compatible public fields
         item["size_vram"] = item["ps_size_vram_bytes"]
