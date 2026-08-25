@@ -73,6 +73,10 @@ class ModelManager:
 
         self._metadata_cache: Dict[str, CachedMetadataEntry] = {}
 
+        # Paths already reported as sitting outside the reference scheme, so a
+        # stray file does not produce a warning on every model listing.
+        self._reported_unusable_files: set[str] = set()
+
         self.hf_models_dir = self.models_dir / "HuggingFace"
         self.local_models_dir = self.models_dir / "Local"
         self.tllama_models_dir = self.models_dir / "TLlama"
@@ -1182,13 +1186,41 @@ class ModelManager:
         raise ValueError(f"File path is outside known model repositories: {file_path}")
 
     def _iter_repository_model_files(self):
-        for repo_dir in (self.hf_models_dir, self.local_models_dir, self.tllama_models_dir):
+        """Yield the model files that the reference scheme can name.
+
+        A reference has one segment for Local, two for TLlama and three or
+        more for HuggingFace, so a file is only usable at the matching depth
+        inside its repository. The scan used to accept any depth, which meant
+        a file placed a level too deep was listed by /api/tags and then failed
+        to load, because the name it was given resolved somewhere else.
+        """
+        repositories = (
+            (self.local_models_dir, 1, 1, "directly in the repository"),
+            (self.tllama_models_dir, 2, 2, "one directory deep"),
+            (self.hf_models_dir, 3, None, "at least two directories deep"),
+        )
+
+        for repo_dir, min_depth, max_depth, expectation in repositories:
             if not repo_dir.exists():
                 continue
 
             for file_path in sorted(repo_dir.rglob("*.gguf")):
-                if file_path.is_file():
-                    yield file_path
+                if not file_path.is_file():
+                    continue
+
+                depth = len(file_path.relative_to(repo_dir).parts)
+
+                if depth < min_depth or (max_depth is not None and depth > max_depth):
+                    key = str(file_path)
+                    if key not in self._reported_unusable_files:
+                        self._reported_unusable_files.add(key)
+                        logger.warning(
+                            "Ignoring %s: a model in %s has to sit %s",
+                            file_path, repo_dir.name, expectation,
+                        )
+                    continue
+
+                yield file_path
 
     def _get_repo_root_for_path(self, file_path: Path) -> Path:
         if file_path.is_relative_to(self.hf_models_dir):
