@@ -62,10 +62,7 @@ class ModelManager:
         self._lock = asyncio.Lock()
 
         self.models_dir = Path(self.config.models_dir)
-        self.models_dir.mkdir(parents=True, exist_ok=True)
-
         self.metadata_cache_dir = self.models_dir / ".tllama" / "metadata-cache"
-        self.metadata_cache_dir.mkdir(parents=True, exist_ok=True)
 
         self.active_models: Dict[str, Dict[str, Any]] = {}
 
@@ -77,9 +74,27 @@ class ModelManager:
         self.local_models_dir = self.models_dir / "Local"
         self.tllama_models_dir = self.models_dir / "TLlama"
 
-        self.hf_models_dir.mkdir(parents=True, exist_ok=True)
-        self.local_models_dir.mkdir(parents=True, exist_ok=True)
-        self.tllama_models_dir.mkdir(parents=True, exist_ok=True)
+    def ensure_storage(self) -> None:
+        """Create the model store layout.
+
+        Kept out of the constructor deliberately. A ModelManager is built at
+        import time, so doing this there meant that merely importing the
+        package created directories under the configured models path, by
+        default somewhere in /var/lib. That fired for anything that imports
+        the module without intending to run a server: a test, a documentation
+        build, a one-off script. It also needed write access to that path
+        before the process had done anything.
+
+        Called from start(), so a running server behaves exactly as before.
+        """
+        for directory in (
+            self.models_dir,
+            self.metadata_cache_dir,
+            self.hf_models_dir,
+            self.local_models_dir,
+            self.tllama_models_dir,
+        ):
+            directory.mkdir(parents=True, exist_ok=True)
 
     def _now_iso(self) -> str:
         return datetime.now(timezone.utc).isoformat()
@@ -858,6 +873,8 @@ class ModelManager:
         return kwargs
 
     async def start(self):
+        self.ensure_storage()
+
         async with self._lock:
             if self._janitor_task is None or self._janitor_task.done():
                 self._janitor_task = asyncio.create_task(
