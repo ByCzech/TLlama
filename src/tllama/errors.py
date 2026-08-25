@@ -1,5 +1,7 @@
 from typing import Mapping
 
+import json
+
 from fastapi import Request
 from fastapi.exception_handlers import (
     http_exception_handler as default_http_exception_handler,
@@ -48,6 +50,20 @@ def ollama_error_response(
         content={"error": message},
         headers=dict(headers) if headers else None,
     )
+
+
+def ollama_stream_error_line(message: str) -> str:
+    """Error line for a stream that has already started.
+
+    Once the first chunk is on the wire the status code is fixed at 200, so a
+    failure can only be reported inside the body. Ollama sends the same flat
+    "error" key it uses elsewhere, and its Python client inspects every
+    streamed object for that key and raises ResponseError when it appears.
+
+    A status string that merely begins with the word error does not work: the
+    client only looks at the key.
+    """
+    return json.dumps({"error": message}) + "\n"
 
 
 def describe_validation_error(exc: RequestValidationError) -> str:

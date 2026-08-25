@@ -13,6 +13,8 @@ from tllama.schemas.ollama import OllamaChatRequest, OllamaGenerateRequest
 from tllama.backend import model_manager, HF_LOOKUP_MISSING
 from tllama.lib.llama_wrap import create_chat_completion_ex
 
+from tllama.errors import ollama_stream_error_line
+
 from tllama.helpers.common import (
     get_iso_time,
     never_expires_at,
@@ -262,6 +264,11 @@ async def ollama_chat(request: OllamaChatRequest):
                     'eval_count': eval_count,
                 })}\n"
 
+            except Exception as e:
+                # The status code went out with the first chunk, so an error
+                # line in the body is the only way left to report a failure.
+                yield ollama_stream_error_line(str(e))
+
             finally:
                 if keep_alive_seconds == 0:
                     model_manager.unload_model(request.model)
@@ -491,6 +498,11 @@ async def ollama_generate(request: OllamaGenerateRequest):
                     'eval_count': eval_count,
                     'context': []
                 })}\n"
+            except Exception as e:
+                # The status code went out with the first chunk, so an error
+                # line in the body is the only way left to report a failure.
+                yield ollama_stream_error_line(str(e))
+
             finally:
                 if keep_alive_seconds == 0:
                     model_manager.unload_model(request.model)
@@ -683,9 +695,7 @@ async def pull_model_ollama(request: Request):
                 token=hf_token,
             )
         except Exception as e:
-            yield json.dumps({
-                "status": f"error: {str(e)}"
-            }) + "\n"
+            yield ollama_stream_error_line(str(e))
             return
 
         if await model_manager.store_hf_digest(local_path, hf_file_info) is None:
