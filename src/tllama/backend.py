@@ -1141,12 +1141,14 @@ class ModelManager:
         """
         Resolve a model reference to its on-disk path inside known repositories.
 
-        Supported forms:
-        - HuggingFace: namespace/repo/path/to/file[.gguf]
-        - Local:       Local/name            -> Local/name/model.gguf
-        - Local:       Local/path/to/file    -> Local/path/to/file.gguf
-        - TLlama:      TLlama/name           -> TLlama/name/model.gguf
-        - TLlama:      TLlama/path/to/file   -> TLlama/path/to/file.gguf
+        The repository is chosen by how many segments the reference has:
+
+        - one:            Local/<name>.gguf
+        - two:            TLlama/<namespace>/<name>.gguf
+        - three or more:  HuggingFace/<namespace>/<repo>/<path>.gguf
+
+        A HuggingFace reference may nest further, because a repository there
+        can keep a quantisation in a subdirectory.
         """
         parts = self._split_model_reference(model_ref)
 
@@ -1164,16 +1166,7 @@ class ModelManager:
         # Prefixless Local reference.
         # Example: "MyModel-Instruct-Q4_K_L"
         if len(parts) == 1:
-            local_candidates = [
-                _normalized_file_path(self.local_models_dir, parts),
-                self.local_models_dir.joinpath(*parts, "model.gguf"),
-            ]
-
-            tllama_legacy_candidates = [
-                self.tllama_models_dir.joinpath(*parts, "model.gguf"),
-            ]
-
-            return _first_existing_or_default(local_candidates + tllama_legacy_candidates)
+            return _normalized_file_path(self.local_models_dir, parts)
 
         # Prefixless TLlama reference.
         # Example: "collection/model-file"
@@ -1181,17 +1174,10 @@ class ModelManager:
         # If a matching Local nested file exists and the TLlama file does not, keep it
         # usable as a fallback. Explicit "Local/..." remains the unambiguous form.
         if len(parts) == 2:
-            tllama_candidates = [
+            return _first_existing_or_default([
                 _normalized_file_path(self.tllama_models_dir, parts),
-                self.tllama_models_dir.joinpath(*parts, "model.gguf"),
-            ]
-
-            local_fallback_candidates = [
                 _normalized_file_path(self.local_models_dir, parts),
-                self.local_models_dir.joinpath(*parts, "model.gguf"),
-            ]
-
-            return _first_existing_or_default(tllama_candidates + local_fallback_candidates)
+            ])
 
         if len(parts) >= 3:
             normalized_parts = list(parts)
@@ -1267,15 +1253,9 @@ class ModelManager:
             return self._build_relative_ref_without_suffix(self.hf_models_dir, file_path)
 
         if file_path.is_relative_to(self.local_models_dir):
-            rel = file_path.relative_to(self.local_models_dir)
-            if rel.name.lower() == "model.gguf" and len(rel.parts) >= 2:
-                return "/".join(rel.parts[:-1])
             return self._build_relative_ref_without_suffix(self.local_models_dir, file_path)
 
         if file_path.is_relative_to(self.tllama_models_dir):
-            rel = file_path.relative_to(self.tllama_models_dir)
-            if rel.name.lower() == "model.gguf" and len(rel.parts) >= 2:
-                return "/".join(rel.parts[:-1])
             return self._build_relative_ref_without_suffix(self.tllama_models_dir, file_path)
 
         raise ValueError(f"File path is outside known model repositories: {file_path}")

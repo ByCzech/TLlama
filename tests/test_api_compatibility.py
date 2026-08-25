@@ -98,16 +98,3 @@ def test_the_janitor_never_reaps_a_model_without_an_expiry(manager):
     assert manager._is_model_entry_expired({"expires_at": None}) is False
     assert manager._is_model_entry_expired({"expires_at": "2000-01-01T00:00:00+00:00"}) is True
 
-
-def test_a_file_named_model_gguf_is_referenced_by_its_directory(manager, gguf_file):
-    """Undocumented behaviour, pinned here so a change to it is deliberate.
-
-    A file literally named model.gguf takes the name of the directory holding
-    it. It is not part of the documented one/two/three segment scheme.
-    """
-    path = gguf_file("Local/qwen3/model.gguf")
-
-    reference = manager._build_model_ref_from_path(path)
-
-    assert reference == "qwen3"
-    assert manager.resolve_model_storage_path(reference) == path
