@@ -48,8 +48,12 @@ def binding(monkeypatch):
         model = holder["model"]
         return FakePerfData(n_p_eval=model.counts[0], n_eval=model.counts[1])
 
+    def llama_perf_context_reset(ctx):
+        holder["model"].counts = [0, 0]
+
     module = types.ModuleType("llama_cpp.llama_cpp")
     module.llama_perf_context = llama_perf_context
+    module.llama_perf_context_reset = llama_perf_context_reset
     package = types.ModuleType("llama_cpp")
     package.llama_cpp = module
     monkeypatch.setitem(sys.modules, "llama_cpp", package)
@@ -64,26 +68,40 @@ def test_counters_are_read_from_the_context(binding):
     assert _ext.eval_counters(model) == (26, 110)
 
 
-def test_a_request_is_the_difference_between_two_readings(binding):
-    """The counters accumulate over the life of the context, not per request."""
-    model = FakeLlama(prompt_tokens=26, generated_tokens=110)
-    binding["model"] = model
-    before = _ext.eval_counters(model)
+def test_a_reading_describes_the_request_since_the_reset(binding):
+    """The counters restart at each reset, so one reading is one request."""
+    binding["model"] = model = FakeLlama(prompt_tokens=99, generated_tokens=999)
 
-    model.advance(prompt_tokens=12, generated_tokens=48)
+    was_reset = _ext.reset_eval_counters(model)
+    model.advance(prompt_tokens=24, generated_tokens=636)
 
-    assert _ext.counted_since(before, model) == (12, 48)
+    assert was_reset is True
+    assert _ext.counted_for_request(was_reset, model) == (24, 636)
 
 
-def test_a_context_reset_between_readings_yields_nothing(binding):
-    """A negative difference is meaningless, not merely imprecise."""
-    model = FakeLlama(prompt_tokens=26, generated_tokens=110)
-    binding["model"] = model
-    before = _ext.eval_counters(model)
+def test_leftovers_from_an_earlier_request_do_not_leak_in(binding):
+    """The defect this replaced: llama-cpp-python resets these itself, but
+    only when verbose is on, so a reading taken without one spans requests."""
+    binding["model"] = model = FakeLlama(prompt_tokens=24, generated_tokens=636)
 
-    model.counts = [0, 0]
+    _ext.reset_eval_counters(model)
+    model.advance(prompt_tokens=24, generated_tokens=376)
 
-    assert _ext.counted_since(before, model) == (None, None)
+    assert _ext.counted_for_request(True, model) == (24, 376)
+
+
+def test_a_reading_without_a_reset_reports_nothing(binding):
+    """A count covering an unknown span is worse than an absent one."""
+    binding["model"] = model = FakeLlama(prompt_tokens=24, generated_tokens=636)
+
+    assert _ext.counted_for_request(False, model) == (None, None)
+
+
+def test_a_reset_that_cannot_happen_says_so(binding, monkeypatch):
+    monkeypatch.delattr(sys.modules["llama_cpp.llama_cpp"], "llama_perf_context_reset")
+    binding["model"] = model = FakeLlama()
+
+    assert _ext.reset_eval_counters(model) is False
 
 
 def test_a_missing_symbol_degrades_to_nothing(binding, monkeypatch):
@@ -92,7 +110,7 @@ def test_a_missing_symbol_degrades_to_nothing(binding, monkeypatch):
     binding["model"] = model = FakeLlama()
 
     assert _ext.eval_counters(model) is None
-    assert _ext.counted_since((0, 0), model) == (None, None)
+    assert _ext.counted_for_request(True, model) == (None, None)
 
 
 def test_a_moved_internal_degrades_to_nothing(binding):
@@ -115,5 +133,6 @@ def test_a_failing_call_degrades_to_nothing(binding):
 
 def test_an_unavailable_reading_leaves_the_caller_with_nothing_to_report(binding):
     binding["model"] = model = FakeLlama()
+    del model._ctx
 
-    assert _ext.counted_since(None, model) == (None, None)
+    assert _ext.counted_for_request(True, model) == (None, None)

@@ -41,17 +41,43 @@ def _perf_context_data(llm: Any) -> Optional[Any]:
         return None
 
 
+def reset_eval_counters(llm: Any) -> bool:
+    """Zero a context's evaluation counters ahead of a request.
+
+    llama-cpp-python zeroes them itself, but only when the model was built
+    with verbose=True, because it does so as a side effect of printing
+    timings. Leaving it at that would make the token counts a server reports
+    depend on whether logging happens to be on, so this does it explicitly.
+
+    Returns whether the reset took place. A reading only describes one
+    request if it did.
+    """
+    try:
+        from llama_cpp import llama_cpp as binding
+    except ImportError:
+        return False
+
+    context = getattr(getattr(llm, "_ctx", None), "ctx", None)
+    reset = getattr(binding, "llama_perf_context_reset", None)
+
+    if context is None or reset is None:
+        return False
+
+    try:
+        reset(context)
+    except Exception:
+        return False
+
+    return True
+
+
 def eval_counters(llm: Any) -> Optional[tuple[int, int]]:
-    """Tokens this context has evaluated so far, as (prompt, generated).
+    """Tokens a context has evaluated, as (prompt, generated).
 
-    These are the numbers llama.cpp prints as "prompt eval time / N tokens"
-    and "eval time / N runs". They accumulate over the life of the context,
-    so a single request is the difference between two readings rather than
-    either reading on its own.
-
-    Taking that difference is only meaningful because generation on a model
-    is serialised: with two requests interleaved on one context the counters
-    would mix.
+    These are the figures llama.cpp prints as "prompt eval time / N tokens"
+    and "eval time / N runs". They count from the last reset, not over the
+    life of the context, so one request is a single reading taken after it
+    rather than a difference between two.
     """
     data = _perf_context_data(llm)
     if data is None:
@@ -63,22 +89,18 @@ def eval_counters(llm: Any) -> Optional[tuple[int, int]]:
         return None
 
 
-def counted_since(before: Optional[tuple[int, int]], llm: Any) -> tuple[Optional[int], Optional[int]]:
-    """Tokens evaluated since a reading, as (prompt_eval_count, eval_count).
+def counted_for_request(was_reset: bool, llm: Any) -> tuple[Optional[int], Optional[int]]:
+    """Tokens evaluated for one request, as (prompt_eval_count, eval_count).
 
-    Returns a pair of None when either reading is unavailable, which is what
-    the field held before these counters were used at all.
+    Yields a pair of None unless the counters were zeroed beforehand. Without
+    that the reading spans an unknown number of earlier requests, and a wrong
+    count is worse than the absent one the field carried before.
     """
-    after = eval_counters(llm)
-    if before is None or after is None:
+    if not was_reset:
         return None, None
 
-    prompt_tokens = after[0] - before[0]
-    generated_tokens = after[1] - before[1]
-
-    # A context reset between the two readings makes the difference
-    # meaningless rather than merely imprecise.
-    if prompt_tokens < 0 or generated_tokens < 0:
+    counters = eval_counters(llm)
+    if counters is None:
         return None, None
 
-    return prompt_tokens, generated_tokens
+    return counters

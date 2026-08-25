@@ -11,7 +11,7 @@ from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
 from llama_cpp import LlamaGrammar
 from tllama.schemas.ollama import OllamaChatRequest, OllamaGenerateRequest
 from tllama.backend import model_manager, HF_LOOKUP_MISSING
-from tllama._ext import counted_since, eval_counters
+from tllama._ext import counted_for_request, reset_eval_counters
 from tllama.lib.llama_wrap import create_chat_completion_ex
 
 from tllama.errors import ollama_stream_error_line
@@ -169,7 +169,7 @@ async def ollama_chat(request: OllamaChatRequest):
         def chat_stream_generator():
             finish_reason = None
             eval_count = None
-            counters_before = eval_counters(llm)
+            counters_reset = reset_eval_counters(llm)
             splitter = ReasoningStreamSplitter(reasoning_format, think_value=request.think)
 
             try:
@@ -259,14 +259,9 @@ async def ollama_chat(request: OllamaChatRequest):
 
                 # llama-cpp-python reports usage only on a non-streaming
                 # response, so ask llama.cpp for its own counters instead.
-                #
-                # Only the generated count is taken from there. Its
-                # n_p_eval counts tokens actually evaluated, which drops to
-                # zero once the prompt is served from the prefix cache, while
-                # Ollama reports the length of the prompt every time. Clients
-                # divide by it to show prompt throughput, so parity wins over
-                # the more truthful figure.
-                _, counted_eval = counted_since(counters_before, llm)
+                # The prompt figure is left alone for now; whether it matches
+                # what Ollama reports is a separate question.
+                _, counted_eval = counted_for_request(counters_reset, llm)
 
                 yield f"{json.dumps({
                     'model': request.model,
@@ -459,7 +454,7 @@ async def ollama_generate(request: OllamaGenerateRequest):
 
             finish_reason = None
             eval_count = None
-            counters_before = eval_counters(llm)
+            counters_reset = reset_eval_counters(llm)
             splitter = ReasoningStreamSplitter(reasoning_format, think_value=request.think)
 
             try:
@@ -513,14 +508,9 @@ async def ollama_generate(request: OllamaGenerateRequest):
 
                 # llama-cpp-python reports usage only on a non-streaming
                 # response, so ask llama.cpp for its own counters instead.
-                #
-                # Only the generated count is taken from there. Its
-                # n_p_eval counts tokens actually evaluated, which drops to
-                # zero once the prompt is served from the prefix cache, while
-                # Ollama reports the length of the prompt every time. Clients
-                # divide by it to show prompt throughput, so parity wins over
-                # the more truthful figure.
-                _, counted_eval = counted_since(counters_before, llm)
+                # The prompt figure is left alone for now; whether it matches
+                # what Ollama reports is a separate question.
+                _, counted_eval = counted_for_request(counters_reset, llm)
 
                 yield f"{json.dumps({
                     'model': request.model,
