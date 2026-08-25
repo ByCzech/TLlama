@@ -1,6 +1,22 @@
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from llama_cpp import LlamaGrammar
+
+
+# Ollama has no "does not expire" state on the wire. A negative keep_alive
+# becomes time.Duration(math.MaxInt64) nanoseconds and expires_at is simply
+# that far ahead, which its CLI renders as "Forever" for anything more than
+# twenty years out. A JSON null decodes into Go's zero time, which is in the
+# past, and the same CLI renders anything past as "Stopping...". So a model
+# pinned in memory has to be reported with this horizon, not with null.
+NEVER_EXPIRES_SECONDS = (2 ** 63 - 1) // 1_000_000_000
+
+
+def never_expires_at() -> str:
+    """Expiry timestamp an Ollama client renders as "Forever"."""
+    return (
+        datetime.now(timezone.utc) + timedelta(seconds=NEVER_EXPIRES_SECONDS)
+    ).isoformat()
 
 
 def get_iso_time():

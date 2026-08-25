@@ -15,6 +15,7 @@ from tllama.lib.llama_wrap import create_chat_completion_ex
 
 from tllama.helpers.common import (
     get_iso_time,
+    never_expires_at,
     normalize_stop,
     normalize_max_tokens_from_options,
     normalize_message_content,
@@ -600,7 +601,7 @@ async def list_running_models():
                 "parameter_size": p_size,
                 "quantization_level": metadata_info.get("bits", "unknown"),
             },
-            "expires_at": m["expires_at"],
+            "expires_at": m["expires_at"] or never_expires_at(),
             "size": m["size"],
             "size_vram": m["size_vram"]
         })
