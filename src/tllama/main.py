@@ -2,11 +2,17 @@ import uvicorn
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Response
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .routers import openai, ollama
 from tllama.backend import model_manager
 from tllama.config import load_app_config_from_env
 from tllama.middleware import UndeclaredJsonBodyMiddleware
+from tllama.errors import (
+    http_exception_handler,
+    validation_exception_handler,
+)
 
 
 @asynccontextmanager
@@ -23,6 +29,11 @@ app = FastAPI(
 )
 
 app.add_middleware(UndeclaredJsonBodyMiddleware)
+
+# FastAPI's HTTPException subclasses Starlette's, so one registration covers
+# both.
+app.add_exception_handler(StarletteHTTPException, http_exception_handler)
+app.add_exception_handler(RequestValidationError, validation_exception_handler)
 
 
 app.include_router(openai.router)
