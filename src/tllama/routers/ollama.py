@@ -259,9 +259,12 @@ async def ollama_chat(request: OllamaChatRequest):
 
                 # llama-cpp-python reports usage only on a non-streaming
                 # response, so ask llama.cpp for its own counters instead.
-                # The prompt figure is left alone for now; whether it matches
-                # what Ollama reports is a separate question.
-                _, counted_eval = counted_for_request(counters_reset, llm)
+                #
+                # n_p_eval counts tokens actually evaluated, which in principle
+                # could fall below the prompt length once a prefix is reused.
+                # It does not today: llama.cpp cannot remove part of a KV cache
+                # entry, so it re-evaluates the whole prompt and the two agree.
+                counted_prompt, counted_eval = counted_for_request(counters_reset, llm)
 
                 yield f"{json.dumps({
                     'model': request.model,
@@ -269,7 +272,7 @@ async def ollama_chat(request: OllamaChatRequest):
                     'done': True,
                     'done_reason': finish_reason,
                     'total_duration': end_time - start_time,
-                    'prompt_eval_count': None,
+                    'prompt_eval_count': counted_prompt,
                     'eval_count': eval_count if eval_count is not None else counted_eval,
                 })}\n"
 
@@ -508,9 +511,12 @@ async def ollama_generate(request: OllamaGenerateRequest):
 
                 # llama-cpp-python reports usage only on a non-streaming
                 # response, so ask llama.cpp for its own counters instead.
-                # The prompt figure is left alone for now; whether it matches
-                # what Ollama reports is a separate question.
-                _, counted_eval = counted_for_request(counters_reset, llm)
+                #
+                # n_p_eval counts tokens actually evaluated, which in principle
+                # could fall below the prompt length once a prefix is reused.
+                # It does not today: llama.cpp cannot remove part of a KV cache
+                # entry, so it re-evaluates the whole prompt and the two agree.
+                counted_prompt, counted_eval = counted_for_request(counters_reset, llm)
 
                 yield f"{json.dumps({
                     'model': request.model,
@@ -518,7 +524,7 @@ async def ollama_generate(request: OllamaGenerateRequest):
                     'done': True,
                     'done_reason': finish_reason,
                     'total_duration': end_time - start_time,
-                    'prompt_eval_count': prompt_eval_count,
+                    'prompt_eval_count': counted_prompt if counted_prompt is not None else prompt_eval_count,
                     'eval_count': eval_count if eval_count is not None else counted_eval,
                     'context': []
                 })}\n"
