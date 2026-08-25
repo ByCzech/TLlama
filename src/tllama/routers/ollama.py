@@ -259,7 +259,14 @@ async def ollama_chat(request: OllamaChatRequest):
 
                 # llama-cpp-python reports usage only on a non-streaming
                 # response, so ask llama.cpp for its own counters instead.
-                counted_prompt, counted_eval = counted_since(counters_before, llm)
+                #
+                # Only the generated count is taken from there. Its
+                # n_p_eval counts tokens actually evaluated, which drops to
+                # zero once the prompt is served from the prefix cache, while
+                # Ollama reports the length of the prompt every time. Clients
+                # divide by it to show prompt throughput, so parity wins over
+                # the more truthful figure.
+                _, counted_eval = counted_since(counters_before, llm)
 
                 yield f"{json.dumps({
                     'model': request.model,
@@ -267,7 +274,7 @@ async def ollama_chat(request: OllamaChatRequest):
                     'done': True,
                     'done_reason': finish_reason,
                     'total_duration': end_time - start_time,
-                    'prompt_eval_count': counted_prompt,
+                    'prompt_eval_count': None,
                     'eval_count': eval_count if eval_count is not None else counted_eval,
                 })}\n"
 
@@ -506,7 +513,14 @@ async def ollama_generate(request: OllamaGenerateRequest):
 
                 # llama-cpp-python reports usage only on a non-streaming
                 # response, so ask llama.cpp for its own counters instead.
-                counted_prompt, counted_eval = counted_since(counters_before, llm)
+                #
+                # Only the generated count is taken from there. Its
+                # n_p_eval counts tokens actually evaluated, which drops to
+                # zero once the prompt is served from the prefix cache, while
+                # Ollama reports the length of the prompt every time. Clients
+                # divide by it to show prompt throughput, so parity wins over
+                # the more truthful figure.
+                _, counted_eval = counted_since(counters_before, llm)
 
                 yield f"{json.dumps({
                     'model': request.model,
@@ -514,7 +528,7 @@ async def ollama_generate(request: OllamaGenerateRequest):
                     'done': True,
                     'done_reason': finish_reason,
                     'total_duration': end_time - start_time,
-                    'prompt_eval_count': counted_prompt if counted_prompt is not None else prompt_eval_count,
+                    'prompt_eval_count': prompt_eval_count,
                     'eval_count': eval_count if eval_count is not None else counted_eval,
                     'context': []
                 })}\n"
