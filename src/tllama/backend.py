@@ -2,6 +2,7 @@ import os
 import time
 import asyncio
 import logging
+from contextlib import asynccontextmanager
 import gc
 import shutil
 
@@ -64,6 +65,10 @@ class ModelManager:
         self.models: Dict[str, Llama] = {}
         self._lock = asyncio.Lock()
 
+        # Guards the slot registry only, so it is never held across a load or
+        # a generation. Kept separate from _lock deliberately.
+        self._state_lock = asyncio.Lock()
+
         self.models_dir = Path(self.config.models_dir)
         self.metadata_cache_dir = self.models_dir / ".tllama" / "metadata-cache"
 
@@ -76,6 +81,9 @@ class ModelManager:
         # Paths already reported as sitting outside the reference scheme, so a
         # stray file does not produce a warning on every model listing.
         self._reported_unusable_files: set[str] = set()
+
+        # One semaphore per model name, guarding generation on that model.
+        self._inference_slots: Dict[str, asyncio.Semaphore] = {}
 
         self.hf_models_dir = self.models_dir / "HuggingFace"
         self.local_models_dir = self.models_dir / "Local"
@@ -367,6 +375,41 @@ class ModelManager:
                 f"Loaded model limit reached ({self.config.max_loaded_models}). "
                 "Unload a model first or increase TLLAMA_MAX_LOADED_MODELS."
             )
+
+    def _inference_slots_for(self, model_name: str) -> int:
+        """How many generations a model can run at once.
+
+        One, because llama-cpp-python gives no way to have more. Its Llama
+        object owns a single context and a single KV cache, and neither the
+        constructor nor create_completion accepts a sequence id, so two
+        concurrent generations on one object corrupt each other's state. The
+        library's own server serialises every request globally for this
+        reason; per model is the same guarantee, only finer.
+
+        llama.cpp itself can do better. A context carries n_seq_max and a
+        batch carries a seq_id, which is how llama-server serves --parallel N
+        with the weights loaded once and only the KV cache multiplied. Reaching
+        that means replacing or extending the binding layer, and when it
+        happens this method is what changes.
+        """
+        return 1
+
+    @asynccontextmanager
+    async def acquire_inference_slot(self, model_name: str):
+        """Hold a generation slot for a model for the duration of a request.
+
+        Callers must hold this for the whole generation, streaming included,
+        and must not assume anything about ordering between models: slots are
+        per model, so different models run concurrently.
+        """
+        async with self._state_lock:
+            slots = self._inference_slots.get(model_name)
+            if slots is None:
+                slots = asyncio.Semaphore(self._inference_slots_for(model_name))
+                self._inference_slots[model_name] = slots
+
+        async with slots:
+            yield
 
     async def get_model(
         self,

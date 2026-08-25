@@ -3,6 +3,7 @@ import time
 import asyncio
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
+from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
 from tllama.schemas.openai import ChatCompletionRequest
 from tllama.backend import model_manager
 from tllama.errors import openai_stream_error_frame
@@ -213,15 +214,23 @@ async def chat_completions(request: ChatCompletionRequest):
             except Exception as e:
                 yield openai_stream_error_frame(str(e))
 
-        return StreamingResponse(generate(), media_type="text/event-stream")
+        async def guarded_generate():
+            # The slot is held for the whole stream, not just its creation.
+            async with model_manager.acquire_inference_slot(request.model):
+                async for frame in iterate_in_threadpool(generate()):
+                    yield frame
 
-    response = create_chat_completion_ex(
-        llm,
-        messages=messages,
-        stream=False,
-        **gen_params,
-        **kwargs_ex
-    )
+        return StreamingResponse(guarded_generate(), media_type="text/event-stream")
+
+    async with model_manager.acquire_inference_slot(request.model):
+        response = await run_in_threadpool(
+            create_chat_completion_ex,
+            llm,
+            messages=messages,
+            stream=False,
+            **gen_params,
+            **kwargs_ex
+        )
 
     choice = response["choices"][0]
     choice_message = choice.get("message", {}) or {}

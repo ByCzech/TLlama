@@ -7,6 +7,7 @@ from jinja2.sandbox import ImmutableSandboxedEnvironment
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse, JSONResponse
+from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
 from llama_cpp import LlamaGrammar
 from tllama.schemas.ollama import OllamaChatRequest, OllamaGenerateRequest
 from tllama.backend import model_manager, HF_LOOKUP_MISSING
@@ -272,16 +273,24 @@ async def ollama_chat(request: OllamaChatRequest):
                 if keep_alive_seconds == 0:
                     model_manager.unload_model(request.model)
 
-        return StreamingResponse(chat_stream_generator(), media_type="application/x-ndjson")
+        async def guarded_chat_stream():
+            # The slot is held for the whole stream, not just its creation.
+            async with model_manager.acquire_inference_slot(request.model):
+                async for chunk in iterate_in_threadpool(chat_stream_generator()):
+                    yield chunk
+
+        return StreamingResponse(guarded_chat_stream(), media_type="application/x-ndjson")
 
     try:
-        response = create_chat_completion_ex(
-            llm,
-            messages=messages,
-            stream=False,
-            **gen_params,
-            **kwargs_ex
-        )
+        async with model_manager.acquire_inference_slot(request.model):
+            response = await run_in_threadpool(
+                create_chat_completion_ex,
+                llm,
+                messages=messages,
+                stream=False,
+                **gen_params,
+                **kwargs_ex
+            )
     finally:
         if keep_alive_seconds == 0:
             model_manager.unload_model(request.model)
@@ -506,16 +515,23 @@ async def ollama_generate(request: OllamaGenerateRequest):
                 if keep_alive_seconds == 0:
                     model_manager.unload_model(request.model)
 
-        return StreamingResponse(generate_stream(), media_type="application/x-ndjson")
+        async def guarded_generate_stream():
+            async with model_manager.acquire_inference_slot(request.model):
+                async for chunk in iterate_in_threadpool(generate_stream()):
+                    yield chunk
+
+        return StreamingResponse(guarded_generate_stream(), media_type="application/x-ndjson")
 
     try:
-        response = llm.create_completion(
-            prompt=prompt_for_completion,
-            suffix=suffix_text,
-            stream=False,
-            stop=stop_tokens,
-            **generation_kwargs
-        )
+        async with model_manager.acquire_inference_slot(request.model):
+            response = await run_in_threadpool(
+                llm.create_completion,
+                prompt=prompt_for_completion,
+                suffix=suffix_text,
+                stream=False,
+                stop=stop_tokens,
+                **generation_kwargs
+            )
     finally:
         if keep_alive_seconds == 0:
             model_manager.unload_model(request.model)
