@@ -40,6 +40,8 @@ fallback_version = "0.0.0-dev"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Run the suite from a plain checkout, without an editable install.
+pythonpath = ["src"]
 # Async tests need no decorator, so a test reads the same whether or not the
 # thing it exercises happens to be a coroutine.
 asyncio_mode = "auto"
