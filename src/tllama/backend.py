@@ -1,6 +1,7 @@
 import os
 import time
 import asyncio
+import logging
 import gc
 import shutil
 
@@ -26,6 +27,8 @@ from tllama.helpers.metadata_cache import (
 )
 
 __all__ = ('model_manager', 'load_backend_config_from_env')
+
+logger = logging.getLogger(__name__)
 
 # Read size used when hashing model files. Large enough to keep sequential
 # reads efficient on multi-gigabyte GGUF files.
@@ -478,7 +481,7 @@ class ModelManager:
             if model_name not in self.models:
                 self._ensure_capacity_for_load(model_name)
 
-                print(f"DEBUG: Loading model {model_name} with n_ctx={requested_n_ctx}...")
+                logger.debug("Loading model %s with n_ctx=%s", model_name, requested_n_ctx)
 
                 llm, load_stats, load_log = await asyncio.to_thread(
                     self._load_model_sync,
@@ -618,7 +621,7 @@ class ModelManager:
         try:
             digest = await asyncio.to_thread(self._build_model_digest_sync, file_path)
         except Exception as exc:
-            print(f"DEBUG: Digest computation failed for {file_path}: {exc}")
+            logger.warning("Digest computation failed for %s: %s", file_path, exc)
             return None
 
         try:
@@ -680,10 +683,10 @@ class ModelManager:
                 metadata = await asyncio.wait_for(scan_task, timeout=timeout_seconds)
 
         except asyncio.TimeoutError:
-            print(f"DEBUG: Metadata scan timed out for model {model_name}")
+            logger.warning("Metadata scan timed out for model %s", model_name)
             return None
         except Exception as exc:
-            print(f"DEBUG: Metadata scan failed for model {model_name}: {exc}")
+            logger.warning("Metadata scan failed for model %s: %s", model_name, exc)
             return None
 
         if metadata is None:
@@ -719,7 +722,7 @@ class ModelManager:
             model_name = self._build_model_ref_from_path(file_path)
             model_info = self._build_model_file_info_from_path(file_path)
         except Exception as exc:
-            print(f"DEBUG: Cannot resolve metadata cache target for {file_path}: {exc}")
+            logger.debug("Cannot resolve metadata cache target for %s: %s", file_path, exc)
             return None
 
         if model_info is None:
@@ -749,7 +752,7 @@ class ModelManager:
                 model_info["path"],
             )
         except Exception as exc:
-            print(f"DEBUG: Metadata cache creation failed for {model_name}: {exc}")
+            logger.warning("Metadata cache creation failed for %s: %s", model_name, exc)
             return None
 
         if metadata is None:
@@ -802,7 +805,7 @@ class ModelManager:
                     "repository": model_info["repository"],
                 })
             except Exception as e:
-                print(f"DEBUG: Failed to inspect model file {file_path}: {e}")
+                logger.warning("Failed to inspect model file %s: %s", file_path, e)
 
         return model_list
 
@@ -913,7 +916,7 @@ class ModelManager:
                     ]
 
                     for model_name in expired_model_names:
-                        print(f"DEBUG: Auto-unloading expired model {model_name}")
+                        logger.debug("Auto-unloading expired model %s", model_name)
                         self._unload_model_internal(model_name)
         except asyncio.CancelledError:
             raise
@@ -1033,7 +1036,7 @@ class ModelManager:
                 token=token,
             )
         except Exception as exc:
-            print(f"DEBUG: HuggingFace file info lookup failed for {repo_id}/{filename}: {exc}")
+            logger.debug("HuggingFace file info lookup failed for %s/%s: %s", repo_id, filename, exc)
             return HfFileLookup(HF_LOOKUP_UNKNOWN)
 
         if not entries:
@@ -1099,14 +1102,14 @@ class ModelManager:
         try:
             actual_size = file_path.stat().st_size
         except OSError as exc:
-            print(f"DEBUG: Cannot stat {file_path} for digest recording: {exc}")
+            logger.warning("Cannot stat %s for digest recording: %s", file_path, exc)
             return None
 
         if actual_size != expected_size:
-            print(
-                f"DEBUG: Size mismatch for {file_path} "
-                f"(published {expected_size}, on disk {actual_size}); "
-                "digest will be computed locally"
+            logger.warning(
+                "Size mismatch for %s (published %s, on disk %s); "
+                "digest will be computed locally",
+                file_path, expected_size, actual_size,
             )
             return None
 

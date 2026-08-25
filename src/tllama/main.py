@@ -1,3 +1,5 @@
+import logging
+
 import uvicorn
 
 from contextlib import asynccontextmanager
@@ -57,6 +59,13 @@ async def health_check():
 
 def start_server():
     config = load_app_config_from_env()
+
+    # Only the entry point configures logging. Importing the package must not
+    # touch the root logger, because an embedder owns that decision.
+    logging.basicConfig(
+        level=logging.DEBUG if config.debug else logging.INFO,
+        format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
+    )
 
     kwargs = {
         "host": config.host,
