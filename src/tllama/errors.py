@@ -146,6 +146,35 @@ def validation_error_param(exc: RequestValidationError) -> str | None:
     return None
 
 
+def openai_stream_error_frame(
+    message: str,
+    status_code: int = 500,
+    param: str | None = None,
+    code: str | None = None,
+) -> str:
+    """SSE frame for a stream that has already started.
+
+    The headers are out by the time inference can fail, so the status is
+    fixed at 200 and the failure can only travel as a frame. The official
+    Python client inspects every plain data frame, one carrying no event
+    line, for an "error" key and raises APIError with the message taken from
+    that object.
+
+    The frame has to arrive before [DONE], because the client stops reading
+    there.
+    """
+    payload = {
+        "error": {
+            "message": message,
+            "type": openai_error_type(status_code),
+            "param": param,
+            "code": code,
+        }
+    }
+
+    return f"data: {json.dumps(payload)}\n\n"
+
+
 def describe_validation_error(exc: RequestValidationError) -> str:
     """Flatten a pydantic validation failure into one readable sentence.
 

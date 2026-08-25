@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from tllama.schemas.openai import ChatCompletionRequest
 from tllama.backend import model_manager
+from tllama.errors import openai_stream_error_frame
 from tllama.lib.llama_wrap import create_chat_completion_ex
 
 from tllama.helpers.common import (
@@ -109,7 +110,7 @@ async def chat_completions(request: ChatCompletionRequest):
     completion_id = f"chatcmpl-{created}"
 
     if stream:
-        def generate():
+        def generate_frames():
             response_iter = create_chat_completion_ex(
                 llm,
                 messages=messages,
@@ -203,6 +204,14 @@ async def chat_completions(request: ChatCompletionRequest):
             })}\n\n"
 
             yield "data: [DONE]\n\n"
+
+        def generate():
+            # The headers are out by the time inference can fail, so the
+            # status is fixed at 200 and a frame is the only channel left.
+            try:
+                yield from generate_frames()
+            except Exception as e:
+                yield openai_stream_error_frame(str(e))
 
         return StreamingResponse(generate(), media_type="text/event-stream")
 
