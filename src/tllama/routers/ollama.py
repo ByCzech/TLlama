@@ -11,6 +11,7 @@ from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
 from llama_cpp import LlamaGrammar
 from tllama.schemas.ollama import OllamaChatRequest, OllamaGenerateRequest
 from tllama.backend import model_manager, HF_LOOKUP_MISSING
+from tllama._ext import counted_since, eval_counters
 from tllama.lib.llama_wrap import create_chat_completion_ex
 
 from tllama.errors import ollama_stream_error_line
@@ -168,6 +169,7 @@ async def ollama_chat(request: OllamaChatRequest):
         def chat_stream_generator():
             finish_reason = None
             eval_count = None
+            counters_before = eval_counters(llm)
             splitter = ReasoningStreamSplitter(reasoning_format, think_value=request.think)
 
             try:
@@ -254,14 +256,19 @@ async def ollama_chat(request: OllamaChatRequest):
                     yield f"{json.dumps(payload)}\n"
 
                 end_time = time.time_ns()
+
+                # llama-cpp-python reports usage only on a non-streaming
+                # response, so ask llama.cpp for its own counters instead.
+                counted_prompt, counted_eval = counted_since(counters_before, llm)
+
                 yield f"{json.dumps({
                     'model': request.model,
                     'created_at': get_iso_time(),
                     'done': True,
                     'done_reason': finish_reason,
                     'total_duration': end_time - start_time,
-                    'prompt_eval_count': None,
-                    'eval_count': eval_count,
+                    'prompt_eval_count': counted_prompt,
+                    'eval_count': eval_count if eval_count is not None else counted_eval,
                 })}\n"
 
             except Exception as e:
@@ -445,6 +452,7 @@ async def ollama_generate(request: OllamaGenerateRequest):
 
             finish_reason = None
             eval_count = None
+            counters_before = eval_counters(llm)
             splitter = ReasoningStreamSplitter(reasoning_format, think_value=request.think)
 
             try:
@@ -496,14 +504,18 @@ async def ollama_generate(request: OllamaGenerateRequest):
 
                 end_time = time.time_ns()
 
+                # llama-cpp-python reports usage only on a non-streaming
+                # response, so ask llama.cpp for its own counters instead.
+                counted_prompt, counted_eval = counted_since(counters_before, llm)
+
                 yield f"{json.dumps({
                     'model': request.model,
                     'created_at': get_iso_time(),
                     'done': True,
                     'done_reason': finish_reason,
                     'total_duration': end_time - start_time,
-                    'prompt_eval_count': prompt_eval_count,
-                    'eval_count': eval_count,
+                    'prompt_eval_count': counted_prompt if counted_prompt is not None else prompt_eval_count,
+                    'eval_count': eval_count if eval_count is not None else counted_eval,
                     'context': []
                 })}\n"
             except Exception as e:
