@@ -25,6 +25,28 @@ OLLAMA_API_PREFIX = "/api/"
 # violation is 422, which no Ollama client expects.
 OLLAMA_VALIDATION_STATUS = 400
 
+# The OpenAI-compatible surface, which uses a different error shape.
+OPENAI_API_PREFIX = "/v1/"
+
+# OpenAI answers a malformed request with 400, and its Python client picks the
+# exception class from the status alone: 400 is BadRequestError, 422 is
+# UnprocessableEntityError.
+OPENAI_VALIDATION_STATUS = 400
+
+OPENAI_ERROR_TYPES = {
+    400: "invalid_request_error",
+    401: "authentication_error",
+    403: "permission_error",
+    404: "not_found_error",
+    422: "invalid_request_error",
+    429: "rate_limit_error",
+}
+
+
+def is_openai_api_path(path: str) -> bool:
+    """Whether a request belongs to the OpenAI-compatible surface."""
+    return path.startswith(OPENAI_API_PREFIX)
+
 
 def is_ollama_api_path(path: str) -> bool:
     """Whether a request belongs to the Ollama-compatible surface."""
@@ -66,6 +88,64 @@ def ollama_stream_error_line(message: str) -> str:
     return json.dumps({"error": message}) + "\n"
 
 
+def openai_error_type(status_code: int) -> str:
+    """Map an HTTP status to an OpenAI error type.
+
+    The OpenAI schema types this field as a plain string and does not
+    enumerate it, so this is the conventional vocabulary rather than a closed
+    set. Ollama collapses everything outside 400 and 404 into api_error;
+    reporting the actual category costs nothing and is strictly more
+    informative to a client that looks.
+    """
+    if status_code >= 500:
+        return "server_error"
+
+    return OPENAI_ERROR_TYPES.get(status_code, "invalid_request_error")
+
+
+def openai_error_response(
+    status_code: int,
+    message: str,
+    param: str | None = None,
+    code: str | None = None,
+    headers: Mapping[str, str] | None = None,
+) -> JSONResponse:
+    """Build an error body in the shape the OpenAI schema defines.
+
+    ErrorResponse wraps an Error object whose type, message, param and code
+    are all required, so param and code are emitted as null rather than
+    omitted when there is nothing to say. The official Python client reads
+    all three of type, param and code off the body.
+    """
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "error": {
+                "message": message,
+                "type": openai_error_type(status_code),
+                "param": param,
+                "code": code,
+            }
+        },
+        headers=dict(headers) if headers else None,
+    )
+
+
+def validation_error_param(exc: RequestValidationError) -> str | None:
+    """The offending field of the first validation failure, if identifiable.
+
+    This is what the OpenAI param field is for. Ollama always reports null.
+    """
+    for error in exc.errors():
+        location = ".".join(
+            str(item) for item in error.get("loc", ()) if item != "body"
+        )
+        if location:
+            return location
+
+    return None
+
+
 def describe_validation_error(exc: RequestValidationError) -> str:
     """Flatten a pydantic validation failure into one readable sentence.
 
@@ -95,6 +175,13 @@ async def http_exception_handler(
             getattr(exc, "headers", None),
         )
 
+    if is_openai_api_path(request.url.path):
+        return openai_error_response(
+            exc.status_code,
+            str(exc.detail),
+            headers=getattr(exc, "headers", None),
+        )
+
     return await default_http_exception_handler(request, exc)
 
 
@@ -106,6 +193,13 @@ async def validation_exception_handler(
         return ollama_error_response(
             OLLAMA_VALIDATION_STATUS,
             describe_validation_error(exc),
+        )
+
+    if is_openai_api_path(request.url.path):
+        return openai_error_response(
+            OPENAI_VALIDATION_STATUS,
+            describe_validation_error(exc),
+            param=validation_error_param(exc),
         )
 
     return await default_validation_exception_handler(request, exc)

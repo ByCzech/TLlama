@@ -1,7 +1,7 @@
 import json
 import time
 import asyncio
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from tllama.schemas.openai import ChatCompletionRequest
 from tllama.backend import model_manager
@@ -51,7 +51,18 @@ async def list_models_openai():
 
 @router.post("/chat/completions")
 async def chat_completions(request: ChatCompletionRequest):
-    llm = await model_manager.get_model(request.model)
+    try:
+        llm = await model_manager.get_model(request.model)
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=404,
+            detail=f"The model '{request.model}' does not exist",
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error loading model: {str(e)}")
+
     metadata_info = await model_manager.get_model_metadata(request.model) or {}
 
     messages = build_openai_chat_messages(request)
