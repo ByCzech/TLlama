@@ -22,6 +22,11 @@ dependencies = [
 [project.optional-dependencies]
 # Only used by the HuggingFace pull path, behind a guarded import.
 huggingface = ["huggingface_hub>=0.30.0"]
+test = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "httpx",
+]
 
 [project.scripts]
 # Register tllama cmdline command
@@ -32,3 +37,10 @@ where = ["src"]
 
 [tool.setuptools_scm]
 fallback_version = "0.0.0-dev"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Async tests need no decorator, so a test reads the same whether or not the
+# thing it exercises happens to be a coroutine.
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
