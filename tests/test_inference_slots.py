@@ -120,3 +120,45 @@ async def test_more_slots_would_allow_more_concurrency(manager, monkeypatch):
     await asyncio.gather(*(record_overlap(manager, "m", ledger) for _ in range(4)))
 
     assert concurrency_peak(ledger, "m") == 2
+
+
+async def test_the_queue_is_first_in_first_out(manager):
+    """Order of arrival decides order of service, not order of waking."""
+    served = []
+
+    async def arrive(number, delay):
+        await asyncio.sleep(delay)
+        async with manager.acquire_inference_slot("m"):
+            served.append(number)
+            await asyncio.sleep(0.02)
+
+    # Zero takes the free slot; one through eight then queue in that order.
+    await asyncio.gather(*(arrive(n, n * 0.002) for n in range(9)))
+
+    assert served == list(range(9))
+
+
+async def test_a_latecomer_cannot_take_a_slot_being_handed_over(manager):
+    """The hand-off must not be a race a newly arriving request can win."""
+    served = []
+    queued_up = asyncio.Event()
+
+    async def arrive(number):
+        async with manager.acquire_inference_slot("m"):
+            served.append(number)
+            if number == 0:
+                await queued_up.wait()
+            await asyncio.sleep(0.02)
+
+    holder = asyncio.create_task(arrive(0))
+    await asyncio.sleep(0)
+    waiting = [asyncio.create_task(arrive(n)) for n in (1, 2, 3)]
+    await asyncio.sleep(0.01)
+
+    latecomer = asyncio.create_task(arrive(99))
+    await asyncio.sleep(0.01)
+    queued_up.set()
+
+    await asyncio.gather(holder, *waiting, latecomer)
+
+    assert served == [0, 1, 2, 3, 99]
