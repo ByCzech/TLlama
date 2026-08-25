@@ -91,6 +91,12 @@ class ModelManager:
         # One semaphore per model name, guarding generation on that model.
         self._inference_slots: Dict[str, asyncio.Semaphore] = {}
 
+        # Loads under way, by model name. A model is here between the moment
+        # the decision to load it is taken and the moment it becomes
+        # available, so that concurrent callers can wait rather than start a
+        # second load, and so that capacity accounts for it.
+        self._loading: Dict[str, asyncio.Future] = {}
+
         self.hf_models_dir = self.models_dir / "HuggingFace"
         self.local_models_dir = self.models_dir / "Local"
         self.tllama_models_dir = self.models_dir / "TLlama"
@@ -370,13 +376,18 @@ class ModelManager:
         if requested_model_name in self.models:
             return
 
+        # Loads already under way occupy capacity even though the models are
+        # not in self.models yet. _blocking_load makes a caller wait when they
+        # leave no room, so anything reaching here has room by that count.
+        in_flight = sum(1 for name in self._loading if name != requested_model_name)
+
         if self.config.max_loaded_models <= 1:
             for loaded_model_name in list(self.models.keys()):
                 if loaded_model_name != requested_model_name:
                     self.unload_model(loaded_model_name)
             return
 
-        if len(self.models) >= self.config.max_loaded_models:
+        if len(self.models) + in_flight >= self.config.max_loaded_models:
             raise RuntimeError(
                 f"Loaded model limit reached ({self.config.max_loaded_models}). "
                 "Unload a model first or increase TLLAMA_MAX_LOADED_MODELS."
@@ -417,59 +428,39 @@ class ModelManager:
         async with slots:
             yield
 
-    async def get_model(
+    def _ensure_janitor_running(self) -> None:
+        if self._janitor_task is None or self._janitor_task.done():
+            self._janitor_task = asyncio.create_task(
+                self._janitor_loop(),
+                name="tllama-model-janitor",
+            )
+
+    def _refresh_active_model(self, model_name: str, keep_alive_seconds: int | None) -> None:
+        now_iso = self._now_iso()
+
+        entry = self.active_models[model_name]
+        entry["last_used_at"] = now_iso
+        entry["expires_at"] = None if keep_alive_seconds is None else self._future_iso(keep_alive_seconds)
+        entry["keep_alive"] = keep_alive_seconds
+
+    def _register_loaded_model(
         self,
         model_name: str,
-        num_ctx: int | None = None,
-        keep_alive: str | int | float | None = None,
-    ) -> Llama:
-        async with self._models_lock:
-            if self._janitor_task is None or self._janitor_task.done():
-                self._janitor_task = asyncio.create_task(
-                    self._janitor_loop(),
-                    name="tllama-model-janitor",
-                )
+        model_info: Dict[str, Any],
+        llm: Llama,
+        load_stats: Dict[str, Any],
+        keep_alive_seconds: int | None,
+    ) -> None:
+        actual_n_ctx = llm.n_ctx()
+        now_iso = self._now_iso()
 
-            model_info = self._build_model_file_info(model_name)
-            if not model_info:
-                raise FileNotFoundError(f"Model '{model_name}' not found in {self.models_dir}")
+        if keep_alive_seconds is None:
+            expires_at = None
+        else:
+            expires_at = self._future_iso(keep_alive_seconds)
 
-            model_path = model_info["path"]
-
-            effective_num_ctx = num_ctx
-            if effective_num_ctx is None:
-                effective_num_ctx = self.config.context_length
-
-            requested_n_ctx = self._normalize_num_ctx(effective_num_ctx, default=0)
-            keep_alive_seconds = self.resolve_keep_alive(keep_alive)
-
-            current_n_ctx = self.active_models.get(model_name, {}).get("n_ctx")
-
-            # Reload only when caller explicitly requested a different context size
-            if model_name in self.models and num_ctx is not None and requested_n_ctx != current_n_ctx:
-                self.unload_model(model_name)
-
-            if model_name not in self.models:
-                self._ensure_capacity_for_load(model_name)
-
-                logger.debug("Loading model %s with n_ctx=%s", model_name, requested_n_ctx)
-
-                llm, load_stats, load_log = await asyncio.to_thread(
-                    self._load_model_sync,
-                    model_path,
-                    requested_n_ctx,
-                )
-
-                actual_n_ctx = llm.n_ctx()
-                now_iso = self._now_iso()
-
-                if keep_alive_seconds is None:
-                    expires_at = None
-                else:
-                    expires_at = self._future_iso(keep_alive_seconds)
-
-                self.models[model_name] = llm
-                self.active_models[model_name] = {
+        self.models[model_name] = llm
+        self.active_models[model_name] = {
                     "id": model_name,
                     "model": model_name,
                     "filename": model_info["filename"],
@@ -509,19 +500,140 @@ class ModelManager:
 
                     **self._build_memory_accounting(load_stats),
                 }
-            else:
-                now_iso = self._now_iso()
 
-                if keep_alive_seconds is None:
-                    expires_at = None
+    def _blocking_load(self, model_name: str) -> Optional[asyncio.Future]:
+        """A load already under way that leaves no room for another one.
+
+        Capacity counts loaded models plus loads in progress. Counting only
+        the loaded ones would let two concurrent requests both pass the check
+        and exceed the limit, or exhaust memory outright, because a model
+        being loaded is not in self.models yet.
+        """
+        in_flight = [
+            future for name, future in self._loading.items()
+            if name != model_name
+        ]
+
+        if not in_flight:
+            return None
+
+        if self.config.max_loaded_models > len(self.models) + len(in_flight):
+            return None
+
+        return in_flight[0]
+
+    async def get_model(
+        self,
+        model_name: str,
+        num_ctx: int | None = None,
+        keep_alive: str | int | float | None = None,
+    ) -> Llama:
+        """Return a loaded model, loading it first if necessary.
+
+        The load itself runs outside the lock. Holding it across an await of
+        tens of seconds meant that loading one model stopped everything else,
+        including work on models already resident.
+
+        Concurrent callers therefore have to be told apart. Asking for the
+        model already being loaded means waiting for that load rather than
+        starting a second one. Asking for a different model when there is no
+        room for it means waiting for the load in progress to finish, which
+        is the serialising behaviour a single-model limit implies.
+        """
+        while True:
+            async with self._models_lock:
+                self._ensure_janitor_running()
+
+                model_info = self._build_model_file_info(model_name)
+                if not model_info:
+                    raise FileNotFoundError(f"Model '{model_name}' not found in {self.models_dir}")
+
+                effective_num_ctx = num_ctx
+                if effective_num_ctx is None:
+                    effective_num_ctx = self.config.context_length
+
+                requested_n_ctx = self._normalize_num_ctx(effective_num_ctx, default=0)
+                keep_alive_seconds = self.resolve_keep_alive(keep_alive)
+
+                current_n_ctx = self.active_models.get(model_name, {}).get("n_ctx")
+
+                # Reload only when caller explicitly requested a different context size
+                if model_name in self.models and num_ctx is not None and requested_n_ctx != current_n_ctx:
+                    self.unload_model(model_name)
+
+                if model_name in self.models:
+                    self._refresh_active_model(model_name, keep_alive_seconds)
+                    return self.models[model_name]
+
+                pending = self._loading.get(model_name)
+
+                if pending is None:
+                    blocking = self._blocking_load(model_name)
+                    if blocking is None:
+                        self._ensure_capacity_for_load(model_name)
+                        pending = asyncio.get_running_loop().create_future()
+                        self._loading[model_name] = pending
+                        loading_here = True
+                    else:
+                        pending = blocking
+                        loading_here = False
                 else:
-                    expires_at = self._future_iso(keep_alive_seconds)
+                    loading_here = False
 
-                self.active_models[model_name]["last_used_at"] = now_iso
-                self.active_models[model_name]["expires_at"] = expires_at
-                self.active_models[model_name]["keep_alive"] = keep_alive_seconds
+            if not loading_here:
+                # Shielded: whoever is waiting may be cancelled without
+                # taking the load, and everyone else waiting on it, down.
+                try:
+                    await asyncio.shield(pending)
+                except asyncio.CancelledError:
+                    if not pending.cancelled():
+                        raise
+                except Exception:
+                    # The other load failed. Its own caller reports that;
+                    # this one re-examines the situation and may well
+                    # succeed, since a different model may have been asked
+                    # for.
+                    pass
 
-            return self.models[model_name]
+                continue
+
+            logger.debug("Loading model %s with n_ctx=%s", model_name, requested_n_ctx)
+
+            try:
+                llm, load_stats, load_log = await asyncio.to_thread(
+                    self._load_model_sync,
+                    model_info["path"],
+                    requested_n_ctx,
+                )
+            except BaseException as exc:
+                async with self._models_lock:
+                    self._loading.pop(model_name, None)
+
+                if not pending.done():
+                    if isinstance(exc, asyncio.CancelledError):
+                        pending.cancel()
+                    else:
+                        pending.set_exception(exc)
+                        # Nobody may be waiting, and an unretrieved exception
+                        # on a future is reported at garbage collection.
+                        pending.exception()
+
+                raise
+
+            async with self._models_lock:
+                self._loading.pop(model_name, None)
+                self._register_loaded_model(
+                    model_name,
+                    model_info,
+                    llm,
+                    load_stats,
+                    keep_alive_seconds,
+                )
+
+            if not pending.done():
+                pending.set_result(None)
+
+            return llm
 
     def unload_model(self, model_name: str):
         self._unload_model_internal(model_name)
