@@ -63,11 +63,17 @@ class ModelManager:
         self.config = config or load_backend_config_from_env()
 
         self.models: Dict[str, Llama] = {}
-        self._lock = asyncio.Lock()
 
-        # Guards the slot registry only, so it is never held across a load or
-        # a generation. Kept separate from _lock deliberately.
-        self._state_lock = asyncio.Lock()
+        # Three locks, one per piece of state, because a single one made a
+        # model load block everything: a listing, a metadata read, even a
+        # request for a different model that was already resident.
+        #
+        # Two rules keep this safe. No path holds more than one of them at a
+        # time, and none of them is held across a long await. The model load
+        # in get_model is the remaining exception and is dealt with next.
+        self._models_lock = asyncio.Lock()      # models, active_models, janitor
+        self._metadata_lock = asyncio.Lock()    # the in-memory metadata cache
+        self._slots_lock = asyncio.Lock()       # the generation slot registry
 
         self.models_dir = Path(self.config.models_dir)
         self.metadata_cache_dir = self.models_dir / ".tllama" / "metadata-cache"
@@ -402,7 +408,7 @@ class ModelManager:
         and must not assume anything about ordering between models: slots are
         per model, so different models run concurrently.
         """
-        async with self._state_lock:
+        async with self._slots_lock:
             slots = self._inference_slots.get(model_name)
             if slots is None:
                 slots = asyncio.Semaphore(self._inference_slots_for(model_name))
@@ -417,7 +423,7 @@ class ModelManager:
         num_ctx: int | None = None,
         keep_alive: str | int | float | None = None,
     ) -> Llama:
-        async with self._lock:
+        async with self._models_lock:
             if self._janitor_task is None or self._janitor_task.done():
                 self._janitor_task = asyncio.create_task(
                     self._janitor_loop(),
@@ -623,7 +629,7 @@ class ModelManager:
 
         fingerprint = model_info["sha256"]
 
-        async with self._lock:
+        async with self._metadata_lock:
             cached_value = self._get_cached_metadata_entry(model_name, fingerprint)
             if cached_value is not None:
                 return cached_value
@@ -635,7 +641,7 @@ class ModelManager:
         )
 
         if persistent_cached_value is not None:
-            async with self._lock:
+            async with self._metadata_lock:
                 self._set_cached_metadata_entry(model_name, fingerprint, persistent_cached_value)
             return persistent_cached_value
 
@@ -665,7 +671,7 @@ class ModelManager:
             metadata,
         )
 
-        async with self._lock:
+        async with self._metadata_lock:
             self._set_cached_metadata_entry(model_name, fingerprint, metadata)
 
         return metadata
@@ -695,7 +701,7 @@ class ModelManager:
 
         fingerprint = model_info["sha256"]
 
-        async with self._lock:
+        async with self._metadata_lock:
             cached_value = self._get_cached_metadata_entry(model_name, fingerprint)
             if cached_value is not None:
                 return cached_value
@@ -707,7 +713,7 @@ class ModelManager:
         )
 
         if persistent_cached_value is not None:
-            async with self._lock:
+            async with self._metadata_lock:
                 self._set_cached_metadata_entry(model_name, fingerprint, persistent_cached_value)
             return persistent_cached_value
 
@@ -731,7 +737,7 @@ class ModelManager:
             metadata,
         )
 
-        async with self._lock:
+        async with self._metadata_lock:
             self._set_cached_metadata_entry(model_name, fingerprint, metadata)
 
         return metadata
@@ -843,7 +849,7 @@ class ModelManager:
     async def start(self):
         self.ensure_storage()
 
-        async with self._lock:
+        async with self._models_lock:
             if self._janitor_task is None or self._janitor_task.done():
                 self._janitor_task = asyncio.create_task(
                     self._janitor_loop(),
@@ -853,7 +859,7 @@ class ModelManager:
     async def shutdown(self):
         janitor_task = None
 
-        async with self._lock:
+        async with self._models_lock:
             if self._janitor_task is not None:
                 janitor_task = self._janitor_task
                 self._janitor_task = None
@@ -865,7 +871,7 @@ class ModelManager:
             except asyncio.CancelledError:
                 pass
 
-        async with self._lock:
+        async with self._models_lock:
             self.unload_all_models()
 
     async def _janitor_loop(self):
@@ -873,7 +879,7 @@ class ModelManager:
             while True:
                 await asyncio.sleep(self.config.janitor_interval_seconds)
 
-                async with self._lock:
+                async with self._models_lock:
                     expired_model_names = [
                         model_name
                         for model_name, model_info in self.active_models.items()
