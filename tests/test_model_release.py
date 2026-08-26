@@ -1,14 +1,16 @@
-"""Unloading a model has to free its memory now, not eventually.
+"""Unloading a model must not free memory a request is still using.
 
-The weights are in memory llama.cpp allocated. Dropping the last Python
-reference and calling the garbage collector reaches close() only when the
-last reference actually goes, and a request still streaming holds one. That
-turns an unload into a promise rather than an act, which on a machine
-juggling multi-gigabyte models is the difference between working and running
-out of memory.
+The weights are in memory llama.cpp allocated, and they are freed when the
+last reference to the Llama goes. A request generating on the model holds
+one, so an unload asked for mid-generation waits for it to finish.
+
+That deferral was once mistaken for a defect and replaced with an explicit
+close() on unload. It segfaulted the server: ollama stop is a /api/generate
+with keep_alive 0, the unload it triggers runs outside the generation slot,
+and freeing there destroyed the llama_context under a request that was still
+decoding. These tests exist so the deferral is not mistaken for a defect
+again.
 """
-
-import pytest
 
 
 class RecordingLlama:
@@ -22,66 +24,13 @@ class RecordingLlama:
         self.closed += 1
 
 
-class UnclosableLlama(RecordingLlama):
-    def close(self):
-        raise RuntimeError("llama_model_free failed")
-
-
-class OpaqueLlama:
-    """An object with no close at all, as an older binding might hand back."""
-
-    def n_ctx(self):
-        return 4096
-
-
 def register(manager, name, llm):
     manager.models[name] = llm
     manager.active_models[name] = {"id": name, "model": name}
 
 
-def test_unloading_releases_the_model(manager):
-    llm = RecordingLlama()
-    register(manager, "alpha", llm)
-
-    manager.unload_model("alpha")
-
-    assert llm.closed == 1
-    assert "alpha" not in manager.models
-
-
-def test_a_model_still_referenced_elsewhere_is_released_anyway(manager):
-    """A streaming request holds a reference; the unload must not wait for it."""
-    llm = RecordingLlama()
-    register(manager, "alpha", llm)
-    still_in_use = llm
-
-    manager.unload_model("alpha")
-
-    assert still_in_use.closed == 1
-
-
-def test_unloading_twice_does_not_release_twice(manager):
-    llm = RecordingLlama()
-    register(manager, "alpha", llm)
-
-    manager.unload_model("alpha")
-    manager.unload_model("alpha")
-
-    assert llm.closed == 1
-
-
-def test_a_failed_release_is_reported_rather_than_swallowed(manager, caplog):
-    """Silence here would surface an hour later as an unexplained load failure."""
-    register(manager, "alpha", UnclosableLlama())
-
-    with caplog.at_level("WARNING"):
-        manager.unload_model("alpha")
-
-    assert any("may stay allocated" in record.getMessage() for record in caplog.records)
-
-
-def test_a_failed_release_still_removes_the_model(manager):
-    register(manager, "alpha", UnclosableLlama())
+def test_unloading_forgets_the_model(manager):
+    register(manager, "alpha", RecordingLlama())
 
     manager.unload_model("alpha")
 
@@ -89,21 +38,40 @@ def test_a_failed_release_still_removes_the_model(manager):
     assert "alpha" not in manager.active_models
 
 
-def test_a_model_without_close_is_left_alone(manager, caplog):
-    with caplog.at_level("WARNING"):
-        register(manager, "alpha", OpaqueLlama())
-        manager.unload_model("alpha")
+def test_unloading_does_not_free_a_model_someone_still_holds(manager):
+    """The crash this prevents: a running generation loses its context."""
+    llm = RecordingLlama()
+    register(manager, "alpha", llm)
+    still_generating = llm
 
-    assert "alpha" not in manager.models
-    assert caplog.records == []
+    manager.unload_model("alpha")
+
+    assert still_generating.closed == 0
 
 
-def test_unloading_everything_releases_everything(manager):
+def test_unloading_everything_frees_nothing_early_either(manager):
     models = {name: RecordingLlama() for name in ("alpha", "beta", "gamma")}
     for name, llm in models.items():
         register(manager, name, llm)
 
     manager.unload_all_models()
 
-    assert all(llm.closed == 1 for llm in models.values())
     assert manager.models == {}
+    assert all(llm.closed == 0 for llm in models.values())
+
+
+def test_unloading_an_absent_model_is_harmless(manager):
+    manager.unload_model("no-such-model")
+
+    assert manager.models == {}
+
+
+def test_a_reloaded_model_replaces_the_previous_entry(manager):
+    first = RecordingLlama()
+    register(manager, "alpha", first)
+
+    manager.unload_model("alpha")
+    second = RecordingLlama()
+    register(manager, "alpha", second)
+
+    assert manager.models["alpha"] is second
