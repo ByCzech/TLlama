@@ -13,10 +13,17 @@ requires-python = ">=3.10"
 dependencies = [
     "fastapi>=0.115.0",
     "pydantic>=2.0.0",
-    "llama-cpp>=0.3.20",
+    # 0.3.23 and earlier keep a model reachable after it is unloaded, so its
+    # memory is never returned and a server juggling several of them runs out.
+    "llama-cpp>=0.3.35",
     "jinja2>=3.0.0",
     "gguf>=0.17.1",
-    "uvicorn>=0.23.0"
+    "uvicorn>=0.23.0",
+    # Starlette runs streamed responses through anyio's worker threads, and
+    # before 4.9 a worker kept the last callable it had run. With a model
+    # handed to it that meant holding on to the whole thing until some other
+    # request displaced it.
+    "anyio>=4.9"
 ]
 
 [project.optional-dependencies]
