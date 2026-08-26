@@ -3,7 +3,12 @@ import time
 import asyncio
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
-from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
+# Only iterate_in_threadpool is taken from starlette. Its run_in_threadpool
+# goes through anyio, whose worker held on to the last callable it ran until
+# 4.9, and a reference to a multi-gigabyte model does not belong in a queue
+# whose housekeeping we do not control. asyncio.to_thread uses the standard
+# library ThreadPoolExecutor, which drops its work item as soon as it has run.
+from starlette.concurrency import iterate_in_threadpool
 from tllama.schemas.openai import ChatCompletionRequest
 from tllama.backend import model_manager
 from tllama.errors import openai_stream_error_frame
@@ -223,7 +228,7 @@ async def chat_completions(request: ChatCompletionRequest):
         return StreamingResponse(guarded_generate(), media_type="text/event-stream")
 
     async with model_manager.acquire_inference_slot(request.model):
-        response = await run_in_threadpool(
+        response = await asyncio.to_thread(
             create_chat_completion_ex,
             llm,
             messages=messages,

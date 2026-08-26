@@ -1,3 +1,4 @@
+import asyncio
 import json
 import time
 
@@ -7,7 +8,12 @@ from jinja2.sandbox import ImmutableSandboxedEnvironment
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse, JSONResponse
-from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
+# Only iterate_in_threadpool is taken from starlette. Its run_in_threadpool
+# goes through anyio, whose worker held on to the last callable it ran until
+# 4.9, and a reference to a multi-gigabyte model does not belong in a queue
+# whose housekeeping we do not control. asyncio.to_thread uses the standard
+# library ThreadPoolExecutor, which drops its work item as soon as it has run.
+from starlette.concurrency import iterate_in_threadpool
 from llama_cpp import LlamaGrammar
 from tllama.schemas.ollama import OllamaChatRequest, OllamaGenerateRequest
 from tllama.backend import model_manager, HF_LOOKUP_MISSING
@@ -295,7 +301,7 @@ async def ollama_chat(request: OllamaChatRequest):
 
     try:
         async with model_manager.acquire_inference_slot(request.model):
-            response = await run_in_threadpool(
+            response = await asyncio.to_thread(
                 create_chat_completion_ex,
                 llm,
                 messages=messages,
@@ -546,7 +552,7 @@ async def ollama_generate(request: OllamaGenerateRequest):
 
     try:
         async with model_manager.acquire_inference_slot(request.model):
-            response = await run_in_threadpool(
+            response = await asyncio.to_thread(
                 llm.create_completion,
                 prompt=prompt_for_completion,
                 suffix=suffix_text,
