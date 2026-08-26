@@ -143,6 +143,31 @@ class ModelManager:
             return False
         return expires_at <= datetime.now(timezone.utc)
 
+    def _release_model(self, model_name: str, llm: Llama) -> None:
+        """Free a model's native memory.
+
+        Dropping the last Python reference is not enough on its own. The
+        weights live in memory llama.cpp allocated, released by close(), and
+        reaching that through the garbage collector means it happens whenever
+        the last reference happens to go, which is not necessarily now: a
+        request still streaming holds one.
+
+        A failure here is the difference between a server that keeps working
+        and one that runs out of memory an hour later, so it is reported
+        rather than swallowed the way an error during __del__ would be.
+        """
+        close = getattr(llm, "close", None)
+        if close is None:
+            return
+
+        try:
+            close()
+        except Exception as exc:
+            logger.warning(
+                "Releasing model %s failed, its memory may stay allocated: %s",
+                model_name, exc,
+            )
+
     def _unload_model_internal(self, model_name: str) -> bool:
         llm = self.models.pop(model_name, None)
 
@@ -150,6 +175,9 @@ class ModelManager:
         if model_name in self.active_models:
             del self.active_models[model_name]
             removed = True
+
+        if llm is not None:
+            self._release_model(model_name, llm)
 
         gc.collect()
 
