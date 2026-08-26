@@ -214,3 +214,53 @@ async def test_a_resident_model_is_returned_without_loading_again(manager, loada
 
     assert second is first
     assert loadable["started"] == ["alpha"]
+
+
+async def test_a_doomed_load_is_attempted_once_for_all_waiters(manager, loadable):
+    """Repeating a load that just failed, once per waiter, helps nobody."""
+    import threading
+
+    loadable["make"]("alpha")
+    loadable["hold"] = threading.Event()
+    loadable["fail"] = RuntimeError("unable to load model")
+
+    callers = [asyncio.create_task(manager.get_model("alpha")) for _ in range(4)]
+    await asyncio.sleep(0.05)
+    loadable["hold"].set()
+
+    results = await asyncio.gather(*callers, return_exceptions=True)
+
+    assert all(isinstance(result, RuntimeError) for result in results)
+    assert loadable["started"] == ["alpha"]
+
+
+async def test_a_failure_elsewhere_does_not_fail_this_request(make_manager, gguf_file, monkeypatch):
+    """Waiting for room is not the same as waiting for your own model."""
+    import threading
+
+    manager = make_manager(max_loaded_models=1)
+    for name in ("alpha", "beta"):
+        gguf_file(f"Local/{name}.gguf")
+
+    hold = threading.Event()
+
+    def load(model_path, requested_n_ctx):
+        name = model_path.rsplit("/", 1)[-1].removesuffix(".gguf")
+        if name == "alpha":
+            hold.wait(timeout=5)
+            raise RuntimeError("unable to load model")
+        return FakeLlama(name), {}, ""
+
+    monkeypatch.setattr(manager, "_load_model_sync", load)
+
+    failing = asyncio.create_task(manager.get_model("alpha"))
+    await asyncio.sleep(0.05)
+    unrelated = asyncio.create_task(manager.get_model("beta"))
+    await asyncio.sleep(0.05)
+    hold.set()
+
+    with pytest.raises(RuntimeError):
+        await failing
+
+    llm = await asyncio.wait_for(unrelated, timeout=5)
+    assert llm.name == "beta"

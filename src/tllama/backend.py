@@ -594,6 +594,8 @@ class ModelManager:
                     return self.models[model_name]
 
                 pending = self._loading.get(model_name)
+                loading_here = False
+                waiting_for_this_model = pending is not None
 
                 if pending is None:
                     blocking = self._blocking_load(model_name)
@@ -604,9 +606,6 @@ class ModelManager:
                         loading_here = True
                     else:
                         pending = blocking
-                        loading_here = False
-                else:
-                    loading_here = False
 
             if not loading_here:
                 # Shielded: whoever is waiting may be cancelled without
@@ -616,12 +615,18 @@ class ModelManager:
                 except asyncio.CancelledError:
                     if not pending.cancelled():
                         raise
+                    # Abandoned rather than failed, so there is nothing to
+                    # inherit and the situation is worth another look.
                 except Exception:
-                    # The other load failed. Its own caller reports that;
-                    # this one re-examines the situation and may well
-                    # succeed, since a different model may have been asked
-                    # for.
-                    pass
+                    if waiting_for_this_model:
+                        # The same model, and it will fail the same way for
+                        # this caller too. Repeating a doomed load once per
+                        # waiter helps nobody.
+                        raise
+
+                    # A different model was occupying the capacity. Its
+                    # failure says nothing about this request, and it has
+                    # freed the room.
 
                 continue
 
