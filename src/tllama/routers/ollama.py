@@ -66,28 +66,25 @@ async def get_version():
 
 @router.get("/tags")
 async def list_models_ollama():
-    local_models = await model_manager.list_local_models()
+    local_models = await model_manager.list_local_models_with_metadata()
 
     formatted_models = []
     for m in local_models:
-        metadata_info = await model_manager.get_model_metadata(m["id"]) or {}
-        digest_info = await model_manager.get_model_digest(m["path"]) or {}
-
-        family = metadata_info.get("arch", "unknown")
+        family = m.get("arch", "unknown")
 
         formatted_models.append({
             "name": f"{m['id']}",
             "model": f"{m['id']}",
             "modified_at": datetime.fromtimestamp(m["mtime"], timezone.utc).isoformat(),
             "size": m["size"],
-            "digest": digest_info.get("content_sha256", ""),
+            "digest": m.get("digest", ""),
             "details": {
                 "parent_model": "",
                 "format": "gguf",
                 "family": family,
                 "families": [family],
-                "parameter_size": metadata_info.get("parameter_size", "unknown"),
-                "quantization_level": metadata_info.get("bits", "unknown"),
+                "parameter_size": m.get("parameter_size", "unknown"),
+                "quantization_level": m.get("bits", "unknown"),
             }
         })
 

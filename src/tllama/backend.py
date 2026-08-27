@@ -984,17 +984,26 @@ class ModelManager:
 
     async def list_local_models_with_metadata(self) -> List[Dict[str, Any]]:
         """
-        Return local models enriched with metadata.
-        Metadata failures are isolated per model.
+        Return local models enriched with GGUF metadata and content digest.
+
+        The single place that needs both together: previously /api/tags
+        fetched metadata and digest itself in an inline loop, duplicating
+        this. A failure scanning one model's metadata or hashing one
+        model's content is isolated to that model, not the whole listing.
         """
         models = await self.list_local_models()
         enriched: List[Dict[str, Any]] = []
 
         for model in models:
             item = dict(model)
+
             metadata = await self.get_model_metadata(model["id"])
             if metadata:
                 item.update(metadata)
+
+            digest_info = await self.get_model_digest(model["path"]) or {}
+            item["digest"] = digest_info.get("content_sha256", "")
+
             enriched.append(item)
 
         return enriched
