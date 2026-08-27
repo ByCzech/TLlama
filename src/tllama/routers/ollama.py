@@ -663,7 +663,6 @@ async def list_running_models():
                 "quantization_level": metadata_info.get("bits", "unknown"),
             },
             "expires_at": m["expires_at"] or never_expires_at(),
-            "size": m["size"],
             "size_vram": m["size_vram"]
         })
 

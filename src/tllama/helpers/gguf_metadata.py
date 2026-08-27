@@ -272,7 +272,6 @@ def build_model_metadata_payload(meta: Dict[str, Any]) -> Dict[str, Any]:
         parameter_size = f"{round(params / 1e9)}B"
     if not parameter_size:
         parameter_size = "unknown"
-    bits = _quantization_level_from_metadata(meta)
 
     display_name = _as_str(
         meta.get("general.name")

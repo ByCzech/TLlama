@@ -1,7 +1,7 @@
 def openai_reasoning_effort_to_explicit_think(request) -> bool | None:
     effort = getattr(request, "reasoning_effort", None)
 
-    # některé klientské struktury mohou mít request.reasoning.effort
+    # Some client shapes may carry request.reasoning.effort instead.
     reasoning_obj = getattr(request, "reasoning", None)
     if effort is None and reasoning_obj is not None:
         if isinstance(reasoning_obj, dict):
@@ -14,12 +14,11 @@ def openai_reasoning_effort_to_explicit_think(request) -> bool | None:
 
     effort = str(effort).strip().lower()
 
-    # bezpečný první krok:
-    # jen "none" mapujeme na think=False
+    # Conservative first step: only "none" maps to think=False.
     if effort == "none":
         return False
 
-    # ostatní zatím necháme bez explicitního override
+    # Everything else is left without an explicit override for now.
     return None
 
 
@@ -28,7 +27,7 @@ def build_openai_chat_messages(request) -> list[dict]:
     for m in request.messages:
         content = m.content
 
-        # pokud schema někdy používá content parts, zjednoduš na text
+        # If the schema ever carries content parts, flatten them to text.
         if isinstance(content, list):
             parts = []
             for part in content:
