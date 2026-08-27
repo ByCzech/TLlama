@@ -16,7 +16,7 @@ from fastapi.responses import StreamingResponse, JSONResponse
 from starlette.concurrency import iterate_in_threadpool
 from llama_cpp import LlamaGrammar
 from tllama.schemas.ollama import OllamaChatRequest, OllamaGenerateRequest
-from tllama.backend import model_manager, HF_LOOKUP_MISSING
+from tllama.backend import model_manager, HF_LOOKUP_MISSING, PullProgress
 from tllama._ext import counted_for_request, reset_eval_counters
 from tllama.lib.llama_wrap import create_chat_completion_ex
 
@@ -51,6 +51,12 @@ router = APIRouter(
     prefix="/api",
     tags=["Ollama API"]
 )
+
+# How often the pull stream reports download progress to the client.
+# Ollama updates its progress bar far more often than this; a request every
+# few hundred milliseconds is plenty for a status line and keeps the ndjson
+# stream from being dominated by progress noise.
+_PULL_PROGRESS_INTERVAL_SECONDS = 0.5
 
 
 @router.get("/version")
@@ -771,17 +777,50 @@ async def pull_model_ollama(request: Request):
 
     async def generate():
         yield json.dumps({"status": "resolving repository"}) + "\n"
-        yield json.dumps({"status": "downloading model"}) + "\n"
 
-        try:
-            local_path = await model_manager.pull_hf_file(
+        # Seed with what the pre-download lookup already told us (Content-
+        # Length only arrives once the transfer itself starts), so the first
+        # progress line does not have to wait for that.
+        progress = PullProgress(total=hf_file_info.size or 0)
+
+        download_task = asyncio.ensure_future(
+            model_manager.pull_hf_file(
                 repo_id=target_info["repo_id"],
                 filename=target_info["filename"],
                 token=hf_token,
+                progress=progress,
             )
-        except Exception as e:
-            yield ollama_stream_error_line(str(e))
-            return
+        )
+
+        try:
+            try:
+                while True:
+                    done, _ = await asyncio.wait(
+                        {download_task}, timeout=_PULL_PROGRESS_INTERVAL_SECONDS
+                    )
+
+                    completed, total = progress.snapshot()
+                    yield json.dumps({
+                        "status": "downloading model",
+                        "completed": completed,
+                        "total": total,
+                    }) + "\n"
+
+                    if done:
+                        break
+
+                local_path = await download_task
+            except Exception as e:
+                yield ollama_stream_error_line(str(e))
+                return
+        finally:
+            # A client that disconnects mid-download (GeneratorExit) must not
+            # leave this task dangling and unretrieved. The underlying thread
+            # is not forcibly interrupted -- asyncio.to_thread offers no such
+            # thing -- but the task itself is cleaned up promptly instead of
+            # lingering until the transfer happens to finish on its own.
+            if not download_task.done():
+                download_task.cancel()
 
         if await model_manager.store_hf_digest(local_path, hf_file_info) is None:
             # The published digest was unusable. Hash the file here, while it

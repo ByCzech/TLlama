@@ -2,6 +2,7 @@ import os
 import time
 import asyncio
 import logging
+import threading
 from contextlib import asynccontextmanager
 import gc
 import shutil
@@ -49,6 +50,66 @@ class HfFileLookup:
     status: str
     sha256: str | None = None
     size: int | None = None
+
+
+class PullProgress:
+    """Byte counters for a download in progress, updated from a worker thread.
+
+    `hf_hub_download` runs off the event loop via `asyncio.to_thread`, so the
+    streaming response reads this from the async side while
+    `_HfTqdmProgressAdapter` writes to it from the download thread. A lock
+    guards the pair of ints; nothing here ever blocks.
+    """
+
+    def __init__(self, total: int = 0):
+        self._lock = threading.Lock()
+        self._total = total
+        self._completed = 0
+
+    def set_total(self, total: int | None) -> None:
+        if not total:
+            return
+        with self._lock:
+            self._total = int(total)
+
+    def add(self, n: int) -> None:
+        if not n:
+            return
+        with self._lock:
+            self._completed += int(n)
+
+    def snapshot(self) -> tuple[int, int]:
+        with self._lock:
+            return self._completed, self._total
+
+
+def _hf_tqdm_class_for(progress: "PullProgress"):
+    """Build a tqdm-compatible class that reports into `progress` instead of drawing a bar.
+
+    `hf_hub_download` only ever calls `cls(total=..., initial=..., ...)`, then
+    `.update(n)` per chunk, and uses the instance as a context manager. It
+    does not require a `tqdm` subclass -- see huggingface_hub's
+    `_create_progress_bar`, which calls a non-tqdm class with plain kwargs.
+    """
+
+    class _HfTqdmProgressAdapter:
+        def __init__(self, *args, total: int | None = None, initial: int = 0, **kwargs):
+            progress.set_total(total)
+            progress.add(initial)
+
+        def update(self, n: int = 1) -> None:
+            progress.add(n)
+
+        def close(self) -> None:
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            return False
+
+    return _HfTqdmProgressAdapter
 
 
 @dataclass(frozen=True)
@@ -1076,6 +1137,7 @@ class ModelManager:
         filename: str,
         token: str | None = None,
         revision: str | None = None,
+        progress: "PullProgress | None" = None,
     ) -> str:
         try:
             from huggingface_hub import hf_hub_download
@@ -1088,6 +1150,8 @@ class ModelManager:
         target_root = self.hf_models_dir / namespace / repo
         target_root.mkdir(parents=True, exist_ok=True)
 
+        tqdm_class = _hf_tqdm_class_for(progress) if progress is not None else None
+
         return hf_hub_download(
             repo_id=repo_id,
             filename=filename,
@@ -1095,6 +1159,7 @@ class ModelManager:
             token=token,
             local_dir=target_root,
             local_dir_use_symlinks=False,
+            tqdm_class=tqdm_class,
         )
 
     async def pull_hf_file(
@@ -1103,6 +1168,7 @@ class ModelManager:
         filename: str,
         token: str | None = None,
         revision: str | None = None,
+        progress: "PullProgress | None" = None,
     ) -> str:
         return await asyncio.to_thread(
             self._pull_hf_file_sync,
@@ -1110,6 +1176,7 @@ class ModelManager:
             filename,
             token,
             revision,
+            progress,
         )
 
     def _fetch_hf_file_info_sync(
