@@ -665,6 +665,17 @@ class ModelManager:
     def list_loaded_models(self) -> List[Dict[str, Any]]:
         return [self._with_runtime_totals(model_info) for model_info in self.active_models.values()]
 
+    def list_loading_models(self) -> List[str]:
+        """Names of models currently being loaded but not yet resident.
+
+        A load in progress occupies capacity and is meaningful to show
+        alongside already-loaded models, mirroring what Ollama does. Only
+        the name is guaranteed here: everything else about the model (VRAM
+        split, context size actually applied) is not known until the load
+        finishes and `_register_loaded_model` runs.
+        """
+        return list(self._loading.keys())
+
     def _compute_content_sha256(self, file_path: str | Path) -> str:
         """
         Hash the full contents of a model file.

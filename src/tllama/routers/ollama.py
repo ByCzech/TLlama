@@ -661,6 +661,48 @@ async def list_running_models():
             "size_vram": m["size_vram"]
         })
 
+    loaded_names = {m["model"] for m in loaded_models}
+    for model_name in model_manager.list_loading_models():
+        if model_name in loaded_names:
+            # Being reloaded with a different context size, and already
+            # represented above by its (soon to be replaced) loaded entry.
+            continue
+
+        model_info = model_manager._build_model_file_info(model_name)
+        if not model_info:
+            # Gone from disk between starting the load and this request.
+            continue
+
+        metadata_info = await model_manager.get_model_metadata(model_name) or {}
+        digest_info = await model_manager.get_model_digest(model_info["path"]) or {}
+
+        p_size = "unknown"
+        params = metadata_info.get("params", 0)
+        if isinstance(params, (int, str)):
+            try:
+                if int(params) > 0:
+                    p_size = f"{round(int(params) / 1e9)}b"
+            except Exception:
+                pass
+
+        formatted.append({
+            "name": model_name,
+            "model": model_name,
+            "size": model_info["size"],
+            "digest": digest_info.get("content_sha256", ""),
+            "context_length": 0,
+            "details": {
+                "parent_model": "",
+                "format": "gguf",
+                "family": metadata_info.get("arch", "unknown"),
+                "families": [metadata_info.get("arch", "unknown")],
+                "parameter_size": p_size,
+                "quantization_level": metadata_info.get("bits", "unknown"),
+            },
+            "expires_at": never_expires_at(),
+            "size_vram": 0,
+        })
+
     return {"models": formatted}
 
 
