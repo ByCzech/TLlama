@@ -278,6 +278,11 @@ async def ollama_chat(request: OllamaChatRequest):
                 yield f"{json.dumps({
                     'model': request.model,
                     'created_at': get_iso_time(),
+                    # Required, not optional, in the official client's
+                    # ChatResponse -- a final line without it fails
+                    # validation before generation stats are ever seen.
+                    # Real Ollama sends the same empty-content message here.
+                    'message': {'role': 'assistant', 'content': ''},
                     'done': True,
                     'done_reason': finish_reason,
                     'total_duration': end_time - start_time,
