@@ -1152,15 +1152,35 @@ class ModelManager:
 
         tqdm_class = _hf_tqdm_class_for(progress) if progress is not None else None
 
-        return hf_hub_download(
-            repo_id=repo_id,
-            filename=filename,
-            revision=revision,
-            token=token,
-            local_dir=target_root,
-            local_dir_use_symlinks=False,
-            tqdm_class=tqdm_class,
-        )
+        try:
+            return hf_hub_download(
+                repo_id=repo_id,
+                filename=filename,
+                revision=revision,
+                token=token,
+                local_dir=target_root,
+                local_dir_use_symlinks=False,
+                tqdm_class=tqdm_class,
+            )
+        except ValueError as e:
+            # huggingface_hub decides to use the Xet backend by checking
+            # whether the hf_xet *package metadata* is present, then only
+            # tries the actual `import hf_xet` once it has already committed
+            # to that path. A package whose compiled extension does not
+            # match the running interpreter (seen in practice: a .so built
+            # for the free-threaded 3.13t ABI installed under plain 3.13)
+            # is "present" but not importable, and surfaces here as a
+            # ValueError with no indication that a plain HTTP download
+            # would have worked fine.
+            if "Xet storage" in str(e):
+                raise RuntimeError(
+                    f"{e} This repository uses Xet storage and the installed "
+                    "hf_xet package cannot actually be imported (check "
+                    "`python3 -c \"import hf_xet\"` in this server's "
+                    "environment). Set HF_HUB_DISABLE_XET=1 to fall back to "
+                    "a regular HTTP download until hf_xet is fixed."
+                ) from e
+            raise
 
     async def pull_hf_file(
         self,
