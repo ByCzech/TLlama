@@ -623,7 +623,16 @@ async def show_model_info(request: dict):
             "families": [family],
             "parameter_size": metadata_info.get("parameter_size", "unknown"),
             "quantization_level": metadata_info.get("bits", "unknown"),
-        }
+        },
+        # The official Ollama client's ShowResponse declares this field
+        # Optional but without a pydantic default, which in practice makes
+        # it required on the wire: a response missing the key fails
+        # validation before the client ever looks at what's in it. Real
+        # Ollama fills it with the model's raw GGUF key/value metadata;
+        # metadata_raw is the same style of data, only over a narrower,
+        # whitelisted set of keys, since that is what TLlama currently
+        # reads from a GGUF header.
+        "model_info": metadata_info.get("metadata_raw") or {},
     }
 
 
