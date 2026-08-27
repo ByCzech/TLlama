@@ -617,6 +617,23 @@ async def show_model_info(request: dict):
 
     family = metadata_info.get("arch", "unknown")
 
+    # Real Ollama uses this list to tell a client what a model can do, and
+    # clients built against it (any bot using the ollama Python client, for
+    # instance) act on it directly -- an absent or empty list reads as "this
+    # model can't do any of that", including things TLlama actually
+    # supports. "completion" always holds; "thinking" is reported only when
+    # the model's own template is one detect_reasoning_format recognizes as
+    # having a thinking format, so a plain non-reasoning model is not
+    # claimed to think just because it exists.
+    #
+    # "tools" is deliberately left out: TLlama can only force a tool call
+    # today, not detect one from the template the way real Ollama's chat.*
+    # layer does, so claiming the capability would overstate what actually
+    # works. "vision" is left out because there is no vision support yet.
+    capabilities = ["completion"]
+    if detect_reasoning_format(model_name, metadata_info) != "none":
+        capabilities.append("thinking")
+
     return {
         "modelfile": f'FROM {model_name}\nTEMPLATE """{template}"""',
         "parameters": "stop                           \"<|end_of_text|>\"",
@@ -638,6 +655,7 @@ async def show_model_info(request: dict):
         # whitelisted set of keys, since that is what TLlama currently
         # reads from a GGUF header.
         "model_info": metadata_info.get("metadata_raw") or {},
+        "capabilities": capabilities,
     }
 
 
