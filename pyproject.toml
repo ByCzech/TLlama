@@ -23,7 +23,14 @@ dependencies = [
     # before 4.9 a worker kept the last callable it had run. With a model
     # handed to it that meant holding on to the whole thing until some other
     # request displaced it.
-    "anyio>=4.9"
+    "anyio>=4.9",
+    # Virtual-model .toml files: parsing and, unlike tomllib (stdlib,
+    # read-only) or tomli_w (write-only, drops comments), round-trip
+    # writing that preserves a person's own comments and formatting when
+    # TLlama rewrites a file in place (e.g. `from =` -> `model =` after an
+    # import). See TLlama_virtual_models_spec.md §2 for why configparser and
+    # the other TOML libraries were ruled out.
+    "tomlkit>=0.13.0"
 ]
 
 [project.optional-dependencies]
