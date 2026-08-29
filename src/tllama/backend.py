@@ -19,6 +19,12 @@ from tllama.config import BackendConfig, load_backend_config_from_env
 from tllama.helpers.common import normalize_keep_alive
 from tllama.helpers.llama_stats import load_llama_with_captured_stats
 from tllama.helpers.gguf_metadata import read_gguf_metadata, build_model_metadata_payload
+from tllama.helpers.model_toml import (
+    TomlModelError,
+    VirtualModelSpec,
+    parse_model_toml,
+    resolve_repo_relative_path,
+)
 from tllama.helpers.metadata_cache import (
     load_metadata_cache,
     save_metadata_cache,
@@ -943,24 +949,35 @@ class ModelManager:
 
     def _list_local_models_sync(self) -> List[Dict[str, Any]]:
         """
-        Scan all known repositories for GGUF files.
-        One broken file must not break the whole listing.
+        Scan all known repositories for virtual model .toml files.
+
+        A .gguf/mmproj with no .toml naming it is not a model as far as
+        this listing is concerned (spec doc §3: .toml is the only source of
+        truth for what shows up here). One broken .toml must not break the
+        whole listing.
         """
         model_list: List[Dict[str, Any]] = []
 
-        for file_path in self._iter_repository_model_files():
+        for toml_path in self._iter_repository_toml_files():
             try:
-                model_info = self._build_model_file_info_from_path(file_path)
+                text = toml_path.read_text(encoding="utf-8")
+                spec = parse_model_toml(text, source=str(toml_path))
+
+                target_path = self._resolve_virtual_model_target_path(spec, toml_path)
+                if target_path is None:
+                    continue
+
+                model_info = self._build_model_file_info_from_path(target_path)
                 if model_info is None:
                     continue
 
-                model_info["id"] = self._build_model_ref_from_path(file_path)
+                model_info["id"] = self._build_virtual_model_ref_from_toml_path(toml_path)
 
-                if file_path.is_relative_to(self.hf_models_dir):
+                if toml_path.is_relative_to(self.hf_models_dir):
                     model_info["repository"] = "HuggingFace"
-                elif file_path.is_relative_to(self.local_models_dir):
+                elif toml_path.is_relative_to(self.local_models_dir):
                     model_info["repository"] = "Local"
-                elif file_path.is_relative_to(self.tllama_models_dir):
+                elif toml_path.is_relative_to(self.tllama_models_dir):
                     model_info["repository"] = "TLlama"
                 else:
                     continue
@@ -974,8 +991,10 @@ class ModelManager:
                     "sha256": model_info["sha256"],
                     "repository": model_info["repository"],
                 })
+            except TomlModelError as e:
+                logger.warning("Ignoring %s: %s", toml_path, e)
             except Exception as e:
-                logger.warning("Failed to inspect model file %s: %s", file_path, e)
+                logger.warning("Failed to inspect virtual model file %s: %s", toml_path, e)
 
         return model_list
 
@@ -1467,6 +1486,86 @@ class ModelManager:
             return self._build_relative_ref_without_suffix(self.tllama_models_dir, file_path)
 
         raise ValueError(f"File path is outside known model repositories: {file_path}")
+
+    def _iter_repository_toml_files(self):
+        """Yield .toml files that name a virtual model.
+
+        Fixed depth per category (spec doc TLlama_virtual_models_spec.md
+        §5): exactly 1 for Local, exactly 2 for TLlama, exactly 3 for
+        HuggingFace. Unlike a raw .gguf's depth (see
+        _iter_repository_model_files), a .toml's own depth has nothing to
+        do with how deep the .gguf/mmproj it points at physically sits --
+        decoupling the two is the whole point of the indirection.
+        """
+        repositories = (
+            (self.local_models_dir, 1),
+            (self.tllama_models_dir, 2),
+            (self.hf_models_dir, 3),
+        )
+
+        for repo_dir, depth in repositories:
+            if not repo_dir.exists():
+                continue
+
+            pattern = "/".join(["*"] * (depth - 1) + ["*.toml"])
+            for file_path in sorted(repo_dir.glob(pattern)):
+                if file_path.is_file():
+                    yield file_path
+
+    def _build_virtual_model_ref_from_toml_path(self, toml_path: Path) -> str:
+        if toml_path.is_relative_to(self.hf_models_dir):
+            base_dir = self.hf_models_dir
+        elif toml_path.is_relative_to(self.local_models_dir):
+            base_dir = self.local_models_dir
+        elif toml_path.is_relative_to(self.tllama_models_dir):
+            base_dir = self.tllama_models_dir
+        else:
+            raise ValueError(f"File path is outside known model repositories: {toml_path}")
+
+        rel = toml_path.relative_to(base_dir)
+        parts = list(rel.parts)
+        name = parts[-1]
+        if name.lower().endswith(".toml"):
+            name = name[:-5]
+        parts[-1] = name
+        return "/".join(parts)
+
+    def _resolve_virtual_model_target_path(
+        self, spec: VirtualModelSpec, toml_path: Path
+    ) -> Optional[Path]:
+        """Resolve a virtual model's [llm] section to a physical file.
+
+        Returns None (never raises) when the .toml isn't ready to be listed
+        yet -- 'from =' with no matching import performed, a 'model =' that
+        escapes the repo, or one that simply doesn't exist -- since a single
+        bad .toml must not break the rest of the listing (matches
+        _list_local_models_sync's existing per-file isolation).
+        """
+        if spec.llm_model is None:
+            # 'from =' is only ever meant to be transient (spec §5): it
+            # gets rewritten to 'model =' once an import runs. Until that
+            # happens there is no physical file inside the repo yet.
+            logger.warning(
+                "Ignoring %s: 'from' has not been imported into the repo yet "
+                "(no 'model =' to load).",
+                toml_path,
+            )
+            return None
+
+        try:
+            target = resolve_repo_relative_path(spec.llm_model, self.models_dir)
+        except TomlModelError as exc:
+            logger.warning("Ignoring %s: %s", toml_path, exc)
+            return None
+
+        if not target.is_file():
+            logger.warning(
+                "Ignoring %s: model = %r does not point at an existing file",
+                toml_path, spec.llm_model,
+            )
+            return None
+
+        return target
 
     def _iter_repository_model_files(self):
         """Yield the model files that the reference scheme can name.

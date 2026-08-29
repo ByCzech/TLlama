@@ -55,6 +55,18 @@ def gguf_file(models_root):
 
 
 @pytest.fixture
+def toml_file(models_root):
+    """Place a virtual-model .toml file in the model store and return its path."""
+    def factory(relative_path, text):
+        path = models_root / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    return factory
+
+
+@pytest.fixture
 def client():
     """A test client over the whole application."""
     from fastapi.testclient import TestClient
