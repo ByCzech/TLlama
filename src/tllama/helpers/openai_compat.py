@@ -43,7 +43,7 @@ def build_openai_chat_messages(request, metadata_info: dict | None = None) -> li
     has_system_message = any(m["role"] in ("system", "developer") for m in messages)
     if not has_system_message and metadata_info:
         default_system_text = metadata_info.get("default_system_prompt")
-        if default_system_text:
+        if default_system_text is not None:
             messages = [{"role": "system", "content": default_system_text}] + messages
 
     return messages
