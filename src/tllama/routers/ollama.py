@@ -42,6 +42,7 @@ from tllama.helpers.reasoning_split import (
 )
 from tllama.helpers.chat import (
     normalize_chat_messages,
+    apply_default_system_prompt,
     build_chat_kwargs_ex,
     build_chat_response_format_kwargs
 )
@@ -139,7 +140,7 @@ async def ollama_chat(request: OllamaChatRequest):
 
     metadata_info = await model_manager.get_model_metadata(request.model) or {}
     reasoning_format = detect_reasoning_format(request.model, metadata_info)
-    messages = normalize_chat_messages(request.messages)
+    messages = apply_default_system_prompt(normalize_chat_messages(request.messages), metadata_info)
     kwargs_ex = build_chat_kwargs_ex(request)
 
     gen_params = {
