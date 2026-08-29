@@ -33,7 +33,6 @@ from tllama.helpers.common import (
 )
 
 from tllama.helpers.prompt_render import (
-    render_chat_prompt_with_explicit_think,
     render_generate_prompt,
 )
 from tllama.helpers.reasoning_split import (
