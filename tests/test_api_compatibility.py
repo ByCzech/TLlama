@@ -72,14 +72,18 @@ def test_requests_without_a_body_are_untouched(client, path):
 def test_a_stored_model_resolves_back_to_its_own_path(
     manager, gguf_file, relative_path, expected_reference
 ):
-    """One segment is Local, two are TLlama, three or more are HuggingFace."""
+    """One segment is Local, two are TLlama, three or more are HuggingFace.
+
+    Naming only -- whether that reference is actually loadable now depends
+    on a matching .toml (tests/test_virtual_model_scan.py), which is a
+    separate concern from the naming scheme itself.
+    """
     path = gguf_file(relative_path)
 
     reference = manager._build_model_ref_from_path(path)
 
     assert reference == expected_reference
     assert manager.resolve_model_storage_path(reference) == path
-    assert manager._build_model_file_info(reference) is not None
 
 
 def test_the_never_expires_horizon_matches_the_one_ollama_reports():

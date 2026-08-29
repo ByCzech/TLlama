@@ -44,8 +44,15 @@ def test_a_file_the_scheme_cannot_name_is_skipped(manager, gguf_file, layout):
     assert scanned(manager) == set()
 
 
-def test_everything_listed_can_actually_be_loaded(manager, gguf_file):
-    """The invariant: a listing must never advertise a model that will not load."""
+def test_everything_listed_resolves_back_to_its_own_path(manager, gguf_file):
+    """The invariant that still holds: a listed path names consistently.
+
+    _iter_repository_model_files() is the raw .gguf inventory (reserved for
+    the future .toml migration tool, see TLlama_virtual_models_spec.md),
+    no longer what /api/tags or get_model() use directly -- a name it
+    yields is not expected to be loadable on its own anymore without a
+    matching .toml (tests/test_virtual_model_scan.py covers that).
+    """
     for layout in USABLE_LAYOUTS + UNUSABLE_LAYOUTS:
         gguf_file(layout)
 
@@ -53,7 +60,6 @@ def test_everything_listed_can_actually_be_loaded(manager, gguf_file):
         reference = manager._build_model_ref_from_path(path)
 
         assert manager.resolve_model_storage_path(reference) == path
-        assert manager._build_model_file_info(reference) is not None
 
 
 def test_two_repositories_cannot_produce_the_same_name(manager, gguf_file):

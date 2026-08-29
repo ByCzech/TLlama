@@ -23,6 +23,7 @@ from tllama.helpers.model_toml import (
     TomlModelError,
     VirtualModelSpec,
     parse_model_toml,
+    resolve_kv_cache_types,
     resolve_repo_relative_path,
 )
 from tllama.helpers.metadata_cache import (
@@ -283,13 +284,76 @@ class ModelManager:
             "sha256": hash_sha256.hexdigest(),
         }
 
-    def _build_model_file_info(self, model_name: str) -> Optional[Dict[str, Any]]:
-        try:
-            model_path = self.resolve_model_storage_path(model_name)
-        except ValueError:
+    def _toml_path_for_reference(self, model_ref: str) -> Optional[Path]:
+        """Where a virtual model's .toml would live for this reference, if any.
+
+        Mirrors resolve_model_storage_path's segment-based routing, but for
+        .toml files at their fixed depth (spec doc §5) instead of a raw
+        .gguf's own (unbounded-below for HuggingFace) depth. There is no
+        Local-nested fallback for a 2-segment reference the way
+        resolve_model_storage_path has for .gguf: the fixed-depth invariant
+        makes that ambiguity impossible for .toml in the first place.
+
+        Returns None for a reference with more than 3 segments -- a .toml
+        never sits deeper than that, so there is nowhere to look.
+        """
+        parts = self._split_model_reference(model_ref)
+
+        if len(parts) == 1:
+            base_dir = self.local_models_dir
+        elif len(parts) == 2:
+            base_dir = self.tllama_models_dir
+        elif len(parts) == 3:
+            base_dir = self.hf_models_dir
+        else:
             return None
 
-        return self._build_model_file_info_from_path(model_path)
+        return base_dir.joinpath(*parts[:-1], f"{parts[-1]}.toml")
+
+    def _resolve_virtual_model_spec(self, model_ref: str) -> Optional[VirtualModelSpec]:
+        """Parse the .toml for model_ref, if one exists at its fixed depth.
+
+        Unlike the listing scan (_list_local_models_sync), which silently
+        skips a broken .toml so one bad file cannot take down the whole
+        listing, a name actively requested here is a single, specific ask:
+        TomlModelError propagates rather than being swallowed, so a typo in
+        the file surfaces clearly instead of looking identical to the model
+        simply not existing.
+        """
+        toml_path = self._toml_path_for_reference(model_ref)
+        if toml_path is None or not toml_path.is_file():
+            return None
+
+        text = toml_path.read_text(encoding="utf-8")
+        return parse_model_toml(text, source=str(toml_path))
+
+    def _build_model_file_info(self, model_name: str) -> Optional[Dict[str, Any]]:
+        try:
+            virtual_spec = self._resolve_virtual_model_spec(model_name)
+        except TomlModelError:
+            # A broken .toml is a real problem worth surfacing, not the
+            # same as the reference simply not existing -- let it propagate.
+            raise
+        except ValueError:
+            # An invalid reference (empty, "..", etc.) is not a model,
+            # same as before .toml existed.
+            return None
+
+        if virtual_spec is not None:
+            if virtual_spec.llm_model is None:
+                # 'from =' has not been imported into the repo yet (spec
+                # §5): there is no physical file inside the repo to report
+                # on until that happens.
+                return None
+
+            target = resolve_repo_relative_path(virtual_spec.llm_model, self.models_dir)
+            return self._build_model_file_info_from_path(target)
+
+        # No .toml names this reference at all. Per the strict policy (spec
+        # §3) that applies to loading exactly as it does to listing: a bare
+        # file nothing points at is not a model, so there is nothing left
+        # to fall back to here.
+        return None
 
     def _to_float_mib(self, value: Any) -> float:
         try:
@@ -442,8 +506,13 @@ class ModelManager:
     def _invalidate_metadata_cache_entry(self, model_name: str) -> None:
         self._metadata_cache.pop(model_name, None)
 
-    def _load_model_sync(self, model_path: str, requested_n_ctx: int):
-        llama_kwargs = self._build_llama_load_kwargs(model_path, requested_n_ctx)
+    def _load_model_sync(
+        self,
+        model_path: str,
+        requested_n_ctx: int,
+        virtual_spec: Optional[VirtualModelSpec] = None,
+    ):
+        llama_kwargs = self._build_llama_load_kwargs(model_path, requested_n_ctx, virtual_spec)
         return load_llama_with_captured_stats(
             Llama,
             **llama_kwargs,
@@ -625,7 +694,14 @@ class ModelManager:
                 if not model_info:
                     raise FileNotFoundError(f"Model '{model_name}' not found in {self.models_dir}")
 
+                # TomlModelError intentionally not caught here: a broken
+                # .toml or an out-of-repo path in one should stop this
+                # request, not be treated as "no virtual model" silently.
+                virtual_spec = self._resolve_virtual_model_spec(model_name)
+
                 effective_num_ctx = num_ctx
+                if effective_num_ctx is None and virtual_spec is not None:
+                    effective_num_ctx = virtual_spec.runtime.get("n_ctx")
                 if effective_num_ctx is None:
                     effective_num_ctx = self.config.context_length
 
@@ -686,6 +762,7 @@ class ModelManager:
                     self._load_model_sync,
                     model_info["path"],
                     requested_n_ctx,
+                    virtual_spec,
                 )
             except BaseException as exc:
                 async with self._models_lock:
@@ -1054,7 +1131,12 @@ class ModelManager:
 
         return int(resolved)
 
-    def _build_llama_load_kwargs(self, model_path: str, requested_n_ctx: int) -> Dict[str, Any]:
+    def _build_llama_load_kwargs(
+        self,
+        model_path: str,
+        requested_n_ctx: int,
+        virtual_spec: Optional[VirtualModelSpec] = None,
+    ) -> Dict[str, Any]:
         kwargs: Dict[str, Any] = {
             "model_path": model_path,
             "n_ctx": requested_n_ctx,
@@ -1070,6 +1152,24 @@ class ModelManager:
         if kv_cache_type is not None:
             kwargs["type_k"] = kv_cache_type
             kwargs["type_v"] = kv_cache_type
+
+        if virtual_spec is not None:
+            # 1:1 passthrough of [runtime] into Llama() kwargs (spec doc
+            # §8), minus the handful of keys handled specially above/below:
+            # model_path and n_ctx are controlled by [llm] and the
+            # request/global-config priority chain, not by [runtime]
+            # directly, and type_k/type_v/type_kv need the name-to-ggml-enum
+            # resolution in resolve_kv_cache_types rather than a raw pass.
+            for key, value in virtual_spec.runtime.items():
+                if key in ("model_path", "n_ctx", "type_k", "type_v", "type_kv"):
+                    continue
+                kwargs[key] = value
+
+            type_k, type_v = resolve_kv_cache_types(virtual_spec.runtime)
+            if type_k is not None:
+                kwargs["type_k"] = type_k
+            if type_v is not None:
+                kwargs["type_v"] = type_v
 
         return kwargs
 

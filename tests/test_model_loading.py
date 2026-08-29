@@ -22,14 +22,15 @@ class FakeLlama:
 
 
 @pytest.fixture
-def loadable(manager, gguf_file, monkeypatch):
+def loadable(manager, gguf_file, toml_file, monkeypatch):
     """Replace the blocking load with one whose timing the test controls."""
     state = {"started": [], "finished": [], "hold": None, "fail": None}
 
     def make(name):
         gguf_file(f"Local/{name}.gguf")
+        toml_file(f"Local/{name}.toml", f'[llm]\nmodel = "Local/{name}.gguf"\n')
 
-    def load(model_path, requested_n_ctx):
+    def load(model_path, requested_n_ctx, virtual_spec=None):
         name = model_path.rsplit("/", 1)[-1].removesuffix(".gguf")
         state["started"].append(name)
 
@@ -81,18 +82,19 @@ async def test_concurrent_requests_for_one_model_load_it_once(manager, loadable)
     assert {id(model) for model in models} == {id(models[0])}
 
 
-async def test_a_second_model_waits_when_there_is_no_room(make_manager, gguf_file, monkeypatch):
+async def test_a_second_model_waits_when_there_is_no_room(make_manager, gguf_file, toml_file, monkeypatch):
     """A single-model limit serialises rather than overshooting it."""
     import threading
 
     manager = make_manager(max_loaded_models=1)
     for name in ("alpha", "beta"):
         gguf_file(f"Local/{name}.gguf")
+        toml_file(f"Local/{name}.toml", f'[llm]\nmodel = "Local/{name}.gguf"\n')
 
     resident = []
     hold = threading.Event()
 
-    def load(model_path, requested_n_ctx):
+    def load(model_path, requested_n_ctx, virtual_spec=None):
         name = model_path.rsplit("/", 1)[-1].removesuffix(".gguf")
         hold.wait(timeout=5)
         resident.append(len(manager.models))
@@ -112,7 +114,7 @@ async def test_a_second_model_waits_when_there_is_no_room(make_manager, gguf_fil
     assert list(manager.models) == ["beta"]
 
 
-async def test_concurrent_loads_cannot_exceed_the_limit(make_manager, gguf_file, monkeypatch):
+async def test_concurrent_loads_cannot_exceed_the_limit(make_manager, gguf_file, toml_file, monkeypatch):
     """Counting only resident models would let every caller pass the check."""
     import threading
 
@@ -120,11 +122,12 @@ async def test_concurrent_loads_cannot_exceed_the_limit(make_manager, gguf_file,
     names = ["alpha", "beta", "gamma", "delta"]
     for name in names:
         gguf_file(f"Local/{name}.gguf")
+        toml_file(f"Local/{name}.toml", f'[llm]\nmodel = "Local/{name}.gguf"\n')
 
     hold = threading.Event()
     peak = 0
 
-    def load(model_path, requested_n_ctx):
+    def load(model_path, requested_n_ctx, virtual_spec=None):
         nonlocal peak
         name = model_path.rsplit("/", 1)[-1].removesuffix(".gguf")
         peak = max(peak, len(manager.models) + len(manager._loading))
@@ -234,17 +237,18 @@ async def test_a_doomed_load_is_attempted_once_for_all_waiters(manager, loadable
     assert loadable["started"] == ["alpha"]
 
 
-async def test_a_failure_elsewhere_does_not_fail_this_request(make_manager, gguf_file, monkeypatch):
+async def test_a_failure_elsewhere_does_not_fail_this_request(make_manager, gguf_file, toml_file, monkeypatch):
     """Waiting for room is not the same as waiting for your own model."""
     import threading
 
     manager = make_manager(max_loaded_models=1)
     for name in ("alpha", "beta"):
         gguf_file(f"Local/{name}.gguf")
+        toml_file(f"Local/{name}.toml", f'[llm]\nmodel = "Local/{name}.gguf"\n')
 
     hold = threading.Event()
 
-    def load(model_path, requested_n_ctx):
+    def load(model_path, requested_n_ctx, virtual_spec=None):
         name = model_path.rsplit("/", 1)[-1].removesuffix(".gguf")
         if name == "alpha":
             hold.wait(timeout=5)

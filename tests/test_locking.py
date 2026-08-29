@@ -51,9 +51,10 @@ def test_the_metadata_cache_is_not_guarded_by_the_model_lock():
     assert "self._models_lock" not in source
 
 
-async def test_a_held_model_lock_does_not_block_a_metadata_read(manager, gguf_file):
+async def test_a_held_model_lock_does_not_block_a_metadata_read(manager, gguf_file, toml_file):
     """The original defect: ollama list queued behind a model load."""
     path = gguf_file("Local/model.gguf")
+    toml_file("Local/model.toml", '[llm]\nmodel = "Local/model.gguf"\n')
     fingerprint = manager._build_model_file_info("model")["sha256"]
     manager._set_cached_metadata_entry("model", fingerprint, {"arch": "qwen3"})
 
