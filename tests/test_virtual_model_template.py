@@ -97,3 +97,32 @@ class TestTemplateOverride:
         metadata = await manager.get_model_metadata("orphan")
 
         assert metadata is None
+
+
+class TestSystemPromptOverride:
+    async def test_toml_system_prompt_surfaces_as_default_system_prompt(
+        self, manager, gguf_file, toml_file
+    ):
+        gguf_file("Local/m.gguf")
+        toml_file(
+            "Local/MyModel.toml",
+            llm_toml("Local/m.gguf", '\n[system]\nprompt = "be nice"\n'),
+        )
+
+        fingerprint = manager._build_model_file_info("MyModel")["sha256"]
+        manager._set_cached_metadata_entry("MyModel", fingerprint, {"arch": "qwen3"})
+
+        metadata = await asyncio.wait_for(manager.get_model_metadata("MyModel"), timeout=1.0)
+
+        assert metadata["default_system_prompt"] == "be nice"
+
+    async def test_no_system_section_means_no_default_key(self, manager, gguf_file, toml_file):
+        gguf_file("Local/m.gguf")
+        toml_file("Local/MyModel.toml", llm_toml("Local/m.gguf"))
+
+        fingerprint = manager._build_model_file_info("MyModel")["sha256"]
+        manager._set_cached_metadata_entry("MyModel", fingerprint, {"arch": "qwen3"})
+
+        metadata = await asyncio.wait_for(manager.get_model_metadata("MyModel"), timeout=1.0)
+
+        assert "default_system_prompt" not in metadata

@@ -31,6 +31,16 @@ def render_chat_prompt_with_explicit_think(
             detail="Model template is not available; cannot render chat prompt."
         )
 
+    has_system_message = any(
+        message.get("role") in ("system", "developer")
+        and isinstance(message.get("content"), str)
+        for message in messages
+    )
+    if not has_system_message:
+        default_system_text = metadata_info.get("default_system_prompt")
+        if default_system_text:
+            messages = [{"role": "system", "content": default_system_text}] + list(messages)
+
     bos_token, eos_token = _get_bos_eos_tokens(llm)
 
     context = {
@@ -105,7 +115,7 @@ def render_generate_prompt(
 
     if mode == "prompt":
         prompt_text = getattr(request, "prompt", None) or ""
-        system_text = getattr(request, "system", None) or ""
+        system_text = getattr(request, "system", None) or metadata_info.get("default_system_prompt") or ""
 
         messages = []
         if system_text:
@@ -127,6 +137,12 @@ def render_generate_prompt(
                 and not system_text
             ):
                 system_text = message["content"]
+
+        if not system_text:
+            default_system_text = metadata_info.get("default_system_prompt")
+            if default_system_text:
+                messages = [{"role": "system", "content": default_system_text}] + messages
+                system_text = default_system_text
 
         for message in reversed(messages):
             if message.get("role") == "user" and isinstance(message.get("content"), str):

@@ -72,7 +72,7 @@ async def chat_completions(request: ChatCompletionRequest):
 
     metadata_info = await model_manager.get_model_metadata(request.model) or {}
 
-    messages = build_openai_chat_messages(request)
+    messages = build_openai_chat_messages(request, metadata_info)
     explicit_think = openai_reasoning_effort_to_explicit_think(request)
     reasoning_format = detect_reasoning_format(request.model, metadata_info)
     kwargs_ex = build_think_kwargs_ex(explicit_think)

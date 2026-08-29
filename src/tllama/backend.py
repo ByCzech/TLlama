@@ -905,12 +905,17 @@ class ModelManager:
         Get model metadata without loading the full model into inference memory.
 
         The GGUF-derived metadata is cached (TTL in-memory, persistent on
-        disk) exactly as before. A virtual model's [template] override, if
-        any, is applied fresh on top of that on every call rather than
-        baked into the cached value -- editing a .toml takes effect
-        immediately without needing the underlying .gguf to also change,
-        which is what would otherwise be needed to bust a cache keyed by
-        the .gguf's own fingerprint.
+        disk) exactly as before. A virtual model's [template]/[system]
+        overrides, if any, are applied fresh on top of that on every call
+        rather than baked into the cached value -- editing a .toml takes
+        effect immediately without needing the underlying .gguf to also
+        change, which is what would otherwise be needed to bust a cache
+        keyed by the .gguf's own fingerprint.
+
+        default_system_prompt is deliberately not called "system_prompt":
+        it is a fallback a caller applies only when neither the request nor
+        the messages it was given already carry one (client always wins),
+        never a value to send outright.
         """
         metadata = await self._get_raw_model_metadata(model_name, timeout_seconds)
         if metadata is None:
@@ -923,9 +928,15 @@ class ModelManager:
         except ValueError:
             virtual_spec = None
 
-        if virtual_spec is not None and virtual_spec.template is not None:
-            metadata = dict(metadata)
-            metadata["template"] = virtual_spec.template
+        if virtual_spec is not None:
+            overrides = {}
+            if virtual_spec.template is not None:
+                overrides["template"] = virtual_spec.template
+            if virtual_spec.system_prompt is not None:
+                overrides["default_system_prompt"] = virtual_spec.system_prompt
+
+            if overrides:
+                metadata = {**metadata, **overrides}
 
         return metadata
 

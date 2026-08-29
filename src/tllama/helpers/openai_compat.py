@@ -22,7 +22,7 @@ def openai_reasoning_effort_to_explicit_think(request) -> bool | None:
     return None
 
 
-def build_openai_chat_messages(request) -> list[dict]:
+def build_openai_chat_messages(request, metadata_info: dict | None = None) -> list[dict]:
     messages = []
     for m in request.messages:
         content = m.content
@@ -39,4 +39,11 @@ def build_openai_chat_messages(request) -> list[dict]:
             "role": m.role,
             "content": content if isinstance(content, str) else ""
         })
+
+    has_system_message = any(m["role"] in ("system", "developer") for m in messages)
+    if not has_system_message and metadata_info:
+        default_system_text = metadata_info.get("default_system_prompt")
+        if default_system_text:
+            messages = [{"role": "system", "content": default_system_text}] + messages
+
     return messages
