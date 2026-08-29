@@ -903,6 +903,39 @@ class ModelManager:
     ) -> Optional[Dict[str, Any]]:
         """
         Get model metadata without loading the full model into inference memory.
+
+        The GGUF-derived metadata is cached (TTL in-memory, persistent on
+        disk) exactly as before. A virtual model's [template] override, if
+        any, is applied fresh on top of that on every call rather than
+        baked into the cached value -- editing a .toml takes effect
+        immediately without needing the underlying .gguf to also change,
+        which is what would otherwise be needed to bust a cache keyed by
+        the .gguf's own fingerprint.
+        """
+        metadata = await self._get_raw_model_metadata(model_name, timeout_seconds)
+        if metadata is None:
+            return None
+
+        try:
+            virtual_spec = self._resolve_virtual_model_spec(model_name)
+        except TomlModelError:
+            raise
+        except ValueError:
+            virtual_spec = None
+
+        if virtual_spec is not None and virtual_spec.template is not None:
+            metadata = dict(metadata)
+            metadata["template"] = virtual_spec.template
+
+        return metadata
+
+    async def _get_raw_model_metadata(
+        self,
+        model_name: str,
+        timeout_seconds: float | None = None,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        The GGUF header's own metadata, unaffected by any .toml override.
         Runs off the event loop and uses a lightweight TTL cache.
         """
         model_info = self._build_model_file_info(model_name)

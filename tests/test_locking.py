@@ -44,8 +44,15 @@ def test_no_path_holds_one_lock_while_taking_another():
 
 
 def test_the_metadata_cache_is_not_guarded_by_the_model_lock():
-    """A listing must not queue behind a load; that was the original defect."""
+    """A listing must not queue behind a load; that was the original defect.
+
+    get_model_metadata() is a thin wrapper around _get_raw_model_metadata()
+    (the GGUF-cache-backed part that actually needs the lock) plus a
+    virtual model's [template] override applied fresh on every call -- see
+    that split in backend.py. The invariant still has to hold across both.
+    """
     source = inspect.getsource(backend_module.ModelManager.get_model_metadata)
+    source += inspect.getsource(backend_module.ModelManager._get_raw_model_metadata)
 
     assert "self._metadata_lock" in source
     assert "self._models_lock" not in source
