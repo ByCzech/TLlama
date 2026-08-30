@@ -58,6 +58,83 @@ def normalize_optional_max_tokens(value):
     return value
 
 
+# TLlama's own fixed baseline, used only once neither the request nor a
+# virtual model's [sampling] section says otherwise. Deliberately not "leave
+# it unset and let the library decide": create_completion() and
+# create_chat_completion() do not even agree with each other in
+# llama-cpp-python 0.3.35 (temperature defaults to 0.8 for one and 0.2 for
+# the other, confirmed directly in its source -- and 0.2 has no basis in
+# real llama.cpp's own default of 0.8, nor in Ollama's documented default of
+# 0.8), so relying on either would reintroduce exactly the cross-endpoint
+# inconsistency this function exists to remove, just hidden a layer deeper.
+# top_p is 0.9 to match Ollama's own documented default, a deliberate
+# choice over llama.cpp's raw 0.95.
+_SAMPLING_DEFAULTS = {
+    "temperature": 0.8,
+    "top_p": 0.9,
+    "top_k": 40,
+    "min_p": 0.05,
+    "typical_p": 1.0,
+    "presence_penalty": 0.0,
+    "frequency_penalty": 0.0,
+    "repeat_penalty": 1.0,
+    "tfs_z": 1.0,
+    "mirostat_mode": 0,
+    "mirostat_tau": 5.0,
+    "mirostat_eta": 0.1,
+    "seed": None,
+}
+
+# Ollama's client-facing "options" dict spells this "mirostat"; a .toml's
+# [sampling] section and this function's own kwargs use the
+# llama-cpp-python/[runtime]-style "mirostat_mode" instead, so the two need
+# a small translation only on the client-options side.
+_CLIENT_OPTION_ALIASES = {
+    "mirostat_mode": "mirostat",
+}
+
+
+def build_sampling_kwargs(opts: dict, metadata_info: dict | None = None) -> dict:
+    """Build create_completion()/create_chat_completion() sampling kwargs.
+
+    Priority for every parameter: the request's own options (opts) win if
+    present, then a virtual model's [sampling] default (via metadata_info,
+    see backend.ModelManager.get_model_metadata), then TLlama's own fixed
+    baseline in _SAMPLING_DEFAULTS. The same rule applies to max_tokens and
+    stop, layered on top of the existing Ollama-specific normalization
+    (num_predict's semantics, stop accepting a bare string or a list).
+
+    Used identically by /api/generate, /api/chat, and /v1/chat/completions
+    so a virtual model's [sampling] section behaves the same regardless of
+    which endpoint a client happens to use.
+    """
+    opts = opts or {}
+    toml_sampling = (metadata_info or {}).get("sampling_defaults") or {}
+
+    kwargs = {}
+    for key, default in _SAMPLING_DEFAULTS.items():
+        client_key = _CLIENT_OPTION_ALIASES.get(key, key)
+        if client_key in opts:
+            kwargs[key] = opts[client_key]
+        elif key in toml_sampling:
+            kwargs[key] = toml_sampling[key]
+        else:
+            kwargs[key] = default
+
+    if "num_predict" in opts:
+        kwargs["max_tokens"] = normalize_max_tokens_from_options(opts)
+    else:
+        kwargs["max_tokens"] = normalize_optional_max_tokens(toml_sampling.get("max_tokens"))
+
+    stop = normalize_stop(opts.get("stop"))
+    if not stop:
+        stop = list((metadata_info or {}).get("stop_defaults") or [])
+    if stop:
+        kwargs["stop"] = stop
+
+    return kwargs
+
+
 def normalize_message_content(content) -> str:
     if content is None:
         return ""

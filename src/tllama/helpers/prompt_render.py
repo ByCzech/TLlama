@@ -191,6 +191,8 @@ def render_generate_prompt(
         )
 
     stop = normalize_stop((getattr(request, "options", None) or {}).get("stop"))
+    if not stop:
+        stop = list(metadata_info.get("stop_defaults") or [])
     if eos_token and eos_token not in stop:
         stop.append(eos_token)
 

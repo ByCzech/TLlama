@@ -905,12 +905,12 @@ class ModelManager:
         Get model metadata without loading the full model into inference memory.
 
         The GGUF-derived metadata is cached (TTL in-memory, persistent on
-        disk) exactly as before. A virtual model's [template]/[system]
-        overrides, if any, are applied fresh on top of that on every call
-        rather than baked into the cached value -- editing a .toml takes
-        effect immediately without needing the underlying .gguf to also
-        change, which is what would otherwise be needed to bust a cache
-        keyed by the .gguf's own fingerprint.
+        disk) exactly as before. A virtual model's [template]/[system]/
+        [sampling] overrides, if any, are applied fresh on top of that on
+        every call rather than baked into the cached value -- editing a
+        .toml takes effect immediately without needing the underlying
+        .gguf to also change, which is what would otherwise be needed to
+        bust a cache keyed by the .gguf's own fingerprint.
 
         default_system_prompt is deliberately not called "system_prompt":
         it is a fallback a caller applies only when neither the request nor
@@ -934,6 +934,10 @@ class ModelManager:
                 overrides["template"] = virtual_spec.template
             if virtual_spec.system_prompt is not None:
                 overrides["default_system_prompt"] = virtual_spec.system_prompt
+            if virtual_spec.sampling:
+                overrides["sampling_defaults"] = virtual_spec.sampling
+            if virtual_spec.stop:
+                overrides["stop_defaults"] = virtual_spec.stop
 
             if overrides:
                 metadata = {**metadata, **overrides}

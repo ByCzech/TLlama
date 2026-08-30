@@ -16,9 +16,8 @@ from tllama.lib.llama_wrap import create_chat_completion_ex
 
 from tllama.helpers.common import (
     get_iso_time,
-    normalize_stop,
-    normalize_max_tokens_from_options,
     estimate_completion_prompt_eval_count,
+    build_sampling_kwargs,
 )
 from tllama.helpers.prompt_render import (
     render_generate_prompt,
@@ -76,40 +75,34 @@ async def chat_completions(request: ChatCompletionRequest):
     reasoning_format = detect_reasoning_format(request.model, metadata_info)
     kwargs_ex = build_think_kwargs_ex(explicit_think)
 
-    max_tokens = normalize_max_tokens_from_options({
-        "num_predict": getattr(request, "max_tokens", None)
-    })
+    # The OpenAI schema only ever gives a client temperature/top_p/
+    # max_tokens/stop -- min_p, top_k, repeat_penalty, mirostat, etc. simply
+    # have no field to arrive through here. Routing through the same
+    # build_sampling_kwargs() the other two endpoints use still lets a
+    # virtual model's [sampling] set any of those as a real default for
+    # this endpoint too, even though no OpenAI client can ever override
+    # them directly -- exactly the point of the .toml layer.
+    opts = {}
+    if getattr(request, "temperature", None) is not None:
+        opts["temperature"] = request.temperature
+    if getattr(request, "top_p", None) is not None:
+        opts["top_p"] = request.top_p
+    if getattr(request, "max_tokens", None) is not None:
+        opts["num_predict"] = request.max_tokens
+    if getattr(request, "stop", None):
+        opts["stop"] = request.stop
 
-    temperature = getattr(request, "temperature", None)
-    top_p = getattr(request, "top_p", None)
     stream = bool(getattr(request, "stream", False))
     response_format = getattr(request, "response_format", None)
-    user_stop = normalize_stop(getattr(request, "stop", None))
     tools = getattr(request, "tools", None)
     tool_choice = getattr(request, "tool_choice", None)
     functions = getattr(request, "functions", None)
     function_call = getattr(request, "function_call", None)
 
-    gen_params = {
-        "max_tokens": max_tokens,
-        # Explicit, matching /api/generate and /api/chat's own baseline
-        # (0.8/0.9, chosen to match Ollama's documented defaults) --
-        # leaving these unset when the client doesn't send them would fall
-        # through to create_chat_completion's own internal default (0.95
-        # for top_p), a silent mismatch with the other two endpoints for
-        # any request that omits them.
-        "temperature": 0.8,
-        "top_p": 0.9,
-    }
+    gen_params = build_sampling_kwargs(opts, metadata_info)
 
-    if temperature is not None:
-        gen_params["temperature"] = temperature
-    if top_p is not None:
-        gen_params["top_p"] = top_p
     if response_format is not None:
         gen_params["response_format"] = response_format
-    if user_stop:
-        gen_params["stop"] = user_stop
     if tools is not None:
         gen_params["tools"] = tools
     if tool_choice is not None:

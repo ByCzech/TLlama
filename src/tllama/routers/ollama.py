@@ -26,10 +26,10 @@ from tllama.helpers.common import (
     get_iso_time,
     never_expires_at,
     normalize_stop,
-    normalize_max_tokens_from_options,
     normalize_message_content,
     estimate_completion_prompt_eval_count,
-    build_completion_format_kwargs
+    build_completion_format_kwargs,
+    build_sampling_kwargs,
 )
 
 from tllama.helpers.prompt_render import (
@@ -143,26 +143,7 @@ async def ollama_chat(request: OllamaChatRequest):
     messages = apply_default_system_prompt(normalize_chat_messages(request.messages), metadata_info)
     kwargs_ex = build_chat_kwargs_ex(request)
 
-    gen_params = {
-        "temperature": opts.get("temperature", 0.8),
-        "top_p": opts.get("top_p", 0.9),
-        "top_k": opts.get("top_k", 40),
-        "min_p": opts.get("min_p", 0.05),
-        "typical_p": opts.get("typical_p", 1.0),
-        "presence_penalty": opts.get("presence_penalty", 0.0),
-        "frequency_penalty": opts.get("frequency_penalty", 0.0),
-        "repeat_penalty": opts.get("repeat_penalty", 1.0),
-        "tfs_z": opts.get("tfs_z", 1.0),
-        "mirostat_mode": opts.get("mirostat", 0),
-        "mirostat_tau": opts.get("mirostat_tau", 5.0),
-        "mirostat_eta": opts.get("mirostat_eta", 0.1),
-        "seed": opts.get("seed"),
-        "max_tokens": normalize_max_tokens_from_options(opts),
-    }
-
-    user_stop = normalize_stop(opts.get("stop"))
-    if user_stop:
-        gen_params["stop"] = user_stop
+    gen_params = build_sampling_kwargs(opts, metadata_info)
 
     if request.tools:
         gen_params["tools"] = request.tools
@@ -429,23 +410,20 @@ async def ollama_generate(request: OllamaGenerateRequest):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Error loading model: {str(e)}")
 
-    generation_kwargs = {
-        "max_tokens": normalize_max_tokens_from_options(opts),
-        "temperature": opts.get("temperature", 0.8),
-        "top_p": opts.get("top_p", 0.9),
-        "echo": False,
-    }
+    metadata_info = await model_manager.get_model_metadata(request.model) or {}
+
+    generation_kwargs = build_sampling_kwargs(opts, metadata_info)
+    generation_kwargs.pop("stop", None)  # stop is computed below, alongside eos_token
+    generation_kwargs["echo"] = False
 
     try:
         generation_kwargs.update(build_completion_format_kwargs(request_format))
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid format schema: {e}")
 
-    metadata_info = await model_manager.get_model_metadata(request.model) or {}
-
     if is_raw:
         prompt_for_completion = request.prompt or ""
-        stop_tokens = user_stop
+        stop_tokens = user_stop or list(metadata_info.get("stop_defaults") or [])
     else:
         prompt_for_completion, stop_tokens = render_generate_prompt(
             llm=llm,
