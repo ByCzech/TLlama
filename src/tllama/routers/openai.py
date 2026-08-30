@@ -92,6 +92,14 @@ async def chat_completions(request: ChatCompletionRequest):
 
     gen_params = {
         "max_tokens": max_tokens,
+        # Explicit, matching /api/generate and /api/chat's own baseline
+        # (0.8/0.9, chosen to match Ollama's documented defaults) --
+        # leaving these unset when the client doesn't send them would fall
+        # through to create_chat_completion's own internal default (0.95
+        # for top_p), a silent mismatch with the other two endpoints for
+        # any request that omits them.
+        "temperature": 0.8,
+        "top_p": 0.9,
     }
 
     if temperature is not None:
