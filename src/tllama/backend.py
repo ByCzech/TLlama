@@ -12,6 +12,7 @@ from pathlib import Path
 from hashlib import sha256
 
 from llama_cpp import Llama, llama_cpp as llama_cpp_lib
+from llama_cpp.llama_chat_format import Jinja2ChatFormatter
 from typing import Dict, Optional, Any, List
 from datetime import datetime, timezone, timedelta
 
@@ -124,6 +125,45 @@ class CachedMetadataEntry:
     fingerprint: str
     cached_at_monotonic: float
     value: Dict[str, Any]
+
+
+def _apply_template_override_to_chat_handler(llm, virtual_spec: Optional[VirtualModelSpec]) -> None:
+    """Make a virtual model's [template] reach /api/chat and /v1/chat/completions too.
+
+    metadata_info["template"] (set from this same virtual_spec.template by
+    get_model_metadata) only ever reaches /api/generate's own
+    render_generate_prompt(). /api/chat and /v1/chat/completions call
+    create_chat_completion_ex()/create_chat_completion(), which resolve a
+    handler and let it render the prompt internally -- by default from a
+    Jinja2ChatFormatter llama-cpp-python already built and cached during
+    Llama.__init__, straight from the GGUF's own baked-in
+    tokenizer.chat_template, with no way for anything set afterward to reach
+    it. llm.chat_handler, once set, takes absolute priority over that cached
+    default (see lib/llama_wrap.py's _resolve_chat_completion_handler), so
+    replacing it here -- built the same way Llama.__init__ builds its own
+    default handlers -- is the one place that actually reaches every
+    endpoint.
+
+    Left untouched when llm.chat_handler is already set: a future [mmproj]
+    vision handler (Llama() called with chat_handler=...) must not be
+    clobbered here.
+    """
+    if virtual_spec is None or virtual_spec.template is None:
+        return
+    if llm.chat_handler is not None:
+        return
+
+    bos_id = llm.token_bos()
+    eos_id = llm.token_eos()
+    bos_token = llm.detokenize([bos_id]).decode("utf-8", errors="ignore") if bos_id != -1 else ""
+    eos_token = llm.detokenize([eos_id]).decode("utf-8", errors="ignore") if eos_id != -1 else ""
+
+    llm.chat_handler = Jinja2ChatFormatter(
+        template=virtual_spec.template,
+        eos_token=eos_token,
+        bos_token=bos_token,
+        stop_token_ids=[eos_id] if eos_id != -1 else None,
+    ).to_chat_handler()
 
 
 class ModelManager:
@@ -513,10 +553,14 @@ class ModelManager:
         virtual_spec: Optional[VirtualModelSpec] = None,
     ):
         llama_kwargs = self._build_llama_load_kwargs(model_path, requested_n_ctx, virtual_spec)
-        return load_llama_with_captured_stats(
+        llm, stats, log_text = load_llama_with_captured_stats(
             Llama,
             **llama_kwargs,
         )
+
+        _apply_template_override_to_chat_handler(llm, virtual_spec)
+
+        return llm, stats, log_text
 
     def _ensure_capacity_for_load(self, requested_model_name: str) -> None:
         if requested_model_name in self.models:
