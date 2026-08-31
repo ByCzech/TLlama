@@ -20,7 +20,14 @@ class ChatCompletionRequest(BaseModel):
     messages: List[ChatMessage]
 
     stream: bool = False
-    temperature: Optional[float] = 0.7
+    # No default value on purpose. chat_completions() forwards this into
+    # build_sampling_kwargs() only when it is not None, so any non-None
+    # default here is indistinguishable from a client that asked for that
+    # value explicitly -- it would win over a virtual model's [sampling]
+    # section and over TLlama's own baseline alike, on every request, with
+    # nothing a client could do about it. Every other sampling field in
+    # this schema already defaults to None for the same reason.
+    temperature: Optional[float] = None
     top_p: Optional[float] = None
     max_tokens: Optional[int] = None
 
