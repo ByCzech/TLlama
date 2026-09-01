@@ -92,4 +92,16 @@ def start_server():
 
 
 if __name__ == "__main__":
-    start_server()
+    raise SystemExit(main())
+
+
+def main() -> int:
+    """The `tllama` entry point named in pyproject.toml.
+
+    A thin forward: the command lives in cli.py so that adding a
+    subcommand does not mean editing the module that builds the
+    application.
+    """
+    from tllama.cli import main as cli_main
+
+    return cli_main()

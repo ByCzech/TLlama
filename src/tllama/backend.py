@@ -1155,8 +1155,13 @@ class ModelManager:
 
         return None
 
-    def _allocate_toml_path(self, directory: Path, stem: str, target_rel: str) -> Optional[Path]:
+    def _allocate_toml_path(self, directory: Path, stem: str, target_rel: str) -> "tuple[Optional[Path], bool]":
         """Pick the .toml path for a model, avoiding an existing name.
+
+        Returns (path, already_defined). already_defined is True when a
+        .toml for this exact file was found: pulling the same model twice
+        must not leave a second definition behind, and the path is still
+        returned so a caller that means to replace it knows which one.
 
         Two files in one HuggingFace repository can share a basename when
         the uploader sorted quantisations into subdirectories, and the
@@ -1164,14 +1169,10 @@ class ModelManager:
         quantisation is normally in the filename -- but the generator has
         to survive it rather than silently overwrite one with the other, so
         the second one becomes <name>_01.
-
-        Returns None when a .toml for this exact file already exists, under
-        any of those names: pulling the same model twice must not leave a
-        second definition of it behind.
         """
         for candidate in self._iter_candidate_toml_paths(directory, stem):
             if not candidate.exists():
-                return candidate
+                return candidate, False
 
             try:
                 existing = parse_model_toml(
@@ -1184,7 +1185,7 @@ class ModelManager:
                 continue
 
             if existing.llm_model == target_rel:
-                return None
+                return candidate, True
 
         raise TomlModelError(
             f"Cannot place a .toml for {target_rel}: {stem} and its numbered "
@@ -1252,8 +1253,8 @@ class ModelManager:
         stem = self._strip_gguf_suffix(file_path.name)
 
         try:
-            toml_path = self._allocate_toml_path(directory, stem, target_rel)
-            if toml_path is None:
+            toml_path, already_defined = self._allocate_toml_path(directory, stem, target_rel)
+            if already_defined:
                 return None
 
             text = render_model_toml(target_rel, metadata=metadata)
@@ -1264,6 +1265,125 @@ class ModelManager:
 
         logger.info("Created %s for %s", toml_path, file_path)
         return toml_path
+
+    def _iter_repository_gguf_files(self):
+        """Every .gguf on disk, at any depth, in all three repositories.
+
+        Deliberately not _iter_repository_model_files(), which enforces the
+        depths the old .gguf-derived naming scheme needed. A .gguf may now
+        sit anywhere, because the .toml that names it does not have to sit
+        with it -- so for the purpose of finding files that lack a
+        definition, every one of them counts.
+        """
+        for attribute, _ in self._TOML_DEPTH_BY_REPOSITORY:
+            repo_dir = getattr(self, attribute)
+            if not repo_dir.exists():
+                continue
+
+            for file_path in sorted(repo_dir.rglob("*.gguf")):
+                if file_path.is_file():
+                    yield file_path
+
+    def rebuild_repository(
+        self,
+        *,
+        force: bool = False,
+        dry_run: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """Give every .gguf on disk a .toml, so that every one is a model.
+
+        Explicitly run, never on startup: a repository quietly rewriting
+        itself when a service restarts is not something anyone asked for,
+        and the decision about what is a model belongs to whoever owns the
+        files.
+
+        Not only a one-off migration. Copying a .gguf into Local/ by hand
+        leaves it invisible for the same reason a pull without a .toml did,
+        so this is the answer to that too, and it is safe to run at any
+        time: without force it only adds files that were not there.
+
+        force replaces a definition that already exists. Whatever a person
+        wrote into it -- an uncommented n_ctx, a [system].prompt, their own
+        comments -- is kept as a .toml.bak alongside it, unconditionally:
+        anyone reaching for force is thinking about what they want to gain,
+        not about what they are about to lose, and would only think to ask
+        for the copy once it was already too late to make one.
+
+        Returns one entry per file describing what was done or would be,
+        so a caller can report it without repeating the reasoning.
+        """
+        results: List[Dict[str, Any]] = []
+
+        for file_path in self._iter_repository_gguf_files():
+            try:
+                metadata = self._get_model_metadata_sync(str(file_path)) or {}
+            except Exception as exc:
+                # A header that will not parse is not a reason to stop:
+                # the rest of the repository is still worth doing.
+                results.append({
+                    "file": file_path,
+                    "action": "skip",
+                    "toml": None,
+                    "reason": f"unreadable GGUF header ({exc})",
+                })
+                continue
+
+            results.append(
+                self._rebuild_one(file_path, metadata, force=force, dry_run=dry_run)
+            )
+
+        return results
+
+    def _rebuild_one(
+        self,
+        file_path: Path,
+        metadata: Dict[str, Any],
+        *,
+        force: bool,
+        dry_run: bool,
+    ) -> Dict[str, Any]:
+        def outcome(action, toml=None, reason=""):
+            return {"file": file_path, "action": action, "toml": toml, "reason": reason}
+
+        if metadata.get("is_projector"):
+            return outcome("skip", reason="projector, belongs to a model")
+
+        if metadata.get("is_continuation_shard"):
+            return outcome(
+                "skip",
+                reason=f"shard {metadata.get('shard_index')} of {metadata.get('shard_count')}",
+            )
+
+        directory = self._toml_location_for_model_file(file_path)
+        if directory is None:
+            return outcome("skip", reason="too shallow in its repository to be named")
+
+        try:
+            target_rel = str(file_path.resolve().relative_to(self.models_dir.resolve()))
+            toml_path, already_defined = self._allocate_toml_path(
+                directory, self._strip_gguf_suffix(file_path.name), target_rel
+            )
+        except (TomlModelError, ValueError) as exc:
+            return outcome("skip", reason=str(exc))
+
+        if already_defined and not force:
+            return outcome("skip", toml_path, "already defined")
+
+        action = "overwrite" if already_defined else "create"
+
+        if dry_run:
+            return outcome(action, toml_path, "")
+
+        try:
+            if already_defined:
+                shutil.copy2(toml_path, toml_path.with_name(toml_path.name + ".bak"))
+
+            text = render_model_toml(target_rel, metadata=metadata)
+            write_model_toml(toml_path, text, overwrite=already_defined)
+        except Exception as exc:
+            return outcome("skip", toml_path, f"could not write ({exc})")
+
+        return outcome(action, toml_path, "")
 
     async def ensure_virtual_model_toml(
         self,
