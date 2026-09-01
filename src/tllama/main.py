@@ -91,10 +91,6 @@ def start_server():
     return
 
 
-if __name__ == "__main__":
-    raise SystemExit(main())
-
-
 def main() -> int:
     """The `tllama` entry point named in pyproject.toml.
 
@@ -105,3 +101,12 @@ def main() -> int:
     from tllama.cli import main as cli_main
 
     return cli_main()
+
+
+# Below main(), not above it. Running the module directly executes the
+# file top to bottom, so a __main__ block placed before the function it
+# calls raises NameError before anything else happens -- while the
+# installed console script, which imports the module and then looks the
+# name up, works perfectly and hides it.
+if __name__ == "__main__":
+    raise SystemExit(main())
