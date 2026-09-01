@@ -11,6 +11,7 @@ from fastapi.responses import StreamingResponse
 from starlette.concurrency import iterate_in_threadpool
 from tllama.schemas.openai import ChatCompletionRequest
 from tllama.backend import model_manager, model_has_projector
+from tllama._ext import counted_for_request, reset_eval_counters
 from tllama.errors import openai_stream_error_frame
 from tllama.helpers.model_toml import TomlModelError
 from tllama.lib.llama_wrap import create_chat_completion_ex
@@ -250,6 +251,7 @@ async def chat_completions(request: ChatCompletionRequest):
 
     try:
         async with model_manager.acquire_inference_slot(request.model):
+            counters_reset = reset_eval_counters(llm)
             response = await asyncio.to_thread(
                 create_chat_completion_ex,
                 llm,
@@ -258,6 +260,7 @@ async def chat_completions(request: ChatCompletionRequest):
                 **gen_params,
                 **kwargs_ex
             )
+            counted_prompt, counted_eval = counted_for_request(counters_reset, llm)
     except HTTPException:
         raise
     except Exception as e:
@@ -287,7 +290,16 @@ async def chat_completions(request: ChatCompletionRequest):
     if choice_message.get("tool_calls") is not None:
         message["tool_calls"] = choice_message["tool_calls"]
 
-    usage = response.get("usage", {})
+    usage = response.get("usage", {}) or {}
+
+    # The context's own counters first. They agree with usage on a text
+    # request; on one carrying an image they do not, and usage is the one
+    # that is wrong -- MTMDChatHandler evaluates the picture through mtmd
+    # and then passes create_completion only llama.input_ids, so the
+    # image's tokens are never counted. Measured at 39 reported against
+    # 179 actually evaluated.
+    prompt_tokens = counted_prompt if counted_prompt is not None else usage.get("prompt_tokens")
+    completion_tokens = counted_eval if counted_eval is not None else usage.get("completion_tokens")
 
     return {
         "id": completion_id,
@@ -300,11 +312,8 @@ async def chat_completions(request: ChatCompletionRequest):
             "finish_reason": choice.get("finish_reason"),
         }],
         "usage": {
-            "prompt_tokens": usage.get("prompt_tokens"),
-            "completion_tokens": usage.get("completion_tokens"),
-            "total_tokens": (
-                (usage.get("prompt_tokens") or 0) +
-                (usage.get("completion_tokens") or 0)
-            ),
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": (prompt_tokens or 0) + (completion_tokens or 0),
         },
     }

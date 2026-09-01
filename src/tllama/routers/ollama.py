@@ -321,6 +321,7 @@ async def ollama_chat(request: OllamaChatRequest):
 
     try:
         async with model_manager.acquire_inference_slot(request.model):
+            counters_reset = reset_eval_counters(llm)
             response = await asyncio.to_thread(
                 create_chat_completion_ex,
                 llm,
@@ -329,6 +330,7 @@ async def ollama_chat(request: OllamaChatRequest):
                 **gen_params,
                 **kwargs_ex
             )
+            counted_prompt, counted_eval = counted_for_request(counters_reset, llm)
     except HTTPException:
         raise
     except Exception as e:
@@ -365,6 +367,8 @@ async def ollama_chat(request: OllamaChatRequest):
     if choice_message.get("tool_calls") is not None:
         message["tool_calls"] = choice_message["tool_calls"]
 
+    usage = response.get("usage", {}) or {}
+
     return {
         "model": request.model,
         "created_at": get_iso_time(),
@@ -372,8 +376,22 @@ async def ollama_chat(request: OllamaChatRequest):
         "done": True,
         "done_reason": choice.get("finish_reason"),
         "total_duration": end_time - start_time,
-        "prompt_eval_count": response.get("usage", {}).get("prompt_tokens"),
-        "eval_count": response.get("usage", {}).get("completion_tokens"),
+        # The context's own counters first, usage second. For a text
+        # request the two agree; for one carrying an image they do not,
+        # and usage is the one that is wrong. MTMDChatHandler evaluates
+        # the picture through mtmd and then hands create_completion only
+        # llama.input_ids, so the image's tokens never reach usage --
+        # measured at 39 reported against 179 actually evaluated. The
+        # streaming path has read the counters all along; this is the
+        # sibling that did not.
+        "prompt_eval_count": (
+            counted_prompt if counted_prompt is not None
+            else usage.get("prompt_tokens")
+        ),
+        "eval_count": (
+            counted_eval if counted_eval is not None
+            else usage.get("completion_tokens")
+        ),
     }
 
 
