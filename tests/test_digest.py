@@ -99,15 +99,23 @@ def test_the_two_cache_documents_are_independent(manager, gguf_file, monkeypatch
     assert metadata_cache.load_digest_cache(manager.metadata_cache_dir, path) is not None
 
 
-def test_deleting_a_model_removes_both_cache_documents(manager, gguf_file):
+def test_deleting_a_model_keeps_both_cache_documents(manager, gguf_file, toml_file):
+    """Deleting a model deletes its definition, not the file it names.
+
+    The caches are keyed by that file, which has not changed, so they are
+    still correct. The digest cache in particular cost a full read of a
+    multi-gigabyte file to build; discarding it because a name went away
+    would mean paying that again for a file that never moved.
+    """
     path = gguf_file("Local/model.gguf")
+    toml_file("Local/model.toml", '[llm]\nmodel = "Local/model.gguf"\n')
     metadata_cache.save_metadata_cache(manager.metadata_cache_dir, "model", path, {"a": 1})
     metadata_cache.save_digest_cache(manager.metadata_cache_dir, "model", path, {"b": 2})
 
-    manager.delete_model_file("model")
+    manager.delete_model_definition("model")
 
-    assert not metadata_cache.get_metadata_cache_path(manager.metadata_cache_dir, path).exists()
-    assert not metadata_cache.get_digest_cache_path(manager.metadata_cache_dir, path).exists()
+    assert metadata_cache.get_metadata_cache_path(manager.metadata_cache_dir, path).exists()
+    assert metadata_cache.get_digest_cache_path(manager.metadata_cache_dir, path).exists()
 
 
 async def test_a_published_digest_is_recorded_without_reading_the_file(

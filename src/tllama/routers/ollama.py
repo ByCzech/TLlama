@@ -925,4 +925,7 @@ async def delete_model_ollama(request: Request):
     return {
         "status": "success",
         "deleted": result["deleted_path"],
+        # The weights stay on disk. Reported so a client is not left to
+        # infer from a bare success that several gigabytes just went away.
+        "kept_model_file": result["kept_model_file"],
     }

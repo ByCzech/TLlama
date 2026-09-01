@@ -32,10 +32,8 @@ from tllama.helpers.model_toml import (
 from tllama.helpers.metadata_cache import (
     load_metadata_cache,
     save_metadata_cache,
-    delete_metadata_cache,
     load_digest_cache,
     save_digest_cache,
-    delete_digest_cache
 )
 
 __all__ = ('model_manager', 'load_backend_config_from_env')
@@ -1957,38 +1955,61 @@ class ModelManager:
 
             current = current.parent
 
-    def delete_model_file(self, model_ref: str) -> Dict[str, Any]:
-        target_path = self.resolve_model_storage_path(model_ref)
+    def delete_model_definition(self, model_ref: str) -> Dict[str, Any]:
+        """Delete a model by deleting its definition, and only that.
 
-        if not target_path.exists():
-            raise FileNotFoundError(f"Model file not found: {target_path}")
+        The .toml is the manifest and the .gguf is the blob, and real
+        Ollama's `rm` works the same way for the same reason (verified,
+        not assumed): it removes the manifest and leaves the blob for as
+        long as anything else refers to it. Here more than one virtual
+        model can name one physical file deliberately, since sharing
+        weights instead of copying them is a stated purpose of the
+        indirection, so deleting the weights along with one name would
+        break the others silently.
 
-        if not target_path.is_file():
-            raise ValueError(f"Target is not a file: {target_path}")
+        The weights are never removed automatically; reclaiming disk space
+        is separate work with its own decisions to make about orphans.
 
+        The two on-disk caches stay too. They are keyed by the .gguf,
+        which has not changed, and the digest cache in particular cost a
+        full read of a multi-gigabyte file to build -- discarding it
+        because a name went away would mean paying that again for a file
+        that never moved. Only the in-memory entry keyed by the model's
+        name is dropped, because that name no longer refers to anything.
+        """
+        toml_path = self._toml_path_for_reference(model_ref)
+
+        if toml_path is None:
+            raise ValueError(f"Not a model name this repository can hold: {model_ref}")
+
+        if not toml_path.is_file():
+            raise FileNotFoundError(f"Model not found: {model_ref}")
+
+        kept_file: Optional[str] = None
         try:
-            target_path.unlink()
-        except FileNotFoundError:
+            spec = parse_model_toml(
+                toml_path.read_text(encoding="utf-8"), source=str(toml_path)
+            )
+            kept_file = spec.llm_model
+        except (TomlModelError, OSError):
+            # Deleting a definition that will not parse is exactly when
+            # someone most wants to be able to delete it.
             pass
 
-        delete_metadata_cache(self.metadata_cache_dir, target_path)
-        delete_digest_cache(self.metadata_cache_dir, target_path)
+        toml_path.unlink(missing_ok=True)
         self._invalidate_metadata_cache_entry(model_ref)
 
-        self._cleanup_hf_repo_auxiliary(target_path)
-
-        # Best-effort cleanup of empty parent directories, but do not fail
-        # if other files remain in the directory tree.
-        repo_root = self._get_repo_root_for_path(target_path)
-        self._remove_empty_parents(target_path.parent, repo_root)
+        repo_root = self._get_repo_root_for_path(toml_path)
+        self._remove_empty_parents(toml_path.parent, repo_root)
 
         return {
             "model_ref": model_ref,
-            "deleted_path": str(target_path),
+            "deleted_path": str(toml_path),
+            "kept_model_file": kept_file,
         }
 
     async def delete_model(self, model_ref: str) -> Dict[str, Any]:
-        return await asyncio.to_thread(self.delete_model_file, model_ref)
+        return await asyncio.to_thread(self.delete_model_definition, model_ref)
 
     def _strip_gguf_suffix(self, value: str) -> str:
         return value[:-5] if value.lower().endswith(".gguf") else value
