@@ -12,7 +12,7 @@ from pathlib import Path
 from hashlib import sha256
 
 from llama_cpp import Llama, llama_cpp as llama_cpp_lib
-from llama_cpp.llama_chat_format import Jinja2ChatFormatter
+from llama_cpp.llama_chat_format import Jinja2ChatFormatter, MTMDChatHandler
 from typing import Dict, Optional, Any, List
 from datetime import datetime, timezone, timedelta
 
@@ -127,6 +127,30 @@ class CachedMetadataEntry:
     value: Dict[str, Any]
 
 
+class _TemplateOverridingMTMDChatHandler(MTMDChatHandler):
+    """A projector handler that renders a [template] instead of the GGUF's.
+
+    MTMDChatHandler does its own templating: it reads the model's
+    tokenizer.chat_template, renders it itself, and only then hands the
+    result to mtmd for splitting on the media marker. That leaves nothing
+    for _apply_template_override_to_chat_handler to replace afterwards, so
+    without this a [template] next to an [mmproj] would be silently
+    ignored -- against the rule that a .toml outranks what the GGUF says.
+
+    _get_chat_template is the single seam where the handler decides what to
+    render, so overriding it is the whole change. Everything downstream --
+    the media marker substitution, the tokenization, the eval loop -- is
+    untouched and keeps working on the rendered text either way.
+    """
+
+    def __init__(self, *args, template: str, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._template_override = template
+
+    def _get_chat_template(self, llama_model) -> str:
+        return self._template_override
+
+
 def _apply_template_override_to_chat_handler(llm, virtual_spec: Optional[VirtualModelSpec]) -> None:
     """Make a virtual model's [template] reach /api/chat and /v1/chat/completions too.
 
@@ -144,9 +168,11 @@ def _apply_template_override_to_chat_handler(llm, virtual_spec: Optional[Virtual
     default handlers -- is the one place that actually reaches every
     endpoint.
 
-    Left untouched when llm.chat_handler is already set: a future [mmproj]
-    vision handler (Llama() called with chat_handler=...) must not be
-    clobbered here.
+    Left untouched when llm.chat_handler is already set, which now means a
+    projector handler built by _build_vision_chat_handler and passed to
+    Llama(). Replacing it here would throw the projector away and leave the
+    model unable to see. That handler carries the [template] itself (see
+    _TemplateOverridingMTMDChatHandler), so nothing is lost by stopping.
     """
     if virtual_spec is None or virtual_spec.template is None:
         return
@@ -1676,7 +1702,46 @@ class ModelManager:
             if type_v is not None:
                 kwargs["type_v"] = type_v
 
+        chat_handler = self._build_vision_chat_handler(virtual_spec, model_path)
+        if chat_handler is not None:
+            kwargs["chat_handler"] = chat_handler
+
         return kwargs
+
+    def _build_vision_chat_handler(
+        self, virtual_spec: Optional[VirtualModelSpec], source: str
+    ):
+        """The projector handler a virtual model's [mmproj] calls for.
+
+        None when there is no projector to load, which is every model that
+        has no [mmproj] section -- Llama() then resolves its own text
+        handler exactly as before.
+
+        MTMDChatHandler is the default because it takes the chat template
+        from the model itself rather than carrying a hardcoded one, so it
+        works with any model whose template can render content parts. The
+        older Llava15ChatHandler family each bakes in its own prompt format
+        and would impose it on the model; picking one of those is a
+        deliberate choice for a specific model, not a default.
+
+        Constructed here rather than after loading because mtmd needs the
+        model to initialise against, and Llama() only wires a handler up to
+        the model when it is passed in at construction time.
+        """
+        if virtual_spec is None:
+            return None
+
+        projector_path = self.resolve_mmproj_path(virtual_spec, source)
+        if projector_path is None:
+            return None
+
+        if virtual_spec.template is not None:
+            return _TemplateOverridingMTMDChatHandler(
+                clip_model_path=str(projector_path),
+                template=virtual_spec.template,
+            )
+
+        return MTMDChatHandler(clip_model_path=str(projector_path))
 
     async def start(self):
         self.ensure_storage()
