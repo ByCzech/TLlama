@@ -367,6 +367,29 @@ class ModelManager:
         text = toml_path.read_text(encoding="utf-8")
         return parse_model_toml(text, source=str(toml_path))
 
+    def read_model_definition(self, model_ref: str) -> Optional[str]:
+        """The raw text of a model's .toml, exactly as it sits on disk.
+
+        Returned unparsed and unformatted on purpose. It is what
+        `ollama show --modelfile` reports, and the workflow that makes
+        that useful is fetching it, editing it and putting it back: a
+        round trip through a parser would drop the comments a person
+        wrote, which is the very thing the format was chosen to keep.
+
+        None when there is no file or it cannot be read. A malformed one
+        is still returned -- showing someone the broken file is how they
+        find out what is wrong with it.
+        """
+        toml_path = self._toml_path_for_reference(model_ref)
+        if toml_path is None or not toml_path.is_file():
+            return None
+
+        try:
+            return toml_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            logger.warning("Could not read %s: %s", toml_path, exc)
+            return None
+
     def _build_model_file_info(self, model_name: str) -> Optional[Dict[str, Any]]:
         try:
             virtual_spec = self._resolve_virtual_model_spec(model_name)

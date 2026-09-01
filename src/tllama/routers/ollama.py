@@ -24,6 +24,7 @@ from tllama.errors import ollama_stream_error_line
 from tllama.helpers.model_toml import TomlModelError
 
 from tllama.helpers.common import (
+    format_ollama_parameters,
     get_iso_time,
     never_expires_at,
     normalize_stop,
@@ -642,9 +643,23 @@ async def show_model_info(request: dict):
     if detect_reasoning_format(model_name, metadata_info) != "none":
         capabilities.append("thinking")
 
+    # Ollama's own `show --modelfile` hands back the definition a model
+    # was built from, and the workflow that makes it worth having is
+    # fetching it, editing it and putting it back. So this is the .toml
+    # verbatim, comments and formatting intact, rather than the synthetic
+    # FROM/TEMPLATE approximation that used to stand in for it and could
+    # not be edited into anything.
+    #
+    # The fallback is not dead: a file can exist and still be unreadable,
+    # and answering with something is better than failing a request that
+    # only asked what a model is.
+    modelfile = model_manager.read_model_definition(model_name)
+    if modelfile is None:
+        modelfile = f'FROM {model_name}\nTEMPLATE """{template}"""'
+
     return {
-        "modelfile": f'FROM {model_name}\nTEMPLATE """{template}"""',
-        "parameters": "stop                           \"<|end_of_text|>\"",
+        "modelfile": modelfile,
+        "parameters": format_ollama_parameters(metadata_info),
         "template": template,
         "details": {
             "parent_model": "",

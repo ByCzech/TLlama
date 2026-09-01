@@ -259,3 +259,49 @@ def normalize_keep_alive(keep_alive: str | int | float | None) -> int | None:
         return int(numeric * multipliers[suffix])
 
     raise ValueError(f"Invalid keep_alive value: {keep_alive}")
+
+
+# Real Ollama pads a parameter name out to this width before its value.
+# Matching it matters only because anything printing the field verbatim,
+# which is what `ollama show --parameters` does, would otherwise look
+# subtly wrong next to the real thing.
+_OLLAMA_PARAMETER_NAME_WIDTH = 31
+
+
+def format_ollama_parameters(metadata_info: dict | None) -> str:
+    """The parameters a model's definition pins, in Ollama's own layout.
+
+    What a definition sets, not what is in effect. Ollama's field carries
+    the PARAMETER lines from the Modelfile, so a model whose definition
+    pins nothing reports nothing -- reporting TLlama's baseline here
+    instead would claim the model asked for values it never mentioned, and
+    a client could not tell the two apart.
+
+    Replaces a hardcoded 'stop "<|end_of_text|>"' that was returned for
+    every model regardless of what it actually used.
+    """
+    metadata_info = metadata_info or {}
+
+    sampling = metadata_info.get("sampling_defaults") or {}
+    stops = metadata_info.get("stop_defaults") or []
+
+    lines = []
+
+    for name in sorted(sampling):
+        lines.append(_ollama_parameter_line(name, sampling[name]))
+
+    for stop in stops:
+        lines.append(_ollama_parameter_line("stop", stop))
+
+    return "\n".join(lines)
+
+
+def _ollama_parameter_line(name: str, value) -> str:
+    if isinstance(value, bool):
+        rendered = "true" if value else "false"
+    elif isinstance(value, str):
+        rendered = f'"{value}"'
+    else:
+        rendered = str(value)
+
+    return f"{name:<{_OLLAMA_PARAMETER_NAME_WIDTH}}{rendered}"
