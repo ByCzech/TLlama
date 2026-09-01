@@ -307,6 +307,15 @@ async def ollama_chat(request: OllamaChatRequest):
                 **gen_params,
                 **kwargs_ex
             )
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Nothing has been written to the response yet, unlike the
+        # streaming sibling above, so the failure can still be reported
+        # with a status code. 500: generation broke inside llama.cpp after
+        # the request was accepted and the model loaded, which is not
+        # something the client can restate its way out of.
+        raise HTTPException(status_code=500, detail=f"Inference failed: {str(e)}")
     finally:
         if keep_alive_seconds == 0:
             model_manager.unload_model(request.model)
@@ -563,6 +572,10 @@ async def ollama_generate(request: OllamaGenerateRequest):
                 stop=stop_tokens,
                 **generation_kwargs
             )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Inference failed: {str(e)}")
     finally:
         if keep_alive_seconds == 0:
             model_manager.unload_model(request.model)
