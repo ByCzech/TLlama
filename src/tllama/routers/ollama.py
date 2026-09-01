@@ -16,7 +16,7 @@ from fastapi.responses import StreamingResponse, JSONResponse
 from starlette.concurrency import iterate_in_threadpool
 from llama_cpp import LlamaGrammar
 from tllama.schemas.ollama import OllamaChatRequest, OllamaGenerateRequest
-from tllama.backend import model_manager, HF_LOOKUP_MISSING, PullProgress
+from tllama.backend import model_manager, model_has_projector, HF_LOOKUP_MISSING, PullProgress
 from tllama._ext import counted_for_request, reset_eval_counters
 from tllama.lib.llama_wrap import create_chat_completion_ex
 
@@ -41,6 +41,11 @@ from tllama.helpers.reasoning_split import (
     detect_reasoning_format,
     ReasoningStreamSplitter,
     split_full_text_by_reasoning_format,
+)
+from tllama.helpers.vision import (
+    NO_MULTIMODAL_SUPPORT,
+    messages_carry_images,
+    request_carries_images,
 )
 from tllama.helpers.chat import (
     normalize_chat_messages,
@@ -150,6 +155,15 @@ async def ollama_chat(request: OllamaChatRequest):
 
     metadata_info = await model_manager.get_model_metadata(request.model) or {}
     reasoning_format = detect_reasoning_format(request.model, metadata_info)
+
+    # Refused rather than dropped. Without a projector there is nowhere for
+    # an image to go, and going ahead anyway means the model answers about
+    # a picture it never saw -- confidently, since nothing tells it that
+    # anything is missing. Real Ollama refuses this the same way, with the
+    # same sentence.
+    if messages_carry_images(request.messages) and not model_has_projector(llm):
+        raise HTTPException(status_code=400, detail=NO_MULTIMODAL_SUPPORT)
+
     messages = apply_default_system_prompt(normalize_chat_messages(request.messages), metadata_info)
     kwargs_ex = build_chat_kwargs_ex(request)
 
@@ -438,6 +452,13 @@ async def ollama_generate(request: OllamaGenerateRequest):
         raise HTTPException(status_code=400, detail=f"Error loading model: {str(e)}")
 
     metadata_info = await model_manager.get_model_metadata(request.model) or {}
+
+    # Same rule as /api/chat: an image with nowhere to go is refused, not
+    # dropped. /api/generate never sends one anywhere even with a
+    # projector loaded -- it renders a prompt rather than going through a
+    # chat handler -- so this is the only honest answer here for now.
+    if request_carries_images(request.images):
+        raise HTTPException(status_code=400, detail=NO_MULTIMODAL_SUPPORT)
 
     generation_kwargs = build_sampling_kwargs(opts, metadata_info)
     generation_kwargs.pop("stop", None)  # stop is computed below, alongside eos_token

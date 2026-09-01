@@ -151,6 +151,18 @@ class _TemplateOverridingMTMDChatHandler(MTMDChatHandler):
         return self._template_override
 
 
+def model_has_projector(llm) -> bool:
+    """Whether a loaded model can actually take an image.
+
+    Asked of the loaded model rather than of its definition on purpose:
+    what decides is whether a projector handler is attached and holding an
+    mtmd context, which is the thing an image is eventually handed to. A
+    .toml naming an [mmproj] says what was asked for; this says what
+    happened.
+    """
+    return isinstance(getattr(llm, "chat_handler", None), MTMDChatHandler)
+
+
 def _initialise_projector(llm) -> None:
     """Bring a projector into memory now rather than at the first image.
 
