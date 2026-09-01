@@ -21,6 +21,7 @@ from tllama._ext import counted_for_request, reset_eval_counters
 from tllama.lib.llama_wrap import create_chat_completion_ex
 
 from tllama.errors import ollama_stream_error_line
+from tllama.helpers.model_toml import TomlModelError
 
 from tllama.helpers.common import (
     get_iso_time,
@@ -118,6 +119,12 @@ async def ollama_chat(request: OllamaChatRequest):
                 num_ctx=opts.get("num_ctx"),
                 keep_alive=request.keep_alive,
             )
+        except TomlModelError:
+            # Not the request's fault and not a load failure: the virtual
+            # model's own definition is broken. Reported as 500 by the
+            # registered handler instead of being flattened into a 400 that
+            # blames the client.
+            raise
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Error loading model: {str(e)}")
 
@@ -135,6 +142,8 @@ async def ollama_chat(request: OllamaChatRequest):
             num_ctx=opts.get("num_ctx"),
             keep_alive=request.keep_alive,
         )
+    except TomlModelError:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Error loading model: {str(e)}")
 
@@ -390,6 +399,12 @@ async def ollama_generate(request: OllamaGenerateRequest):
                 num_ctx=opts.get("num_ctx"),
                 keep_alive=request.keep_alive,
             )
+        except TomlModelError:
+            # Not the request's fault and not a load failure: the virtual
+            # model's own definition is broken. Reported as 500 by the
+            # registered handler instead of being flattened into a 400 that
+            # blames the client.
+            raise
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Error loading model: {str(e)}")
 
@@ -407,6 +422,8 @@ async def ollama_generate(request: OllamaGenerateRequest):
             num_ctx=opts.get("num_ctx"),
             keep_alive=request.keep_alive,
         )
+    except TomlModelError:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Error loading model: {str(e)}")
 

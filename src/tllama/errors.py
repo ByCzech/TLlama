@@ -16,6 +16,15 @@ from fastapi.responses import JSONResponse, Response
 # overriding the default handlers.
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from tllama.helpers.model_toml import TomlModelError
+
+
+# A broken .toml is the server's own configuration being wrong, not the
+# request being wrong: the same request would have worked yesterday and will
+# work again once the file is fixed. 5xx is what says that. Reporting it as
+# 400 would tell a client to change its request, which cannot help.
+TOML_MODEL_ERROR_STATUS = 500
+
 
 # The Ollama-compatible surface. Everything else keeps FastAPI's own error
 # rendering; /v1 has its own shape and is handled separately.
@@ -212,6 +221,37 @@ async def http_exception_handler(
         )
 
     return await default_http_exception_handler(request, exc)
+
+
+async def toml_model_exception_handler(
+    request: Request,
+    exc: TomlModelError,
+) -> Response:
+    """Render a malformed virtual-model .toml in the surface's own shape.
+
+    Without this, TomlModelError reached FastAPI unhandled -- neither
+    registered handler matches it -- and the client got a bare, unformatted
+    500 that no Ollama or OpenAI client can parse. A .toml can become
+    invalid at any moment, including while a model built from it is already
+    loaded, because it is an ordinary file a person edits in place; this is
+    a routine situation to report cleanly, not an impossible one.
+
+    The message carries the exception text unchanged. TomlModelError is
+    raised with the offending file's path and the specific problem already
+    in it, which is exactly what someone needs to fix the file.
+    """
+    message = str(exc)
+
+    if is_ollama_api_path(request.url.path):
+        return ollama_error_response(TOML_MODEL_ERROR_STATUS, message)
+
+    if is_openai_api_path(request.url.path):
+        return openai_error_response(TOML_MODEL_ERROR_STATUS, message)
+
+    return JSONResponse(
+        status_code=TOML_MODEL_ERROR_STATUS,
+        content={"error": message},
+    )
 
 
 async def validation_exception_handler(

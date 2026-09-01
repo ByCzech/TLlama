@@ -13,8 +13,10 @@ from tllama.config import load_app_config_from_env
 from tllama.middleware import UndeclaredJsonBodyMiddleware
 from tllama.errors import (
     http_exception_handler,
+    toml_model_exception_handler,
     validation_exception_handler,
 )
+from tllama.helpers.model_toml import TomlModelError
 
 
 @asynccontextmanager
@@ -36,6 +38,12 @@ app.add_middleware(UndeclaredJsonBodyMiddleware)
 # both.
 app.add_exception_handler(StarletteHTTPException, http_exception_handler)
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
+
+# TomlModelError subclasses ValueError, so registration order does not help
+# here: an endpoint that catches ValueError itself gets to it first. Those
+# endpoints re-raise it explicitly so this handler stays the single place
+# that decides how a broken .toml is reported.
+app.add_exception_handler(TomlModelError, toml_model_exception_handler)
 
 
 app.include_router(openai.router)

@@ -12,6 +12,7 @@ from starlette.concurrency import iterate_in_threadpool
 from tllama.schemas.openai import ChatCompletionRequest
 from tllama.backend import model_manager
 from tllama.errors import openai_stream_error_frame
+from tllama.helpers.model_toml import TomlModelError
 from tllama.lib.llama_wrap import create_chat_completion_ex
 
 from tllama.helpers.common import (
@@ -63,6 +64,12 @@ async def chat_completions(request: ChatCompletionRequest):
             status_code=404,
             detail=f"The model '{request.model}' does not exist",
         )
+    except TomlModelError:
+        # TomlModelError subclasses ValueError, so it would otherwise be
+        # swallowed by the clause below and reported as a client error. A
+        # broken .toml is the server's configuration being wrong; the
+        # registered handler renders it as 500.
+        raise
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
