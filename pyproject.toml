@@ -24,6 +24,14 @@ dependencies = [
     # handed to it that meant holding on to the whole thing until some other
     # request displaced it.
     "anyio>=4.9",
+    # Reading the media type off an image's own bytes rather than
+    # trusting a label. Ollama sends images as bare base64 with no type
+    # at all, so there is nothing to trust in the first place. Preferred
+    # over python-magic, which needs libmagic as a system library, and
+    # over puremagic, which raises on unrecognised bytes where this
+    # returns None -- and "not an image" is a case worth handling rather
+    # than catching.
+    "filetype>=1.2.0",
     # Virtual-model .toml files: parsing and, unlike tomllib (stdlib,
     # read-only) or tomli_w (write-only, drops comments), round-trip
     # writing that preserves a person's own comments and formatting when

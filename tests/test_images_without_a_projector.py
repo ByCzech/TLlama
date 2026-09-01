@@ -182,3 +182,36 @@ class TestGenerateRefusesImagesForNow:
         })
 
         assert response.status_code != 400
+
+
+class TestAnUnusableImageIsAClientError:
+    def test_a_url_gets_a_400_not_a_fetch(self, client, loaded):
+        loaded(chat_handler=FakeProjectorHandler())
+
+        response = client.post("/api/chat", json={
+            "model": "m",
+            "stream": False,
+            "messages": [{
+                "role": "user",
+                "content": "co to je",
+                "images": ["http://127.0.0.1:9/nic.png"],
+            }],
+        })
+
+        assert response.status_code == 400
+        assert "base64" in response.json()["error"]
+
+    def test_undecodable_data_gets_a_400(self, client, loaded):
+        loaded(chat_handler=FakeProjectorHandler())
+
+        response = client.post("/api/chat", json={
+            "model": "m",
+            "stream": False,
+            "messages": [{
+                "role": "user",
+                "content": "co to je",
+                "images": ["nonsense!!"],
+            }],
+        })
+
+        assert response.status_code == 400

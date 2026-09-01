@@ -7,6 +7,7 @@ if TYPE_CHECKING:
     from .schemas import OllamaChatRequest, Message
 
 from tllama.helpers.common import normalize_message_content
+from tllama.helpers.vision import build_multimodal_content, content_carries_images
 
 
 def build_think_kwargs_ex(think_value) -> dict[str, Any]:
@@ -75,13 +76,31 @@ def normalize_chat_messages(messages: list[Message]) -> list[dict[str, Any]]:
     normalized: list[dict[str, Any]] = []
 
     for m in messages:
+        images = getattr(m, "images", None)
+
+        if images:
+            # Ollama keeps images beside the text, in their own field, as
+            # bare base64. Every handler downstream reads OpenAI content
+            # parts instead, so this is where the two shapes meet. Passing
+            # the field through untouched, as this used to, meant the
+            # image reached the template as a key nothing rendered and the
+            # model answered about a picture it never got.
+            content: Any = build_multimodal_content(
+                normalize_message_content(m.content), images
+            )
+        elif content_carries_images(m.content):
+            # Already in the shape the handlers read. Flattening it to
+            # text, which is what normalize_message_content does to any
+            # list, would keep the words and drop the picture.
+            content = m.content
+        else:
+            content = normalize_message_content(m.content)
+
         msg = {
             "role": m.role,
-            "content": normalize_message_content(m.content),
+            "content": content,
         }
 
-        if getattr(m, "images", None):
-            msg["images"] = m.images
         if getattr(m, "thinking", None):
             msg["thinking"] = m.thinking
         if getattr(m, "tool_calls", None):

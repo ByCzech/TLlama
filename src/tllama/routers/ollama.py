@@ -43,6 +43,7 @@ from tllama.helpers.reasoning_split import (
     split_full_text_by_reasoning_format,
 )
 from tllama.helpers.vision import (
+    InvalidImageError,
     NO_MULTIMODAL_SUPPORT,
     messages_carry_images,
     request_carries_images,
@@ -164,7 +165,13 @@ async def ollama_chat(request: OllamaChatRequest):
     if messages_carry_images(request.messages) and not model_has_projector(llm):
         raise HTTPException(status_code=400, detail=NO_MULTIMODAL_SUPPORT)
 
-    messages = apply_default_system_prompt(normalize_chat_messages(request.messages), metadata_info)
+    try:
+        messages = apply_default_system_prompt(normalize_chat_messages(request.messages), metadata_info)
+    except InvalidImageError as exc:
+        # An image that cannot be decoded, or a URL that will not be
+        # fetched, is the client's to fix -- and saying which is the
+        # difference between a fixable request and a mystery.
+        raise HTTPException(status_code=400, detail=str(exc))
     kwargs_ex = build_chat_kwargs_ex(request)
 
     gen_params = build_sampling_kwargs(opts, metadata_info)
