@@ -143,10 +143,20 @@ def parse_llama_verbose_load_log(log_text: str) -> dict:
     return result
 
 
-def load_llama_with_captured_stats(llama_cls, **kwargs):
+def load_llama_with_captured_stats(llama_cls, after_load=None, **kwargs):
+    """Build a model and read back what it said about itself while doing so.
+
+    after_load, when given, is called with the new model while the capture
+    is still in place. It exists for work that allocates on top of the
+    model and reports it the same way llama.cpp does -- initialising a
+    projector, for one -- so that those buffers land in the same reading
+    rather than being written to a stderr nobody is watching.
+    """
     stderr_capture = io.StringIO()
     with contextlib.redirect_stderr(stderr_capture):
         llm = llama_cls(**kwargs)
+        if after_load is not None:
+            after_load(llm)
     log_text = stderr_capture.getvalue()
     stats = parse_llama_verbose_load_log(log_text)
     return llm, stats, log_text

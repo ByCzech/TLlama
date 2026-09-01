@@ -151,6 +151,35 @@ class _TemplateOverridingMTMDChatHandler(MTMDChatHandler):
         return self._template_override
 
 
+def _initialise_projector(llm) -> None:
+    """Bring a projector into memory now rather than at the first image.
+
+    MTMDChatHandler builds its mtmd context lazily, on the first call that
+    carries one. That defers the projector's weights and its compute
+    buffers -- hundreds of MiB between them -- past the point where anyone
+    is looking, with two consequences. The allocation lands mid-request
+    instead of at load, and, because it happens outside the window
+    load_llama_with_captured_stats reads, /api/ps reports a size for the
+    model that leaves the projector out entirely. Somebody checking
+    whether a vision model fits in VRAM is then reading a number that
+    cannot answer the question.
+
+    Ollama preloads and preallocates for exactly this reason: after a load
+    finishes, what it says about a model is the whole truth about it.
+
+    Not an error path. A projector that does not fit in VRAM spills into
+    system RAM and keeps working, only slower -- and being able to see
+    that is the point. Only a projector that fits nowhere at all fails,
+    and that failure belongs to the load, where it is raised.
+    """
+    handler = getattr(llm, "chat_handler", None)
+    initialise = getattr(handler, "_init_mtmd_context", None)
+    if initialise is None:
+        return
+
+    initialise(llm)
+
+
 def _apply_template_override_to_chat_handler(llm, virtual_spec: Optional[VirtualModelSpec]) -> None:
     """Make a virtual model's [template] reach /api/chat and /v1/chat/completions too.
 
@@ -610,6 +639,7 @@ class ModelManager:
         llama_kwargs = self._build_llama_load_kwargs(model_path, requested_n_ctx, virtual_spec)
         llm, stats, log_text = load_llama_with_captured_stats(
             Llama,
+            after_load=_initialise_projector,
             **llama_kwargs,
         )
 
