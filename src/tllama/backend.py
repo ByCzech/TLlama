@@ -1178,6 +1178,18 @@ class ModelManager:
         fetched metadata and digest itself in an inline loop, duplicating
         this. A failure scanning one model's metadata or hashing one
         model's content is isolated to that model, not the whole listing.
+
+        That isolation has to be enforced here as well as in the scan.
+        _list_local_models_sync parses each .toml and drops the ones it
+        cannot use, but get_model_metadata() re-reads the same file from
+        disk afterwards, so a file edited in between is parsed twice with
+        different results: the scan let the model through and the second
+        read raised, taking the whole listing with it. A .toml is an
+        ordinary file a person edits in place, and /api/tags is exactly
+        what a client polls while that is happening.
+
+        The model is dropped, matching what the scan does with a file it
+        cannot parse.
         """
         models = await self.list_local_models()
         enriched: List[Dict[str, Any]] = []
@@ -1185,7 +1197,12 @@ class ModelManager:
         for model in models:
             item = dict(model)
 
-            metadata = await self.get_model_metadata(model["id"])
+            try:
+                metadata = await self.get_model_metadata(model["id"])
+            except TomlModelError as e:
+                logger.warning("Ignoring %s: %s", model["id"], e)
+                continue
+
             if metadata:
                 item.update(metadata)
 
@@ -1195,6 +1212,43 @@ class ModelManager:
             enriched.append(item)
 
         return enriched
+
+    async def get_model_metadata_best_effort(
+        self,
+        model_name: str,
+    ) -> Optional[Dict[str, Any]]:
+        """get_model_metadata(), but a broken .toml yields None.
+
+        For callers reporting on a model whose existence is established by
+        something other than its .toml. /api/ps reports what is resident in
+        memory right now: a model loaded before its .toml was edited is
+        still loaded, still holding the memory it holds, and still able to
+        answer requests, so leaving it out would describe the machine's
+        actual state less accurately than listing it with whatever is still
+        known about it.
+
+        Every other caller wants the exception. For /api/show or an
+        inference request a broken .toml is the answer to the question
+        being asked, not an inconvenience along the way -- which is why
+        this is a separate method rather than a change to the default.
+        """
+        try:
+            return await self.get_model_metadata(model_name)
+        except TomlModelError as e:
+            logger.warning("Metadata unavailable for %s: %s", model_name, e)
+            return None
+
+    def build_model_file_info_best_effort(self, model_name: str) -> Optional[Dict[str, Any]]:
+        """_build_model_file_info(), but a broken .toml yields None.
+
+        Same reasoning as get_model_metadata_best_effort, for the model
+        whose load /api/ps reports as still in flight.
+        """
+        try:
+            return self._build_model_file_info(model_name)
+        except TomlModelError as e:
+            logger.warning("File info unavailable for %s: %s", model_name, e)
+            return None
 
     def _resolve_kv_cache_type(self, value: str | None) -> int | None:
         if not value:

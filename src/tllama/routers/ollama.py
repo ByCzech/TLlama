@@ -660,7 +660,12 @@ async def list_running_models():
 
     formatted = []
     for m in loaded_models:
-        metadata_info = await model_manager.get_model_metadata(m["id"]) or {}
+        # A model that is resident right now stays in this listing even if
+        # its .toml has since been edited into something unparseable: it is
+        # still loaded and still holding memory, so omitting it would
+        # misreport the state of the machine. Its metadata degrades to
+        # unknown instead.
+        metadata_info = await model_manager.get_model_metadata_best_effort(m["id"]) or {}
         digest_info = await model_manager.get_model_digest(m["path"]) or {}
 
         p_size = "unknown"
@@ -697,12 +702,13 @@ async def list_running_models():
             # represented above by its (soon to be replaced) loaded entry.
             continue
 
-        model_info = model_manager._build_model_file_info(model_name)
+        model_info = model_manager.build_model_file_info_best_effort(model_name)
         if not model_info:
-            # Gone from disk between starting the load and this request.
+            # Gone from disk, or its .toml turned unparseable, between
+            # starting the load and this request.
             continue
 
-        metadata_info = await model_manager.get_model_metadata(model_name) or {}
+        metadata_info = await model_manager.get_model_metadata_best_effort(model_name) or {}
         digest_info = await model_manager.get_model_digest(model_info["path"]) or {}
 
         p_size = "unknown"
