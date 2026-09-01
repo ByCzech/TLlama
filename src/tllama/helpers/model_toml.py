@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+import tempfile
+
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -12,8 +15,10 @@ __all__ = (
     "TomlModelError",
     "VirtualModelSpec",
     "parse_model_toml",
+    "render_model_toml",
     "resolve_kv_cache_types",
     "resolve_repo_relative_path",
+    "write_model_toml",
 )
 
 
@@ -208,3 +213,158 @@ def resolve_repo_relative_path(value: str, models_dir: Path) -> Path:
         )
 
     return resolved
+
+
+def _toml_string(value: str) -> str:
+    """Render a Python string as a TOML basic string.
+
+    tomlkit is the parser everywhere in this module, but generating a new
+    file is plain text assembly: the point of the output is its comments
+    and their placement, which is easier to control directly than by
+    building a document object and decorating it afterwards. Everything
+    rendered here is parsed back before it is written, so the two cannot
+    drift apart silently.
+    """
+    return tomlkit.item(str(value)).as_string()
+
+
+def _commented(line: str) -> str:
+    return f"# {line}"
+
+
+def render_model_toml(
+    model_path: str,
+    *,
+    metadata: Optional[Dict[str, Any]] = None,
+    mmproj_path: Optional[str] = None,
+) -> str:
+    """Render a new virtual-model .toml naming an existing repo file.
+
+    `model_path` and `mmproj_path` are repo-relative, including the
+    category prefix ("HuggingFace/ns/repo/file.gguf") -- the same values
+    parse_model_toml reads back out of [llm]/[mmproj].
+
+    Only [llm] is active. Everything the GGUF itself has an opinion about
+    is written commented out, so the file states plainly what the model
+    came with and a person can act on it by deleting a '#' rather than by
+    going and reading the header themselves. A commented line changes
+    nothing on its own: with it commented, the value in effect stays
+    whatever the request, the global configuration and TLlama's own
+    baseline decide, exactly as if the line were not there at all.
+
+    Nothing is invented. A key whose value is not in this GGUF is not
+    written, not even as an empty placeholder, so the absence of a line
+    means the model did not say -- never that this function had nothing to
+    put there. The chat template is deliberately excluded despite being
+    available: real ones run from 2 to 17 kB (measured across a working
+    model store), which is not something to put in a configuration file
+    that a person is meant to read.
+
+    `metadata` is a build_model_metadata_payload() result. Without it the
+    output is just the [llm] section, which is a complete and valid file.
+    """
+    metadata = metadata or {}
+
+    lines: List[str] = [
+        "# TLlama virtual model.",
+        "#",
+        "# The file is the model: its name here is the name the model is",
+        "# known by, and a .gguf nothing points at is not listed at all.",
+        "# Commented lines below are what this GGUF reports about itself;",
+        "# uncomment one to pin it, and it stops depending on anything else.",
+        "",
+        "[llm]",
+        f"model = {_toml_string(model_path)}",
+    ]
+
+    if mmproj_path is not None:
+        lines += [
+            "",
+            "[mmproj]",
+            f"model = {_toml_string(mmproj_path)}",
+        ]
+
+    context_length = metadata.get("context_length") or 0
+    if context_length:
+        lines += [
+            "",
+            "# [runtime] passes through to Llama() by the names it uses.",
+            "[runtime]",
+            _commented(f"n_ctx = {int(context_length)}    # the model's own trained maximum"),
+        ]
+
+    recommended = metadata.get("recommended_sampling") or {}
+    if recommended:
+        lines += [
+            "",
+            "# What the model's author recorded in the GGUF as their",
+            "# recommended sampling. Not applied unless uncommented.",
+            "[sampling]",
+        ]
+        for key in ("temperature", "top_k", "top_p"):
+            if key in recommended:
+                lines.append(_commented(f"{key} = {_render_number(recommended[key])}"))
+
+    text = "\n".join(lines) + "\n"
+
+    # Parsed before it is returned, so a rendering mistake surfaces here
+    # rather than as an unreadable file discovered later by a listing.
+    parse_model_toml(text, source="<generated>")
+
+    return text
+
+
+def _render_number(value: Any) -> str:
+    """Render a numeric value for a comment line.
+
+    Floats arrive from a GGUF as float32 widened to float64, so a top_p an
+    author wrote as 0.95 reads back as 0.949999988079071. Rounded here
+    because this is a comment offered to a person to uncomment, and the
+    artefact of the storage format is not information about the model.
+    """
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, float):
+        return repr(round(value, 6))
+    return str(value)
+
+
+def write_model_toml(path: Path, text: str, *, overwrite: bool = False) -> Path:
+    """Write a .toml, atomically, without clobbering by accident.
+
+    The rename is atomic within the directory, so a reader scanning the
+    repository at the same moment sees either no file or the whole one --
+    never a half-written file it would then report as malformed. The scan
+    runs on every listing, so that overlap is ordinary rather than rare.
+
+    overwrite=False by default: a .toml is a file a person edits, and
+    silently replacing one that already exists would discard their work.
+    Callers that mean to replace one have to say so.
+    """
+    path = Path(path)
+
+    if path.exists() and not overwrite:
+        raise FileExistsError(f"{path} already exists")
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    handle = tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        dir=str(path.parent),
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        delete=False,
+    )
+    try:
+        with handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+
+        os.replace(handle.name, path)
+    except BaseException:
+        Path(handle.name).unlink(missing_ok=True)
+        raise
+
+    return path
