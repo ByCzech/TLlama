@@ -1080,6 +1080,20 @@ class ModelManager:
             if virtual_spec.stop:
                 overrides["stop_defaults"] = virtual_spec.stop
 
+            # Whether this model can see, answerable without loading it.
+            # model_has_projector() asks the loaded model, which is the
+            # right question when an image is already in hand; a client
+            # asking what a model can do has not loaded anything and
+            # should not have to.
+            #
+            # resolve_mmproj_path checks the file is really a projector,
+            # so this says the capability is usable rather than merely
+            # named. A [mmproj] with an unimported 'from' returns None and
+            # is correctly not claimed yet.
+            overrides["has_projector"] = (
+                self.resolve_mmproj_path(virtual_spec, model_name) is not None
+            )
+
             if overrides:
                 metadata = {**metadata, **overrides}
 

@@ -68,7 +68,11 @@ async def test_a_held_model_lock_does_not_block_a_metadata_read(manager, gguf_fi
     async with manager._models_lock:
         metadata = await asyncio.wait_for(manager.get_model_metadata("model"), timeout=1.0)
 
-    assert metadata == {"arch": "qwen3"}
+    # The cached entry is what came back, which is the point here.
+    # Metadata carries more than the cache put in it -- a .toml's own
+    # overrides are layered on every call -- so this asks about the value
+    # under test rather than about everything beside it.
+    assert metadata["arch"] == "qwen3"
 
 
 async def test_a_held_model_lock_does_not_block_taking_a_generation_slot(manager):

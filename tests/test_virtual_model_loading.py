@@ -202,7 +202,10 @@ class TestGetModelMetadataUsesVirtualSpec:
 
         metadata = await asyncio.wait_for(manager.get_model_metadata("MyModel"), timeout=1.0)
 
-        assert metadata == {"arch": "qwen3"}
+        # Only the cache, keyed by the .gguf's fingerprint, could have put
+        # this here: the file itself is not a readable GGUF. What else the
+        # .toml layer adds on top is not what this is measuring.
+        assert metadata["arch"] == "qwen3"
 
     async def test_no_toml_means_no_metadata(self, manager, gguf_file):
         gguf_file("Local/orphan.gguf")

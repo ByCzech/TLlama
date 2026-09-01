@@ -666,10 +666,15 @@ async def show_model_info(request: dict):
     # "tools" is deliberately left out: TLlama can only force a tool call
     # today, not detect one from the template the way real Ollama's chat.*
     # layer does, so claiming the capability would overstate what actually
-    # works. "vision" is left out because there is no vision support yet.
+    # works. "vision" is reported when the model's definition names a
+    # projector that checks out, which is the same thing that decides
+    # whether an image is accepted or refused -- so a client reading this
+    # list and a client sending a picture get the same answer.
     capabilities = ["completion"]
     if detect_reasoning_format(model_name, metadata_info) != "none":
         capabilities.append("thinking")
+    if metadata_info.get("has_projector"):
+        capabilities.append("vision")
 
     # Ollama's own `show --modelfile` hands back the definition a model
     # was built from, and the workflow that makes it worth having is
