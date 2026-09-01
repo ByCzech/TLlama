@@ -24,8 +24,10 @@ from tllama.helpers.model_toml import (
     TomlModelError,
     VirtualModelSpec,
     parse_model_toml,
+    render_model_toml,
     resolve_kv_cache_types,
     resolve_repo_relative_path,
+    write_model_toml,
 )
 from tllama.helpers.metadata_cache import (
     load_metadata_cache,
@@ -1115,6 +1117,162 @@ class ModelManager:
             self._set_cached_metadata_entry(model_name, fingerprint, metadata)
 
         return metadata
+
+    # Where a .toml sits inside each repository (spec doc §5). The .gguf
+    # it names may live at any depth; these numbers constrain only the
+    # .toml itself, which is what gives a model its name.
+    _TOML_DEPTH_BY_REPOSITORY = (
+        ("local_models_dir", 1),
+        ("tllama_models_dir", 2),
+        ("hf_models_dir", 3),
+    )
+
+    def _toml_location_for_model_file(self, file_path: Path) -> Optional[Path]:
+        """The directory a .toml naming this .gguf has to sit in.
+
+        A HuggingFace repository puts its files wherever its uploader felt
+        like -- bartowski files quantisations into subdirectories,
+        ggml-org leaves shards in the root -- and that is an organisational
+        habit with no protocol meaning. The .toml's own depth is fixed
+        regardless, so the name a model gets does not depend on how the
+        uploader arranged their repository. That separation is the point of
+        the indirection.
+
+        None when the file sits too shallow to be named at all: a .gguf
+        directly inside HuggingFace/ has no namespace and repository to
+        take a name from.
+        """
+        for attribute, depth in self._TOML_DEPTH_BY_REPOSITORY:
+            repo_dir = getattr(self, attribute)
+            if not file_path.is_relative_to(repo_dir):
+                continue
+
+            parts = file_path.relative_to(repo_dir).parts
+            if len(parts) < depth:
+                return None
+
+            return repo_dir.joinpath(*parts[: depth - 1])
+
+        return None
+
+    def _allocate_toml_path(self, directory: Path, stem: str, target_rel: str) -> Optional[Path]:
+        """Pick the .toml path for a model, avoiding an existing name.
+
+        Two files in one HuggingFace repository can share a basename when
+        the uploader sorted quantisations into subdirectories, and the
+        .toml's fixed depth flattens both onto the same name. Rare --
+        quantisation is normally in the filename -- but the generator has
+        to survive it rather than silently overwrite one with the other, so
+        the second one becomes <name>_01.
+
+        Returns None when a .toml for this exact file already exists, under
+        any of those names: pulling the same model twice must not leave a
+        second definition of it behind.
+        """
+        for candidate in self._iter_candidate_toml_paths(directory, stem):
+            if not candidate.exists():
+                return candidate
+
+            try:
+                existing = parse_model_toml(
+                    candidate.read_text(encoding="utf-8"), source=str(candidate)
+                )
+            except (TomlModelError, OSError):
+                # Occupied by something unreadable. Still occupied: the
+                # next name along is the safe answer, and repairing
+                # someone else's file is not this function's business.
+                continue
+
+            if existing.llm_model == target_rel:
+                return None
+
+        raise TomlModelError(
+            f"Cannot place a .toml for {target_rel}: {stem} and its numbered "
+            f"variants are all taken in {directory}."
+        )
+
+    def _iter_candidate_toml_paths(self, directory: Path, stem: str):
+        yield directory / f"{stem}.toml"
+        for suffix in range(1, 100):
+            yield directory / f"{stem}_{suffix:02d}.toml"
+
+    def _ensure_virtual_model_toml_sync(
+        self,
+        model_path: str | Path,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Path]:
+        """Give a physical model file a .toml, so that it is a model.
+
+        A .gguf nothing points at is not listed and cannot be loaded (spec
+        doc §3), which means a pull that only fetches bytes produces
+        nothing usable. This is what closes that gap.
+
+        Returns None, without writing anything, when the file is not a
+        model in its own right:
+
+        - a projector, which belongs to a model rather than being one
+        - a continuation shard, which is part of one file split across
+          several and is picked up automatically by llama.cpp from the
+          first shard alone
+        - a file too shallow in its repository to be named
+        - a file that already has a .toml
+
+        Never raises for an ordinary failure to write: a pull that fetched
+        several gigabytes successfully must not be reported as failed
+        because a small text file could not be created afterwards.
+        """
+        file_path = Path(model_path).resolve()
+        metadata = metadata or {}
+
+        if metadata.get("is_projector"):
+            logger.debug("No .toml for %s: it is a projector, not a model", file_path)
+            return None
+
+        if metadata.get("is_continuation_shard"):
+            logger.debug(
+                "No .toml for %s: shard %s of %s, named by its first shard",
+                file_path, metadata.get("shard_index"), metadata.get("shard_count"),
+            )
+            return None
+
+        directory = self._toml_location_for_model_file(file_path)
+        if directory is None:
+            logger.warning(
+                "No .toml for %s: it sits too shallow in its repository to be named",
+                file_path,
+            )
+            return None
+
+        try:
+            target_rel = str(file_path.relative_to(self.models_dir.resolve()))
+        except ValueError:
+            logger.warning("No .toml for %s: outside the model repository", file_path)
+            return None
+
+        stem = self._strip_gguf_suffix(file_path.name)
+
+        try:
+            toml_path = self._allocate_toml_path(directory, stem, target_rel)
+            if toml_path is None:
+                return None
+
+            text = render_model_toml(target_rel, metadata=metadata)
+            write_model_toml(toml_path, text)
+        except Exception as exc:
+            logger.warning("Could not write a .toml for %s: %s", file_path, exc)
+            return None
+
+        logger.info("Created %s for %s", toml_path, file_path)
+        return toml_path
+
+    async def ensure_virtual_model_toml(
+        self,
+        model_path: str | Path,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Path]:
+        return await asyncio.to_thread(
+            self._ensure_virtual_model_toml_sync, model_path, metadata
+        )
 
     def _list_local_models_sync(self) -> List[Dict[str, Any]]:
         """

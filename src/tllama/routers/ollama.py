@@ -810,7 +810,8 @@ async def pull_model_ollama(request: Request):
         if await model_manager.store_hf_digest(local_path, hf_file_info) is None:
             await model_manager.get_model_digest(local_path)
 
-        await model_manager.ensure_metadata_cache_for_path(local_path)
+        metadata = await model_manager.ensure_metadata_cache_for_path(local_path)
+        await model_manager.ensure_virtual_model_toml(local_path, metadata)
 
         return JSONResponse({
             "status": "success",
@@ -879,6 +880,14 @@ async def pull_model_ollama(request: Request):
             yield json.dumps({"status": "metadata cache unavailable"}) + "\n"
         else:
             yield json.dumps({"status": "metadata cache ready"}) + "\n"
+
+        # Without this the bytes are on disk and nothing can see them: a
+        # .gguf no .toml points at is not a model as far as any listing or
+        # load is concerned.
+        if await model_manager.ensure_virtual_model_toml(local_path, metadata) is None:
+            yield json.dumps({"status": "no model definition written"}) + "\n"
+        else:
+            yield json.dumps({"status": "model definition ready"}) + "\n"
 
         yield json.dumps({
             "status": "success",
