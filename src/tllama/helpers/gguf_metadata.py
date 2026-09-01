@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import gguf
-from typing import Any, Dict, Iterable, Mapping
+from typing import Any, Dict, Iterable, Mapping, Optional
 from enum import IntEnum
 
 try:
@@ -24,8 +24,40 @@ BASE_METADATA_KEYS = (
     "general.parameter_count",
     "general.file_type",
     "general.quantization_version",
+    "general.type",
     "tokenizer.chat_template",
+    "clip.has_vision_encoder",
+    "split.no",
+    "split.count",
+    "general.sampling.temp",
+    "general.sampling.top_k",
+    "general.sampling.top_p",
 )
+
+
+# A projector (mmproj/clip) file is a GGUF like any other and would
+# otherwise be indistinguishable from a model. Two independent signals,
+# both confirmed against a real mmproj file: the conversion script writes
+# arch="clip", and the newer metadata convention adds general.type.
+# Either is accepted on its own, because an older projector may predate
+# general.type and treating a projector as a model is the failure that
+# matters here.
+PROJECTOR_ARCHITECTURE = "clip"
+PROJECTOR_GENERAL_TYPE = "mmproj"
+
+
+# GGUF's own place for the sampling values a model's author recommends.
+# Mapped to the names build_sampling_kwargs() uses, so a caller never has
+# to know GGUF spells temperature "temp".
+#
+# Confirmed present on only 4 of 17 real-world files (Qwen3.6, Gemma 4):
+# it is a newer convention, so its absence is ordinary and says nothing
+# about the model.
+GGUF_SAMPLING_KEYS = {
+    "general.sampling.temp": "temperature",
+    "general.sampling.top_k": "top_k",
+    "general.sampling.top_p": "top_p",
+}
 
 
 KNOWN_CONTEXT_LENGTH_KEYS = (
@@ -258,6 +290,55 @@ def _context_length_from_metadata(meta: Mapping[str, Any], arch: str) -> Any:
     return _first_present(meta, keys, 0)
 
 
+def _is_projector(meta: Mapping[str, Any]) -> bool:
+    """Whether this GGUF is a vision projector rather than a model."""
+    if _as_str(meta.get("general.architecture")) == PROJECTOR_ARCHITECTURE:
+        return True
+
+    if _as_str(meta.get("general.type")) == PROJECTOR_GENERAL_TYPE:
+        return True
+
+    return bool(meta.get("clip.has_vision_encoder"))
+
+
+def _shard_position(meta: Mapping[str, Any]) -> "tuple[Optional[int], Optional[int]]":
+    """The (index, count) this file occupies in a split GGUF, if any.
+
+    split.no is 0-indexed, confirmed against a real two-part model: the
+    first file carries split.no = 0 and the second split.no = 1. An
+    unsplit file carries neither key, so absence is the reliable signal --
+    a default of 0 would be indistinguishable from a genuine first shard
+    and would quietly mislabel a file that only had split.count.
+    """
+    if "split.no" not in meta and "split.count" not in meta:
+        return None, None
+
+    index = meta.get("split.no")
+    count = meta.get("split.count")
+
+    return (
+        _as_int(index, 0) if index is not None else None,
+        _as_int(count, 0) if count is not None else None,
+    )
+
+
+def _recommended_sampling(meta: Mapping[str, Any]) -> Dict[str, Any]:
+    """The sampling values the model's author put in the GGUF, if any.
+
+    Read and reported only. Nothing decides anything by these yet: making
+    them a tier in the priority chain build_sampling_kwargs() applies is a
+    change to what inference actually does and belongs in its own patch.
+    """
+    recommended: Dict[str, Any] = {}
+
+    for gguf_key, our_key in GGUF_SAMPLING_KEYS.items():
+        value = meta.get(gguf_key)
+        if value is not None:
+            recommended[our_key] = value
+
+    return recommended
+
+
 def build_model_metadata_payload(meta: Dict[str, Any]) -> Dict[str, Any]:
     """Build the normalized metadata payload used by TLlama routes and caches."""
     arch = _as_str(meta.get("general.architecture"), "unknown")
@@ -287,6 +368,8 @@ def build_model_metadata_payload(meta: Dict[str, Any]) -> Dict[str, Any]:
         if isinstance(value, (str, int, float, bool)) or value is None
     }
 
+    shard_index, shard_count = _shard_position(meta)
+
     return {
         "arch": arch,
         "params": params,
@@ -297,4 +380,17 @@ def build_model_metadata_payload(meta: Dict[str, Any]) -> Dict[str, Any]:
         "context_length": context_length,
         "display_name": display_name,
         "metadata_raw": metadata_raw,
+
+        # A projector is not a model and a continuation shard is not a
+        # separate model. Reported here so callers that build or list
+        # models can tell, rather than each of them re-deriving it from
+        # raw keys.
+        "is_projector": _is_projector(meta),
+        "shard_index": shard_index,
+        "shard_count": shard_count,
+        "is_continuation_shard": shard_index is not None and shard_index > 0,
+
+        # Empty when the file does not carry them, which is the common
+        # case and not a defect.
+        "recommended_sampling": _recommended_sampling(meta),
     }

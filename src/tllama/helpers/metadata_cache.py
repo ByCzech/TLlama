@@ -9,8 +9,15 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 
-SCHEMA_VERSION = 1
-"""Layout version of the GGUF metadata cache document."""
+SCHEMA_VERSION = 2
+"""Layout version of the GGUF metadata cache document.
+
+Bumped to 2 when build_model_metadata_payload() gained is_projector,
+the shard position and recommended_sampling. A cached document written
+before that lacks those keys entirely, and its fingerprint would not
+change (the .gguf itself is untouched), so without a bump the new keys
+would silently never appear for any model already scanned.
+"""
 
 DIGEST_SCHEMA_VERSION = 1
 """Layout version of the content digest cache document.
