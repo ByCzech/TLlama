@@ -111,6 +111,45 @@ def build_multimodal_content(text: str, images: Iterable[str]) -> list[dict]:
     return parts
 
 
+def normalize_image_content_parts(content: list) -> list:
+    """Put every image part through the same check as an Ollama image.
+
+    OpenAI's image_url.url is a genuine URL field: a client following the
+    spec may well put https://example.com/cat.png in it, and hosted OpenAI
+    would fetch that from its own infrastructure. Here the fetch would
+    happen inside this server, from this server's network position, which
+    is a different thing entirely -- so a remote address is refused rather
+    than honoured, and bare base64 is given the prefix that keeps it away
+    from urlopen.
+
+    Parts that are not images are copied across untouched.
+    """
+    normalized = []
+
+    for part in content:
+        if not isinstance(part, dict) or part.get("type") != "image_url":
+            normalized.append(part)
+            continue
+
+        image_url = part.get("image_url")
+        if isinstance(image_url, dict):
+            url = image_url.get("url")
+        else:
+            # The shape llama-cpp-python's get_image_urls also tolerates:
+            # image_url holding the string directly.
+            url = image_url
+
+        if not isinstance(url, str):
+            raise InvalidImageError("An image part carries no URL.")
+
+        normalized.append({
+            "type": "image_url",
+            "image_url": {"url": to_image_data_url(url)},
+        })
+
+    return normalized
+
+
 def content_carries_images(content: Any) -> bool:
     """Whether a message's content holds OpenAI image parts."""
     if not isinstance(content, list):

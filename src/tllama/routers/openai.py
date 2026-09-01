@@ -10,7 +10,7 @@ from fastapi.responses import StreamingResponse
 # library ThreadPoolExecutor, which drops its work item as soon as it has run.
 from starlette.concurrency import iterate_in_threadpool
 from tllama.schemas.openai import ChatCompletionRequest
-from tllama.backend import model_manager
+from tllama.backend import model_manager, model_has_projector
 from tllama.errors import openai_stream_error_frame
 from tllama.helpers.model_toml import TomlModelError
 from tllama.lib.llama_wrap import create_chat_completion_ex
@@ -30,6 +30,11 @@ from tllama.helpers.reasoning_split import (
 )
 from tllama.helpers.openai_compat import openai_reasoning_effort_to_explicit_think, build_openai_chat_messages
 from tllama.helpers.chat import build_think_kwargs_ex
+from tllama.helpers.vision import (
+    InvalidImageError,
+    NO_MULTIMODAL_SUPPORT,
+    messages_carry_images,
+)
 
 
 router = APIRouter(
@@ -77,7 +82,16 @@ async def chat_completions(request: ChatCompletionRequest):
 
     metadata_info = await model_manager.get_model_metadata(request.model) or {}
 
-    messages = build_openai_chat_messages(request, metadata_info)
+    # Same rule as /api/chat, and for the same reason: without a projector
+    # an image has nowhere to go, and answering anyway means describing a
+    # picture that was never received.
+    if messages_carry_images(request.messages) and not model_has_projector(llm):
+        raise HTTPException(status_code=400, detail=NO_MULTIMODAL_SUPPORT)
+
+    try:
+        messages = build_openai_chat_messages(request, metadata_info)
+    except InvalidImageError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     explicit_think = openai_reasoning_effort_to_explicit_think(request)
     reasoning_format = detect_reasoning_format(request.model, metadata_info)
     kwargs_ex = build_think_kwargs_ex(explicit_think)

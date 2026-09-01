@@ -1,3 +1,9 @@
+from tllama.helpers.vision import (
+    content_carries_images,
+    normalize_image_content_parts,
+)
+
+
 def openai_reasoning_effort_to_explicit_think(request) -> bool | None:
     effort = getattr(request, "reasoning_effort", None)
 
@@ -27,8 +33,19 @@ def build_openai_chat_messages(request, metadata_info: dict | None = None) -> li
     for m in request.messages:
         content = m.content
 
-        # If the schema ever carries content parts, flatten them to text.
-        if isinstance(content, list):
+        if content_carries_images(content):
+            # Already the shape MTMDChatHandler reads, so it goes through
+            # whole. Flattening it, which is what happened below to any
+            # list, kept the words and dropped the picture -- and this is
+            # the only way an image can arrive on this endpoint, since
+            # OpenAI has no field beside the content for one.
+            #
+            # Each URL still goes through to_image_data_url: a client here
+            # may legitimately put a remote address in image_url.url, and
+            # that is exactly what must not reach _load_image's urlopen.
+            content = normalize_image_content_parts(content)
+        elif isinstance(content, list):
+            # No images in it, so text is all there is to keep.
             parts = []
             for part in content:
                 if isinstance(part, dict) and part.get("type") == "text":
@@ -37,7 +54,7 @@ def build_openai_chat_messages(request, metadata_info: dict | None = None) -> li
 
         messages.append({
             "role": m.role,
-            "content": content if isinstance(content, str) else ""
+            "content": content if isinstance(content, (str, list)) else ""
         })
 
     has_system_message = any(m["role"] in ("system", "developer") for m in messages)
