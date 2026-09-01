@@ -234,15 +234,25 @@ async def chat_completions(request: ChatCompletionRequest):
 
         return StreamingResponse(guarded_generate(), media_type="text/event-stream")
 
-    async with model_manager.acquire_inference_slot(request.model):
-        response = await asyncio.to_thread(
-            create_chat_completion_ex,
-            llm,
-            messages=messages,
-            stream=False,
-            **gen_params,
-            **kwargs_ex
-        )
+    try:
+        async with model_manager.acquire_inference_slot(request.model):
+            response = await asyncio.to_thread(
+                create_chat_completion_ex,
+                llm,
+                messages=messages,
+                stream=False,
+                **gen_params,
+                **kwargs_ex
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        # The streaming branch above has to settle for an error frame; here
+        # nothing has been written yet, so the status code is still
+        # available and says it properly. 500, because generation broke
+        # inside llama.cpp after the request was accepted and the model
+        # loaded, which no restatement of the request can fix.
+        raise HTTPException(status_code=500, detail=f"Inference failed: {str(e)}")
 
     choice = response["choices"][0]
     choice_message = choice.get("message", {}) or {}

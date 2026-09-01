@@ -16,6 +16,7 @@ import pytest
 
 from tllama.backend import model_manager
 from tllama.routers import ollama as ollama_router
+from tllama.routers import openai as openai_router
 
 
 class ExplodingLlama:
@@ -57,6 +58,7 @@ def a_model_that_fails_to_generate(monkeypatch):
     monkeypatch.setattr(model_manager, "get_model", fake_get_model)
     monkeypatch.setattr(model_manager, "get_model_metadata", fake_get_model_metadata)
     monkeypatch.setattr(ollama_router, "create_chat_completion_ex", fake_chat_completion)
+    monkeypatch.setattr(openai_router, "create_chat_completion_ex", fake_chat_completion)
 
     return "exploding"
 
@@ -159,3 +161,60 @@ class TestNoRegression:
         )
 
         assert response.status_code == 400
+
+
+class TestOpenAiSurface:
+    """The same gap existed on /v1/chat/completions, where the streaming
+    branch catches and emits an error frame and the non-streaming one had
+    no try around the call at all.
+    """
+
+    def test_the_failure_is_a_server_error_not_an_unhandled_one(
+        self, client, a_model_that_fails_to_generate
+    ):
+        response = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": a_model_that_fails_to_generate,
+                "messages": [{"role": "user", "content": "hi"}],
+            },
+        )
+
+        assert response.status_code == 500
+
+    def test_the_body_is_the_openai_error_object(
+        self, client, a_model_that_fails_to_generate
+    ):
+        response = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": a_model_that_fails_to_generate,
+                "messages": [{"role": "user", "content": "hi"}],
+            },
+        )
+        body = response.json()
+
+        assert set(body["error"]) == {"message", "type", "param", "code"}
+        assert body["error"]["type"] == "server_error"
+
+    def test_a_broken_toml_is_still_reported_as_such(
+        self, client, monkeypatch
+    ):
+        """The new except must not swallow the TomlModelError passthrough
+        added alongside it: that one is raised before generation, from
+        get_model, and still belongs to the registered handler.
+        """
+        from tllama.helpers.model_toml import TomlModelError
+
+        async def refuse(model_name, *args, **kwargs):
+            raise TomlModelError("Local/x.toml: invalid TOML")
+
+        monkeypatch.setattr(model_manager, "get_model", refuse)
+
+        response = client.post(
+            "/v1/chat/completions",
+            json={"model": "x", "messages": [{"role": "user", "content": "hi"}]},
+        )
+
+        assert response.status_code == 500
+        assert "invalid TOML" in response.json()["error"]["message"]
