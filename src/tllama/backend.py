@@ -410,6 +410,12 @@ class ModelManager:
                 return None
 
             target = resolve_repo_relative_path(virtual_spec.llm_model, self.models_dir)
+
+            # Raised, not skipped: a name asked for by hand is a single
+            # specific request, and reporting what is wrong with it beats
+            # reporting that it does not exist.
+            self.resolve_mmproj_path(virtual_spec, model_name)
+
             return self._build_model_file_info_from_path(target)
 
         # No .toml names this reference at all. Per the strict policy (spec
@@ -1333,6 +1339,7 @@ class ModelManager:
         Returns one entry per file describing what was done or would be,
         so a caller can report it without repeating the reasoning.
         """
+        inventory: List[Any] = []
         results: List[Dict[str, Any]] = []
 
         for file_path in self._iter_repository_gguf_files():
@@ -1349,17 +1356,66 @@ class ModelManager:
                 })
                 continue
 
+            inventory.append((file_path, metadata))
+
+        # Everything is read before anything is written, so a model can be
+        # told about a projector sitting beside it. Deriving that from a
+        # filename would be cheaper and would also be a guess; this is
+        # what the repository actually contains.
+        projectors = self._projectors_by_directory(inventory)
+
+        for file_path, metadata in inventory:
             results.append(
-                self._rebuild_one(file_path, metadata, force=force, dry_run=dry_run)
+                self._rebuild_one(
+                    file_path,
+                    metadata,
+                    projectors=projectors,
+                    force=force,
+                    dry_run=dry_run,
+                )
             )
 
         return results
+
+    def _projectors_by_directory(self, inventory) -> Dict[Path, List[Path]]:
+        """Where the projectors are, grouped by the directory holding them.
+
+        Deliberately not repository-wide. A projector is converted
+        alongside the model it belongs to, so offering one from an
+        unrelated repository would be noise a person has to recognise and
+        dismiss.
+        """
+        found: Dict[Path, List[Path]] = {}
+
+        for file_path, metadata in inventory:
+            if metadata.get("is_projector"):
+                found.setdefault(file_path.parent, []).append(file_path)
+
+        return found
+
+    def _suggested_projector(
+        self, file_path: Path, projectors: Dict[Path, List[Path]]
+    ) -> Optional[str]:
+        """The one projector beside this model, if there is exactly one.
+
+        Two of them is not a suggestion but a question, and a generated
+        configuration file is not the place to ask it.
+        """
+        candidates = projectors.get(file_path.parent) or []
+        if len(candidates) != 1:
+            return None
+
+        try:
+            return str(candidates[0].resolve().relative_to(self.models_dir.resolve()))
+        except ValueError:
+            return None
 
     def _rebuild_one(
         self,
         file_path: Path,
         metadata: Dict[str, Any],
         *,
+        projectors: Optional[Dict[Path, List[Path]]] = None,
         force: bool,
         dry_run: bool,
     ) -> Dict[str, Any]:
@@ -1399,7 +1455,11 @@ class ModelManager:
             if already_defined:
                 shutil.copy2(toml_path, toml_path.with_name(toml_path.name + ".bak"))
 
-            text = render_model_toml(target_rel, metadata=metadata)
+            text = render_model_toml(
+                target_rel,
+                metadata=metadata,
+                suggested_mmproj=self._suggested_projector(file_path, projectors or {}),
+            )
             write_model_toml(toml_path, text, overwrite=already_defined)
         except Exception as exc:
             return outcome("skip", toml_path, f"could not write ({exc})")
@@ -2098,6 +2158,64 @@ class ModelManager:
         parts[-1] = name
         return "/".join(parts)
 
+    def _read_metadata_for_path(self, file_path: Path) -> Dict[str, Any]:
+        """Metadata for a file, from the on-disk cache when it is there.
+
+        Used on paths that run per listing, so re-reading a GGUF header
+        every time is worth avoiding; the cache is keyed by the file and
+        invalidates on its own when the file changes.
+        """
+        cached = load_metadata_cache(self.metadata_cache_dir, file_path)
+        if cached is not None:
+            return cached
+
+        metadata = self._get_model_metadata_sync(str(file_path)) or {}
+
+        if metadata:
+            save_metadata_cache(
+                self.metadata_cache_dir,
+                self._strip_gguf_suffix(file_path.name),
+                file_path,
+                metadata,
+            )
+
+        return metadata
+
+    def resolve_mmproj_path(self, spec: VirtualModelSpec, source: str) -> Optional[Path]:
+        """The projector a virtual model names, checked to actually be one.
+
+        Checked rather than trusted because the failure it prevents is
+        silent and late: a path that points at an ordinary model, or at
+        nothing, produces a model that lists and loads perfectly and then
+        cannot see. Saying so while someone still has the file they just
+        edited open is worth the header read.
+
+        None when there is no [mmproj] section, or when it holds a 'from'
+        that has not been imported yet -- the same transient state [llm]
+        allows.
+        """
+        if spec.mmproj_model is None:
+            return None
+
+        path = resolve_repo_relative_path(spec.mmproj_model, self.models_dir)
+
+        if not path.is_file():
+            raise TomlModelError(
+                f"{source}: [mmproj] model = {spec.mmproj_model!r} does not "
+                "point at an existing file."
+            )
+
+        metadata = self._read_metadata_for_path(path)
+
+        if metadata and not metadata.get("is_projector"):
+            raise TomlModelError(
+                f"{source}: [mmproj] model = {spec.mmproj_model!r} is not a "
+                f"projector (its architecture is {metadata.get('arch', 'unknown')!r}; "
+                "a projector reports 'clip')."
+            )
+
+        return path
+
     def _resolve_virtual_model_target_path(
         self, spec: VirtualModelSpec, toml_path: Path
     ) -> Optional[Path]:
@@ -2131,6 +2249,15 @@ class ModelManager:
                 "Ignoring %s: model = %r does not point at an existing file",
                 toml_path, spec.llm_model,
             )
+            return None
+
+        try:
+            self.resolve_mmproj_path(spec, str(toml_path))
+        except TomlModelError as exc:
+            # Same treatment as a broken [llm]: a definition that names a
+            # projector it cannot use is not usable, and hiding that until
+            # someone sends an image would be worse than saying so now.
+            logger.warning("Ignoring %s: %s", toml_path, exc)
             return None
 
         return target

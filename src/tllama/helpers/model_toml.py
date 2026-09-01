@@ -237,6 +237,7 @@ def render_model_toml(
     *,
     metadata: Optional[Dict[str, Any]] = None,
     mmproj_path: Optional[str] = None,
+    suggested_mmproj: Optional[str] = None,
 ) -> str:
     """Render a new virtual-model .toml naming an existing repo file.
 
@@ -282,6 +283,19 @@ def render_model_toml(
             "",
             "[mmproj]",
             f"model = {_toml_string(mmproj_path)}",
+        ]
+    elif suggested_mmproj is not None:
+        # A real projector found in this model's own repository, named
+        # rather than guessed at. Whether it belongs to this model is not
+        # something the files say, so it is offered commented out for a
+        # person to decide -- an empty placeholder would be inventing a
+        # section, which nothing else here does.
+        lines += [
+            "",
+            "# A projector sits in this repository. Uncomment both lines",
+            "# below if it belongs to this model.",
+            "# [mmproj]",
+            _commented(f"model = {_toml_string(suggested_mmproj)}"),
         ]
 
     context_length = metadata.get("context_length") or 0
