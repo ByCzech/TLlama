@@ -9,7 +9,7 @@ import asyncio
 
 import pytest
 
-from tllama.helpers.model_toml import parse_model_toml
+from tllama.helpers.model_toml import parse_model_toml, resolve_kv_cache_types
 
 
 class FakeLlama:
@@ -114,6 +114,26 @@ class TestBuildLlamaLoadKwargs:
         kwargs = manager._build_llama_load_kwargs("Local/m.gguf", 8192, spec)
 
         assert kwargs["type_k"] == kwargs["type_v"] == 1
+
+    def test_global_config_accepts_every_type_the_toml_does(self, make_manager):
+        # The global setting used to carry its own name table listing three
+        # types, so a name [runtime] accepted was rejected here. q5_1 is one
+        # of the types that difference excluded; the point is the two paths
+        # now resolve through the same place, not this type specifically.
+        manager = make_manager(kv_cache_type="q5_1")
+        spec = parse_model_toml(llm_toml("Local/m.gguf"))
+
+        kwargs = manager._build_llama_load_kwargs("Local/m.gguf", 8192, spec)
+
+        from_toml, _ = resolve_kv_cache_types({"type_kv": "q5_1"})
+        assert kwargs["type_k"] == kwargs["type_v"] == from_toml
+
+    def test_a_name_no_ggml_type_matches_is_still_rejected(self, make_manager):
+        manager = make_manager(kv_cache_type="not_a_real_type")
+        spec = parse_model_toml(llm_toml("Local/m.gguf"))
+
+        with pytest.raises(ValueError, match="TLLAMA_KV_CACHE_TYPE"):
+            manager._build_llama_load_kwargs("Local/m.gguf", 8192, spec)
 
 
 class TestGetModelUsesVirtualSpec:

@@ -309,15 +309,9 @@ Overrides KV cache type.
 
 Default: unset.
 
-Supported values:
+The value is a ggml type name, resolved against the `GGML_TYPE_*` constants the installed `llama-cpp-python` defines. It is not checked against a fixed list, so any type that build knows is accepted, and types a future `llama.cpp` adds work without a TLlama change. This is the same resolution `[runtime]` `type_k` / `type_v` / `type_kv` use in a model's `.toml`, so a name means the same thing in both places.
 
-```text
-f16
-q8_0
-q4_0
-```
-
-Examples:
+The types in common use:
 
 ```bash
 export TLLAMA_KV_CACHE_TYPE=f16
@@ -327,7 +321,9 @@ export TLLAMA_KV_CACHE_TYPE=q4_0
 
 Lower-precision KV cache types can reduce memory usage, but may affect quality or compatibility.
 
-The selected value must be supported by the installed `llama-cpp-python` build. If the required constant is unavailable, TLlama raises an error.
+A name matching no `GGML_TYPE_*` constant is rejected. Note that resolving is not the same as being usable: `llama.cpp` supports only some ggml types as a KV cache, and one it does not support will be refused when a model loads rather than when the variable is read.
+
+Quantized KV cache also requires flash attention (see `TLLAMA_FLASH_ATTENTION`); without it the setting is ignored silently by `llama.cpp`.
 
 ---
 

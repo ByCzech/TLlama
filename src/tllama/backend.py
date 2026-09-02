@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from hashlib import sha256
 
-from llama_cpp import Llama, llama_cpp as llama_cpp_lib
+from llama_cpp import Llama
 from llama_cpp.llama_chat_format import Jinja2ChatFormatter, MTMDChatHandler
 from typing import Dict, Optional, Any, List
 from datetime import datetime, timezone, timedelta
@@ -1695,31 +1695,32 @@ class ModelManager:
             return None
 
     def _resolve_kv_cache_type(self, value: str | None) -> int | None:
+        """Resolve the global KV cache type name into a ggml type int.
+
+        This defers to the same resolver [runtime] type_k/type_v use, so a
+        name means here exactly what it means in a .toml. It used to carry
+        its own three-entry name table, which made the global setting
+        accept strictly less than the per-model one for no reason and
+        needed an edit for every quantization type llama.cpp gains.
+
+        The error type is translated: resolve_kv_cache_types speaks about a
+        .toml field, which is the wrong thing to tell someone who set an
+        environment variable. TomlModelError subclasses ValueError, so
+        callers catching ValueError are unaffected either way.
+        """
         if not value:
             return None
 
-        normalized = value.strip().lower()
-
-        name_map = {
-            "f16": "GGML_TYPE_F16",
-            "q8_0": "GGML_TYPE_Q8_0",
-            "q4_0": "GGML_TYPE_Q4_0",
-        }
-
-        constant_name = name_map.get(normalized)
-        if constant_name is None:
+        try:
+            type_k, _ = resolve_kv_cache_types({"type_kv": value.strip().lower()})
+        except TomlModelError as exc:
             raise ValueError(
                 f"Unsupported TLLAMA_KV_CACHE_TYPE value: {value}. "
-                "Supported values: f16, q8_0, q4_0."
-            )
+                "Expected a ggml type name such as f16, q8_0 or q4_0 "
+                f"({exc})."
+            ) from exc
 
-        resolved = getattr(llama_cpp_lib, constant_name, None)
-        if resolved is None:
-            raise ValueError(
-                f"KV cache type constant {constant_name} is not available in this llama-cpp-python build."
-            )
-
-        return int(resolved)
+        return type_k
 
     def _build_llama_load_kwargs(
         self,
