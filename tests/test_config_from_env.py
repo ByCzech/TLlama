@@ -7,6 +7,8 @@ pin that an unset or empty variable still means "use the default" -- that
 part is not an error and must keep working.
 """
 
+import socket
+
 import pytest
 
 from tllama.config import (
@@ -124,9 +126,10 @@ class TestHostForms:
             # Bare IPv6 is all colons. "::1" came out as the host ":" on
             # port 1 -- wrong, and silently so.
             ("::1", "::1", 54800),
-            ("[::]", "[::]", 54800),
-            ("[::]:12345", "[::]", 12345),
-            ("[::1]:8080", "[::1]", 8080),
+            ("[::]", "::", 54800),
+            ("[::]:12345", "::", 12345),
+            ("[::1]:8080", "::1", 8080),
+            ("http://[::1]:8080", "::1", 8080),
         ],
     )
     def test_the_form_is_recognised_rather_than_split_on_the_last_colon(
@@ -137,6 +140,24 @@ class TestHostForms:
         config = load_app_config_from_env()
 
         assert (config.host, config.port) == (host, port)
+
+    @pytest.mark.parametrize(
+        "value", ["127.0.0.1:1", "0.0.0.0:1", "::1", "[::]", "[::1]:8080", "http://[::1]:8080"]
+    )
+    def test_the_parsed_host_is_one_the_socket_layer_accepts(self, monkeypatch, value):
+        """The check the parametrized case above cannot make on its own.
+
+        Asserting the parser returns "[::1]" says only that it agrees with
+        whoever wrote the assertion. getaddrinfo is what uvicorn goes
+        through to bind, and it rejects a bracketed address -- which is
+        how "[::1]:8080" reached a startup failure while the parser looked
+        correct.
+        """
+        monkeypatch.setenv("TLLAMA_HOST", value)
+
+        config = load_app_config_from_env()
+
+        socket.getaddrinfo(config.host, config.port, type=socket.SOCK_STREAM)
 
     def test_an_unsupported_scheme_is_refused_not_stripped(self, monkeypatch):
         # Dropping anything before "://" would take this too, but ftp://

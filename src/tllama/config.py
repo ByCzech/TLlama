@@ -114,7 +114,11 @@ def _split_host_port(name: str, value: str, raw: str) -> tuple[str, str | None]:
         if closing == -1:
             raise _reject(name, value, "a closing ] after a bracketed IPv6 address")
 
-        host = raw[: closing + 1]
+        # The brackets are how the written form keeps the address apart
+        # from the port; they are not part of the address. getaddrinfo
+        # refuses "[::1]" and accepts "::1", so what is returned here has
+        # to be the latter.
+        host = raw[1:closing]
         rest = raw[closing + 1:]
 
         if rest == "":
