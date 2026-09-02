@@ -19,6 +19,7 @@ UNDECLARED_CONTENT_TYPES = frozenset({
 BODY_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 _CONTENT_TYPE = b"content-type"
+_ORIGIN = b"origin"
 _JSON_HEADER = (_CONTENT_TYPE, b"application/json")
 
 
@@ -59,6 +60,20 @@ class UndeclaredJsonBodyMiddleware:
 
     This is plain ASGI rather than BaseHTTPMiddleware on purpose, so streaming
     responses pass through untouched.
+
+    Not applied to a request carrying an Origin header. Those three content
+    types are exactly the ones that make a POST a "simple request" in the
+    CORS sense: no preflight, so the request arrives and runs whatever the
+    origin list says, and only the reply is withheld from the page. Any page
+    a person visits could therefore drive inference or start a download here.
+    Requiring a browser to declare application/json puts those requests back
+    behind a preflight, where the origin list applies.
+
+    Origin is the right discriminator because a browser always sends it on a
+    cross-origin request and script cannot forge it, while curl -- the client
+    this leniency exists for, and the one Ollama's own documentation shows --
+    never sends it at all. So nothing that was accepted from a command line
+    stops being accepted.
     """
 
     def __init__(self, app):
@@ -73,13 +88,19 @@ class UndeclaredJsonBodyMiddleware:
 
         index = None
         content_type = b""
+        from_a_browser = False
         for position, (name, value) in enumerate(headers):
-            if name.lower() == _CONTENT_TYPE:
+            name = name.lower()
+            if name == _CONTENT_TYPE and index is None:
                 index = position
                 content_type = value
-                break
+            elif name == _ORIGIN:
+                from_a_browser = True
 
-        if _base_content_type(content_type) in UNDECLARED_CONTENT_TYPES:
+        if (
+            not from_a_browser
+            and _base_content_type(content_type) in UNDECLARED_CONTENT_TYPES
+        ):
             scope = {**scope, "headers": _rewritten_headers(headers, index)}
 
         await self.app(scope, receive, send)

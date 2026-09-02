@@ -34,6 +34,61 @@ def test_a_json_body_is_accepted_however_it_is_declared(client, content_type):
     assert body_was_parsed(client.post("/api/generate", content=BODY, headers=headers))
 
 
+UNDECLARED = [
+    None,
+    "application/x-www-form-urlencoded",
+    "text/plain",
+    "text/plain; charset=utf-8",
+]
+
+
+@pytest.mark.parametrize("content_type", UNDECLARED)
+def test_a_browser_has_to_declare_json(client, content_type):
+    """Those content types are exactly the ones that skip preflight.
+
+    A POST carrying one of them is a "simple request" in the CORS sense:
+    it arrives and runs whatever the origin list says, and only the reply
+    is withheld from the page. Accepting them as JSON would let any page a
+    person happens to visit drive inference or start a download. Requiring
+    application/json puts the request back behind a preflight, where the
+    origin list applies.
+    """
+    headers = {"Origin": "https://evil.example"}
+    if content_type:
+        headers["Content-Type"] = content_type
+
+    assert not body_was_parsed(client.post("/api/generate", content=BODY, headers=headers))
+
+
+@pytest.mark.parametrize("content_type", UNDECLARED)
+def test_the_same_request_without_an_origin_is_still_accepted(client, content_type):
+    """The two layers against each other, which is the whole rule.
+
+    Origin is the discriminator because a browser always sends it on a
+    request like this and script cannot forge it, while curl -- the client
+    the leniency exists for, and the one Ollama's documentation shows --
+    never sends it at all.
+    """
+    headers = {"Content-Type": content_type} if content_type else {}
+
+    assert body_was_parsed(client.post("/api/generate", content=BODY, headers=headers))
+
+
+def test_a_browser_declaring_json_is_served(client):
+    """Not a block on browsers: a block on requests that dodge preflight."""
+    response = client.post(
+        "/api/generate",
+        content=BODY,
+        headers={"Origin": "http://localhost:3000", "Content-Type": "application/json"},
+    )
+
+    assert body_was_parsed(response)
+
+
+def test_a_request_without_a_body_is_unaffected_by_an_origin(client):
+    assert client.get("/api/tags", headers={"Origin": "http://localhost:3000"}).status_code == 200
+
+
 def test_a_deliberate_multipart_body_is_left_alone(client):
     """Rewriting it would turn a clear mistake into a confusing parse error."""
     response = client.post(

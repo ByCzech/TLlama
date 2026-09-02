@@ -124,6 +124,8 @@ This differs from Ollama's built-in list on purpose. `0.0.0.0` is an address to 
 
 Credentials are never allowed: TLlama has no cookie or session for a browser to send.
 
+A request carrying an `Origin` header must declare `Content-Type: application/json` for its body to be read. Everywhere else TLlama accepts a JSON body whatever the content type says, because `curl -d` with no header sends `application/x-www-form-urlencoded` and the Ollama documentation shows exactly that. Those lenient content types are also the ones that let a browser skip the preflight entirely, so accepting them from a page would put the request beyond the reach of the origin list. `curl` never sends `Origin` and is unaffected; `fetch()` sends it always and should be declaring JSON in any case.
+
 
 Debug logging. Default `false`.
 
