@@ -1,4 +1,5 @@
 import os
+import re
 
 from dataclasses import dataclass, field
 
@@ -181,6 +182,95 @@ def _collect_runtime_overrides() -> dict[str, str]:
 
 def _env_cache_type(name: str) -> str | None:
     return _env_str(name, "").strip().lower() or None
+
+
+# Origins a browser may reach TLlama from before TLLAMA_ORIGINS adds to
+# them. Deliberately shorter than Ollama's equivalent list rather than a
+# copy of it, because several of its entries do not apply here:
+#
+#   0.0.0.0    an address to listen on, not one to connect to. A browser
+#              only ever sends it as an Origin if someone typed it into
+#              the address bar.
+#   file://    Chrome sends 'null' for a page opened off disk, not a
+#              file:// origin, so the entry catches nothing there -- and
+#              allowing 'null' instead would be far worse, since every
+#              sandboxed iframe on the web gets that same origin.
+#   app://     schemes belonging to Ollama's own desktop application.
+#   tauri://   TLlama has no client of its own yet; when it gets one, its
+#              scheme belongs here and not before.
+#
+# [::1] goes the other way: Ollama does not list it, and TLlama binds to
+# IPv6 perfectly well, so a browser pointed at the loopback address it
+# actually resolved to must not be turned away.
+#
+# vscode-webview:// and vscode-file:// stay. A VS Code extension draws its
+# UI in a Chromium webview served under those schemes, so an extension
+# panel calling a local server is a browser request with a real origin,
+# and IDE integration is a stated goal rather than an inherited one. The
+# guid in a webview origin differs per panel, hence the wildcard.
+BUILTIN_CORS_ORIGINS: tuple[str, ...] = (
+    "http://localhost",
+    "https://localhost",
+    "http://localhost:*",
+    "https://localhost:*",
+    "http://127.0.0.1",
+    "https://127.0.0.1",
+    "http://127.0.0.1:*",
+    "https://127.0.0.1:*",
+    "http://[::1]",
+    "https://[::1]",
+    "http://[::1]:*",
+    "https://[::1]:*",
+    "vscode-webview://*",
+    "vscode-file://*",
+)
+
+# scheme://host, and nothing after it. A browser never puts a path, query
+# or fragment in an Origin header, so anything past the authority is a
+# mistake in the configuration rather than a form this could ever match.
+_ORIGIN_RE = re.compile(r"[A-Za-z][A-Za-z0-9+.\-]*://[^/?#]+\Z")
+
+
+def resolve_cors_origins() -> tuple[str, ...]:
+    """The origins a browser may reach TLlama from.
+
+    TLLAMA_ORIGINS adds to the built-in list rather than replacing it, so
+    reaching a local server from a local page keeps working whatever else
+    is configured.
+
+    A malformed entry stops the server. An origin that a browser can never
+    send is a setting that silently does nothing, and a service that comes
+    up in a state its operator did not ask for is worse than one that
+    refuses to come up at all.
+    """
+    configured = []
+
+    for entry in _env_str("TLLAMA_ORIGINS", "").split(","):
+        entry = entry.strip()
+        if not entry:
+            # 'a,,b' and a trailing comma are formatting, not a mistake
+            # worth refusing to start over.
+            continue
+
+        if not _ORIGIN_RE.fullmatch(entry):
+            raise _reject(
+                "TLLAMA_ORIGINS",
+                entry,
+                "a comma separated list of origins of the form "
+                "scheme://host[:port], with no path (a '*' may stand in "
+                "for any part)",
+            )
+
+        configured.append(entry)
+
+    seen = set()
+    origins = []
+    for origin in (*BUILTIN_CORS_ORIGINS, *configured):
+        if origin not in seen:
+            seen.add(origin)
+            origins.append(origin)
+
+    return tuple(origins)
 
 
 def _parse_host_port(

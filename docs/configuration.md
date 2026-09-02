@@ -97,7 +97,33 @@ Brackets around an IPv6 address are how the written form separates address from 
 
 > Do not expose TLlama to an untrusted network without a reverse proxy, authentication, TLS and access controls.
 
-### `TLLAMA_DEBUG`
+### `TLLAMA_ORIGINS`
+
+Origins a browser is allowed to reach TLlama from, comma separated. Added to a built-in list, never replacing it, so a page on the local machine keeps working whatever else is configured.
+
+```bash
+export TLLAMA_ORIGINS=https://ui.example
+export TLLAMA_ORIGINS=https://ui.example,http://192.168.1.10:*
+```
+
+A `*` stands in for any part of an origin, most usefully a port. Each entry is `scheme://host` with an optional port and **no path**; a browser never puts a path in an `Origin` header, so an entry carrying one could never match and stops the server instead of silently doing nothing.
+
+Allowed without configuring anything:
+
+| Origin | |
+|---|---|
+| `http://localhost`, `https://localhost`, and the same with any port | a page served locally |
+| `http://127.0.0.1`, `http://[::1]`, likewise with any port and over `https` | the same, by address |
+| `vscode-webview://*`, `vscode-file://*` | a VS Code extension drawing its UI in a webview |
+
+The effective list is written to the log at startup.
+
+This differs from Ollama's built-in list on purpose. `0.0.0.0` is an address to listen on, not one a browser connects to. `file://` is not allowed because a page opened off disk sends `Origin: null` in Chromium, and allowing `null` would allow every sandboxed iframe on the web along with it. `app://` and `tauri://` belong to Ollama's own desktop application. `[::1]` is added, which Ollama does not list, because TLlama binds to IPv6.
+
+> **CORS is not access control.** It is enforced by browsers and governs whether a page may *read* a reply. It stops nothing sent by `curl`, a script, or any other client, and requests that need no preflight reach TLlama and run whatever the origin list says. What keeps TLlama private is the address it listens on and what sits in front of it.
+
+Credentials are never allowed: TLlama has no cookie or session for a browser to send.
+
 
 Debug logging. Default `false`.
 
@@ -464,6 +490,14 @@ That names the file and the key, and writes nothing. A common case is a setting 
 Check the layer above it. A model's `[runtime]` overrides `TLLAMA_RUNTIME_*`, and a request's `options` override `[sampling]`.
 
 For a KV cache type, check flash attention: `llama.cpp` ignores a quantized cache without it, silently.
+
+### A browser cannot reach the server
+
+The browser console reports a CORS failure, or a plain network error with nothing in TLlama's log. The page's origin is not on the list; the startup log line beginning `Browser origins allowed:` says what is. Add it with `TLLAMA_ORIGINS`.
+
+An origin is the scheme, host and port exactly as the page was loaded, so `http://localhost:3000` and `http://127.0.0.1:3000` are two different origins even though they are one machine. Both are allowed by default, on any port.
+
+A browser caches a preflight for ten minutes, so a corrected origin list can take that long to take effect in a tab that is already open.
 
 ### The repository looks empty
 

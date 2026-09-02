@@ -6,10 +6,12 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Response
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.cors import CORSMiddleware
 
 from .routers import openai, ollama
 from tllama.backend import model_manager
-from tllama.config import load_app_config_from_env
+from tllama.config import load_app_config_from_env, resolve_cors_origins
+from tllama.helpers.cors import split_origin_patterns
 from tllama.middleware import UndeclaredJsonBodyMiddleware
 from tllama.errors import (
     http_exception_handler,
@@ -30,6 +32,61 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Multi AI Proxy Server",
     lifespan=lifespan
+)
+
+# Without this TLlama cannot be used from a browser at all: a page on any
+# origin gets its request through and is then refused the answer.
+#
+# allow_credentials stays off. TLlama has no cookie or session for a
+# browser to send, so switching it on would grant nothing except the
+# ability for a page to spend somebody else's credentials once there is
+# something to spend -- and the CORS specification forbids it alongside a
+# wildcard origin in any case.
+#
+# The header list is spelled out rather than opened with '*' so that
+# adding one is a decision. Authorization is there for a reverse proxy in
+# front, and the x-stainless-* set for the OpenAI SDK, which sends thirteen
+# of its own headers and fails preflight without them -- and an OpenAI
+# client in a browser is precisely the caller this exists for.
+#
+# Only the methods TLlama actually answers. There is no PUT or PATCH
+# route, so there is nothing to allow.
+#
+# max_age is ten minutes, not the twelve hours Ollama inherits from its
+# middleware's defaults. A cached preflight means a change to the origin
+# list does not reach a browser that already has one, and half a day of
+# that during setup costs more than one extra request per ten minutes ever
+# will.
+_cors_origins = resolve_cors_origins()
+_cors_exact, _cors_regex = split_origin_patterns(_cors_origins)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_exact,
+    allow_origin_regex=_cors_regex,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "DELETE", "HEAD", "OPTIONS"],
+    allow_headers=[
+        "Authorization",
+        "Content-Type",
+        "Accept",
+        "User-Agent",
+        "X-Requested-With",
+        "OpenAI-Beta",
+        "x-stainless-arch",
+        "x-stainless-async",
+        "x-stainless-custom-poll-interval",
+        "x-stainless-helper-method",
+        "x-stainless-lang",
+        "x-stainless-os",
+        "x-stainless-package-version",
+        "x-stainless-poll-helper",
+        "x-stainless-retry-count",
+        "x-stainless-runtime",
+        "x-stainless-runtime-version",
+        "x-stainless-timeout",
+    ],
+    max_age=600,
 )
 
 app.add_middleware(UndeclaredJsonBodyMiddleware)
@@ -73,6 +130,13 @@ def start_server():
     logging.basicConfig(
         level=logging.DEBUG if config.debug else logging.INFO,
         format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
+    )
+
+    # Said out loud because a browser reports a rejected origin as a bare
+    # network failure, with nothing on the server side to look at. The list
+    # is resolved at import, so this reports it rather than deciding it.
+    logging.getLogger(__name__).info(
+        "Browser origins allowed: %s", ", ".join(_cors_origins)
     )
 
     kwargs = {
