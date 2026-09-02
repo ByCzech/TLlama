@@ -112,7 +112,10 @@ def parse_model_toml(text: str, *, source: str = "<toml>") -> VirtualModelSpec:
         _require_xor("mmproj", mmproj_model, mmproj_from, source)
 
     runtime = dict(document.get("runtime") or {})
+    _reject_unknown_runtime_keys(runtime, source)
+
     sampling_table = dict(document.get("sampling") or {})
+    _reject_unknown_sampling_keys(sampling_table, source)
 
     stop_value = sampling_table.pop("stop", [])
     if stop_value and not isinstance(stop_value, list):
@@ -148,6 +151,68 @@ def parse_model_toml(text: str, *, source: str = "<toml>") -> VirtualModelSpec:
         system_prompt=system_prompt,
         document=document,
     )
+
+
+# type_kv is TLlama's shorthand for setting type_k and type_v together; it
+# is not a Llama() parameter and so has to be named here.
+_RUNTIME_EXTRA_KEYS = {"type_kv"}
+
+# model_path is a Llama() parameter, but the path comes from [llm]. A
+# [runtime] naming it would point somewhere else and the model would stop
+# being the one the file defines, so it is refused rather than ignored.
+_RUNTIME_FORBIDDEN_KEYS = {"model_path": "the model path comes from [llm]"}
+
+
+def _reject_unknown_runtime_keys(runtime: Dict[str, Any], source: str) -> None:
+    """A [runtime] key that is not a Llama() parameter is a mistake.
+
+    It used to be passed through and swallowed: Llama() takes **kwargs and
+    never looks at what it did not expect, so a misspelt key reached the
+    library, was ignored, and left a setting that appeared to have been
+    applied.
+
+    The valid names are Llama()'s own, read from its signature rather than
+    listed, so this cannot fall behind the library it validates against.
+    """
+    from tllama.helpers.runtime_params import llama_parameters
+
+    valid = set(llama_parameters()) | _RUNTIME_EXTRA_KEYS
+
+    for key in runtime:
+        if key in _RUNTIME_FORBIDDEN_KEYS:
+            raise TomlModelError(
+                f"{source}: [runtime] '{key}' cannot be set here: "
+                f"{_RUNTIME_FORBIDDEN_KEYS[key]}."
+            )
+        if key not in valid:
+            raise TomlModelError(
+                f"{source}: [runtime] '{key}' is not a parameter of Llama() "
+                "in the installed llama-cpp-python."
+            )
+
+
+def _reject_unknown_sampling_keys(sampling: Dict[str, Any], source: str) -> None:
+    """A [sampling] key nothing reads is a mistake, not a no-op.
+
+    build_sampling_kwargs consults a fixed set of names; anything else in
+    the table was read from the file, carried through the parse and then
+    dropped without a word.
+
+    The set here is what that function actually consumes. It is smaller
+    than what llama-cpp-python's completion calls accept -- logit_bias and
+    grammar among the absentees -- which is a separate gap, not something
+    this should paper over by accepting names that would still go nowhere.
+    """
+    from tllama.helpers.common import sampling_parameter_names
+
+    valid = sampling_parameter_names()
+
+    for key in sampling:
+        if key not in valid:
+            raise TomlModelError(
+                f"{source}: [sampling] '{key}' is not a sampling parameter "
+                "TLlama applies."
+            )
 
 
 def resolve_kv_cache_types(runtime: Dict[str, Any]) -> "tuple[Optional[int], Optional[int]]":

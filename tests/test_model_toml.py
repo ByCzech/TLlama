@@ -225,3 +225,65 @@ class TestResolveRepoRelativePath:
 
         with pytest.raises(TomlModelError, match="outside"):
             resolve_repo_relative_path("Local/../../outside.gguf", models_dir)
+
+
+class TestUnknownKeysAreRefused:
+    """A key nothing reads used to be carried through and dropped.
+
+    Both tables did it, by different routes: Llama() takes **kwargs and
+    never inspects what it did not expect, and build_sampling_kwargs
+    consults a fixed set of names and ignores the rest. Either way the
+    file said one thing and the server did another, with no way to tell
+    from the outside which.
+    """
+
+    def test_a_misspelt_runtime_key_is_refused(self):
+        with pytest.raises(TomlModelError, match="n_threds"):
+            parse_model_toml(
+                '[llm]\nmodel = "Local/m.gguf"\n[runtime]\nn_threds = 8\n'
+            )
+
+    def test_a_real_llama_parameter_is_accepted(self):
+        # The counterweight: the check is against Llama()'s signature, so
+        # anything the installed library takes has to keep working,
+        # including names TLlama's own code never mentions.
+        spec = parse_model_toml(
+            '[llm]\nmodel = "Local/m.gguf"\n[runtime]\nyarn_beta_slow = 1.5\n'
+        )
+
+        assert spec.runtime["yarn_beta_slow"] == 1.5
+
+    def test_type_kv_is_accepted_though_it_is_not_a_llama_parameter(self):
+        # TLlama's own shorthand for setting both cache sides at once.
+        spec = parse_model_toml(
+            '[llm]\nmodel = "Local/m.gguf"\n[runtime]\ntype_kv = "q4_0"\n'
+        )
+
+        assert spec.runtime["type_kv"] == "q4_0"
+
+    def test_a_misspelt_sampling_key_is_refused(self):
+        with pytest.raises(TomlModelError, match="temperatur"):
+            parse_model_toml(
+                '[llm]\nmodel = "Local/m.gguf"\n[sampling]\ntemperatur = 0.7\n'
+            )
+
+    def test_max_tokens_and_stop_are_accepted(self):
+        # Neither is in _SAMPLING_DEFAULTS; both are read directly, so a
+        # check built only from that table would reject them.
+        spec = parse_model_toml(
+            '[llm]\nmodel = "Local/m.gguf"\n[sampling]\n'
+            'max_tokens = 512\nstop = ["<|im_end|>"]\n'
+        )
+
+        assert spec.sampling["max_tokens"] == 512
+        assert spec.stop == ["<|im_end|>"]
+
+    def test_a_sampling_name_llama_takes_but_tllama_does_not_apply_is_refused(self):
+        # logit_bias is a real create_completion parameter that
+        # build_sampling_kwargs does not pass on. Accepting it here would
+        # promise something that still goes nowhere; filling that gap is
+        # separate work.
+        with pytest.raises(TomlModelError, match="logit_bias"):
+            parse_model_toml(
+                '[llm]\nmodel = "Local/m.gguf"\n[sampling]\nlogit_bias = {}\n'
+            )

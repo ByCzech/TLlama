@@ -94,6 +94,18 @@ _CLIENT_OPTION_ALIASES = {
 }
 
 
+def sampling_parameter_names() -> frozenset:
+    """Names build_sampling_kwargs will actually act on.
+
+    Derived from what the function reads rather than written out beside
+    it, so a name added to the baseline becomes settable in a .toml
+    without a second edit somewhere else. max_tokens and stop are read
+    directly rather than through _SAMPLING_DEFAULTS, so they are added
+    here.
+    """
+    return frozenset(_SAMPLING_DEFAULTS) | {"max_tokens", "stop"}
+
+
 def build_sampling_kwargs(opts: dict, metadata_info: dict | None = None) -> dict:
     """Build create_completion()/create_chat_completion() sampling kwargs.
 

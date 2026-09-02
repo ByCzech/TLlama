@@ -10,7 +10,11 @@ import asyncio
 import pytest
 
 from tllama.config import ConfigError
-from tllama.helpers.model_toml import parse_model_toml, resolve_kv_cache_types
+from tllama.helpers.model_toml import (
+    TomlModelError,
+    parse_model_toml,
+    resolve_kv_cache_types,
+)
 
 
 class FakeLlama:
@@ -69,8 +73,20 @@ class TestBuildLlamaLoadKwargs:
 
         assert kwargs["n_ctx"] == 8192
 
-    def test_model_path_in_runtime_cannot_hijack_the_real_path(self, manager):
-        spec = parse_model_toml(llm_toml("Local/m.gguf", '\n[runtime]\nmodel_path = "Local/other.gguf"\n'))
+    def test_model_path_in_runtime_is_refused_when_the_file_is_read(self):
+        # It used to be accepted and then ignored at load. Silently
+        # ignoring it left a file that says one thing and does another.
+        with pytest.raises(TomlModelError, match="model_path"):
+            parse_model_toml(
+                llm_toml("Local/m.gguf", '\n[runtime]\nmodel_path = "Local/other.gguf"\n')
+            )
+
+    def test_the_real_path_still_wins_over_a_runtime_one(self, manager):
+        # The skip in _build_llama_load_kwargs stays as well: a spec can
+        # be built without going through the parser, and the path
+        # llama.cpp is handed must not depend on that.
+        spec = parse_model_toml(llm_toml("Local/m.gguf"))
+        spec.runtime["model_path"] = "Local/other.gguf"
 
         kwargs = manager._build_llama_load_kwargs("Local/m.gguf", 8192, spec)
 

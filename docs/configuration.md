@@ -308,7 +308,9 @@ Which names exist, and what each one takes, is read from `Llama()`'s signature i
 
 Values are converted according to the parameter's declared type: whole numbers for `int`, `1/true/yes/on` and `0/false/no/off` for `bool`, comma-separated numbers for `tensor_split`, and either a word or a number for `numa`. Parameters taking an object — `chat_handler`, `draft_model`, `tokenizer` — cannot be set this way, since nothing written in a unit file can become one.
 
-A model's `.toml` `[runtime]` table overrides these for that model.
+A model's `.toml` `[runtime]` table overrides these for that model. That table is checked against the same signature, so a name that is not a `Llama()` parameter is refused when the file is read rather than passed to the library and ignored. It accepts three names this variable does not — `n_ctx`, `type_k` and `type_v`, which out here have their own variables — plus TLlama's own `type_kv` shorthand, and it refuses `model_path`, which comes from `[llm]`.
+
+A `.toml` `[sampling]` table is checked the same way, against the parameters TLlama applies: `temperature`, `top_p`, `top_k`, `min_p`, `typical_p`, `presence_penalty`, `frequency_penalty`, `repeat_penalty`, `tfs_z`, `mirostat_mode`, `mirostat_tau`, `mirostat_eta`, `seed`, `max_tokens` and `stop`. That set is currently narrower than what `llama-cpp-python`'s completion calls accept — `logit_bias` and `grammar` are not among them — so a name it does not carry is refused rather than accepted and dropped.
 
 Four parameters are set elsewhere and are refused here, with a message saying where:
 

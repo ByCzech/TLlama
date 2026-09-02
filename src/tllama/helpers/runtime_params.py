@@ -12,9 +12,10 @@ become. Those two facts are the whole mechanism.
 
 from __future__ import annotations
 
+import functools
 import inspect
 
-from typing import Any, Dict, Mapping, Optional, Tuple
+from typing import Any, Dict, Mapping
 
 from tllama.config import ConfigError
 
@@ -128,8 +129,13 @@ def _coerce(variable: str, annotation: str, value: str) -> Any:
     )
 
 
-def settable_parameters() -> Dict[str, str]:
-    """Parameter name to annotation, for those an environment can set."""
+@functools.lru_cache(maxsize=1)
+def llama_parameters() -> Dict[str, str]:
+    """Every Llama() parameter, name to annotation.
+
+    Cached: the signature cannot change while the process runs, and this
+    is consulted on every .toml parse.
+    """
     from llama_cpp import Llama
 
     parameters = inspect.signature(Llama.__init__).parameters
@@ -137,11 +143,23 @@ def settable_parameters() -> Dict[str, str]:
     return {
         name: parameter.annotation
         for name, parameter in parameters.items()
-        if name not in ("self",)
+        if name != "self"
         and parameter.kind
         not in (parameter.VAR_POSITIONAL, parameter.VAR_KEYWORD)
         and parameter.annotation is not parameter.empty
-        and name not in _HANDLED_ELSEWHERE
+    }
+
+
+def settable_parameters() -> Dict[str, str]:
+    """Parameter name to annotation, for those an environment can set.
+
+    Narrower than llama_parameters(): a .toml [runtime] can name n_ctx,
+    type_k and type_v, which have their own variables out here.
+    """
+    return {
+        name: annotation
+        for name, annotation in llama_parameters().items()
+        if name not in _HANDLED_ELSEWHERE
     }
 
 
