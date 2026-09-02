@@ -29,6 +29,7 @@ from tllama.helpers.model_toml import (
     resolve_repo_relative_path,
     write_model_toml,
 )
+from tllama.helpers.runtime_params import coerce_runtime_overrides
 from tllama.helpers.metadata_cache import (
     load_metadata_cache,
     save_metadata_cache,
@@ -278,6 +279,14 @@ class ModelManager:
         # need a model -- possibly hours later, and reported as a failure
         # to load that model rather than as the misconfiguration it was.
         self._type_k, self._type_v = self._resolve_global_kv_cache_types()
+
+        # Converted here rather than in config.py, which cannot see
+        # Llama()'s signature, and here rather than at load time so an
+        # unknown parameter or an unusable value stops the server instead
+        # of surfacing on the first request that needs a model.
+        self._runtime_overrides = coerce_runtime_overrides(
+            self.config.runtime_overrides
+        )
 
         self.hf_models_dir = self.models_dir / "HuggingFace"
         self.local_models_dir = self.models_dir / "Local"
@@ -1793,8 +1802,9 @@ class ModelManager:
             "verbose": True,
         }
 
-        if self.config.flash_attention:
-            kwargs["flash_attn"] = True
+        # Server-wide Llama() arguments. Below a model's [runtime], which
+        # is applied after this and overwrites what it names.
+        kwargs.update(self._runtime_overrides)
 
         if self._type_k is not None:
             kwargs["type_k"] = self._type_k

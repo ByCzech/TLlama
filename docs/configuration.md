@@ -38,7 +38,8 @@ OLLAMA_HOST=127.0.0.1:54800 ollama list
 | `TLLAMA_JANITOR_INTERVAL` | `10.0` | float | Background model janitor interval in seconds |
 | `TLLAMA_MODEL_SCAN_TIMEOUT` | `5.0` | float | Explicit metadata scan timeout where applicable |
 | `TLLAMA_METADATA_CACHE_TTL` | `300.0` | float | In-memory metadata cache TTL in seconds |
-| `TLLAMA_FLASH_ATTENTION` | `false` | bool | Enable llama.cpp flash attention |
+| `TLLAMA_RUNTIME_*` | unset | varies | Any `Llama()` load parameter, server-wide |
+| `TLLAMA_FLASH_ATTENTION` | unset | bool | Alias for `TLLAMA_RUNTIME_FLASH_ATTN` |
 | `TLLAMA_KV_CACHE_TYPE` | unset | string | KV cache type override, both sides |
 | `TLLAMA_K_CACHE_TYPE` | unset | string | K cache type override |
 | `TLLAMA_V_CACHE_TYPE` | unset | string | V cache type override |
@@ -290,32 +291,47 @@ export TLLAMA_JANITOR_INTERVAL=5.0
 
 ## llama.cpp Runtime Options
 
+### `TLLAMA_RUNTIME_*`
+
+Sets any load parameter of `llama-cpp-python`'s `Llama()` for every model, as a server-wide default.
+
+The variable name is the parameter name with a `TLLAMA_RUNTIME_` prefix:
+
+```bash
+export TLLAMA_RUNTIME_N_THREADS=8
+export TLLAMA_RUNTIME_USE_MLOCK=true
+export TLLAMA_RUNTIME_MAIN_GPU=1
+export TLLAMA_RUNTIME_TENSOR_SPLIT=0.6,0.4
+```
+
+Which names exist, and what each one takes, is read from `Llama()`'s signature in the installed build. There is no list here that could disagree with it, and a parameter a future `llama-cpp-python` adds is settable without a TLlama change. A name that is not a parameter, or a value of the wrong shape, stops the server at startup and names the variable.
+
+Values are converted according to the parameter's declared type: whole numbers for `int`, `1/true/yes/on` and `0/false/no/off` for `bool`, comma-separated numbers for `tensor_split`, and either a word or a number for `numa`. Parameters taking an object — `chat_handler`, `draft_model`, `tokenizer` — cannot be set this way, since nothing written in a unit file can become one.
+
+A model's `.toml` `[runtime]` table overrides these for that model.
+
+Four parameters are set elsewhere and are refused here, with a message saying where:
+
+| Parameter | Set by |
+|---|---|
+| `model_path` | `[llm]` in a model's `.toml` |
+| `n_ctx` | `TLLAMA_CONTEXT_LENGTH` |
+| `type_k` | `TLLAMA_K_CACHE_TYPE` or `TLLAMA_KV_CACHE_TYPE` |
+| `type_v` | `TLLAMA_V_CACHE_TYPE` or `TLLAMA_KV_CACHE_TYPE` |
+
+---
+
 ### `TLLAMA_FLASH_ATTENTION`
 
-Enables flash attention when supported by the current `llama-cpp-python` / `llama.cpp` build.
+Enables flash attention for every model.
 
-Default:
+Default: unset, so `llama.cpp`'s own default applies.
 
-```bash
-export TLLAMA_FLASH_ATTENTION=false
-```
+This is an alias for `TLLAMA_RUNTIME_FLASH_ATTN`, kept because it is the spelling Ollama uses and the one TLlama had before the generic mechanism existed. Setting `TLLAMA_RUNTIME_FLASH_ATTN` as well overrides it, the specific spelling beating the general one.
 
-Enable:
+Whether it improves performance depends on the backend, the model, the quantization, the context length and current `llama.cpp` behaviour.
 
-```bash
-export TLLAMA_FLASH_ATTENTION=true
-```
-
-This maps to the `flash_attn` load option.
-
-Whether it improves performance depends on:
-
-- backend,
-- model,
-- quantization,
-- context length,
-- GPU support,
-- current `llama.cpp` behavior.
+Worth knowing: without flash attention, `llama.cpp` ignores a quantized KV cache, so `TLLAMA_KV_CACHE_TYPE` and its per-side variants have no effect.
 
 ---
 

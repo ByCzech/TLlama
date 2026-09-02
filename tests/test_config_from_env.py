@@ -25,7 +25,6 @@ class TestUnsetAndEmptyStillMeanDefault:
             "TLLAMA_CONTEXT_LENGTH",
             "TLLAMA_MAX_LOADED_MODELS",
             "TLLAMA_JANITOR_INTERVAL",
-            "TLLAMA_FLASH_ATTENTION",
             "TLLAMA_KV_CACHE_TYPE",
             "TLLAMA_K_CACHE_TYPE",
             "TLLAMA_V_CACHE_TYPE",
@@ -36,7 +35,7 @@ class TestUnsetAndEmptyStillMeanDefault:
 
         assert config.context_length == 0
         assert config.max_loaded_models == 1
-        assert config.flash_attention is False
+        assert config.runtime_overrides == {}
         assert config.kv_cache_type is None
         assert config.k_cache_type is None
         assert config.v_cache_type is None
@@ -46,12 +45,12 @@ class TestUnsetAndEmptyStillMeanDefault:
         # variable to the empty string. That says "I set nothing", not "I
         # set nonsense", and must not stop the server.
         monkeypatch.setenv("TLLAMA_CONTEXT_LENGTH", "")
-        monkeypatch.setenv("TLLAMA_FLASH_ATTENTION", "   ")
+        monkeypatch.setenv("TLLAMA_RUNTIME_N_THREADS", "   ")
 
         config = load_backend_config_from_env()
 
         assert config.context_length == 0
-        assert config.flash_attention is False
+        assert config.runtime_overrides == {}
 
 
 class TestAValueThatWillNotParseIsRefused:
@@ -76,22 +75,22 @@ class TestAValueThatWillNotParseIsRefused:
     def test_a_boolean_variable_rejects_a_word_it_does_not_know(self, monkeypatch):
         # "maybe" used to be silently false, which is the same outcome as
         # "off" and reads as if the setting had been honoured.
-        monkeypatch.setenv("TLLAMA_FLASH_ATTENTION", "maybe")
+        monkeypatch.setenv("TLLAMA_DEBUG", "maybe")
 
-        with pytest.raises(ConfigError, match="TLLAMA_FLASH_ATTENTION"):
-            load_backend_config_from_env()
+        with pytest.raises(ConfigError, match="TLLAMA_DEBUG"):
+            load_app_config_from_env()
 
     @pytest.mark.parametrize("value", ["1", "true", "TRUE", "yes", "on"])
     def test_the_accepted_true_spellings_still_work(self, monkeypatch, value):
-        monkeypatch.setenv("TLLAMA_FLASH_ATTENTION", value)
+        monkeypatch.setenv("TLLAMA_DEBUG", value)
 
-        assert load_backend_config_from_env().flash_attention is True
+        assert load_app_config_from_env().debug is True
 
     @pytest.mark.parametrize("value", ["0", "false", "no", "OFF"])
     def test_the_accepted_false_spellings_still_work(self, monkeypatch, value):
-        monkeypatch.setenv("TLLAMA_FLASH_ATTENTION", value)
+        monkeypatch.setenv("TLLAMA_DEBUG", value)
 
-        assert load_backend_config_from_env().flash_attention is False
+        assert load_app_config_from_env().debug is False
 
     def test_a_host_with_an_unparseable_port_is_refused(self, monkeypatch):
         # This one was the most misleading of the lot: the port failed to

@@ -1,6 +1,8 @@
 import os
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+from typing import Mapping
 
 DEFAULT_MODELS_DIR = "/var/lib/tllama/models"
 
@@ -139,6 +141,44 @@ def _split_host_port(name: str, value: str, raw: str) -> tuple[str, str | None]:
     return host, port_str
 
 
+RUNTIME_ENV_PREFIX = "TLLAMA_RUNTIME_"
+
+# Variables kept from before the generic passthrough existed. Each names a
+# Llama() parameter that TLLAMA_RUNTIME_<NAME> now also reaches; they stay
+# so a working configuration keeps working, and because the alias is the
+# spelling Ollama uses.
+_RUNTIME_ALIASES = {
+    "TLLAMA_FLASH_ATTENTION": "flash_attn",
+}
+
+
+def _collect_runtime_overrides() -> dict[str, str]:
+    """Gather the raw strings; nothing is converted or checked here.
+
+    Deliberately no llama_cpp: the entry point reads configuration before
+    the library is loaded, and what a value has to become is decided from
+    Llama()'s own signature, in a place that can see it.
+
+    An explicit TLLAMA_RUNTIME_* wins over an alias for the same
+    parameter, so the specific spelling beats the general one.
+    """
+    collected: dict[str, str] = {}
+
+    for variable, parameter in _RUNTIME_ALIASES.items():
+        value = os.getenv(variable)
+        if value is not None and value.strip() != "":
+            collected[parameter] = value
+
+    for variable, value in os.environ.items():
+        if not variable.startswith(RUNTIME_ENV_PREFIX):
+            continue
+        if value.strip() == "":
+            continue
+        collected[variable[len(RUNTIME_ENV_PREFIX):].lower()] = value
+
+    return collected
+
+
 def _env_cache_type(name: str) -> str | None:
     return _env_str(name, "").strip().lower() or None
 
@@ -176,7 +216,10 @@ class BackendConfig:
     janitor_interval_seconds: float = 10.0
     model_scan_timeout_seconds: float = 5.0
     metadata_cache_ttl_seconds: float = 300.0
-    flash_attention: bool = False
+    # Llama() keyword arguments set server-wide, still as strings: what
+    # each has to become is read off Llama()'s signature, which this
+    # module deliberately cannot see. A model's [runtime] overrides these.
+    runtime_overrides: Mapping[str, str] = field(default_factory=dict)
 
     # kv_cache_type sets both sides; k_cache_type/v_cache_type override it
     # for one side each, mirroring type_kv/type_k/type_v in a .toml
@@ -204,7 +247,7 @@ def load_backend_config_from_env() -> BackendConfig:
         janitor_interval_seconds=_env_float("TLLAMA_JANITOR_INTERVAL", 10.0),
         model_scan_timeout_seconds=_env_float("TLLAMA_MODEL_SCAN_TIMEOUT", 5.0),
         metadata_cache_ttl_seconds=_env_float("TLLAMA_METADATA_CACHE_TTL", 300.0),
-        flash_attention=_env_bool("TLLAMA_FLASH_ATTENTION", False),
+        runtime_overrides=_collect_runtime_overrides(),
         kv_cache_type=_env_cache_type("TLLAMA_KV_CACHE_TYPE"),
         k_cache_type=_env_cache_type("TLLAMA_K_CACHE_TYPE"),
         v_cache_type=_env_cache_type("TLLAMA_V_CACHE_TYPE"),

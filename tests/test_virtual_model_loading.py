@@ -51,7 +51,7 @@ class TestBuildLlamaLoadKwargs:
         assert kwargs["use_mmap"] is True
 
     def test_runtime_flash_attn_overrides_global_config_default(self, make_manager):
-        manager = make_manager(flash_attention=False)
+        manager = make_manager(runtime_overrides={"flash_attn": "false"})
         spec = parse_model_toml(llm_toml("Local/m.gguf", "\n[runtime]\nflash_attn = true\n"))
 
         kwargs = manager._build_llama_load_kwargs("Local/m.gguf", 8192, spec)
