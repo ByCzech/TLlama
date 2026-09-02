@@ -335,7 +335,7 @@ export TLLAMA_KV_CACHE_TYPE=q4_0
 
 Lower-precision KV cache types can reduce memory usage, but may affect quality or compatibility.
 
-A name matching no `GGML_TYPE_*` constant is rejected. Note that resolving is not the same as being usable: `llama.cpp` supports only some ggml types as a KV cache, and one it does not support will be refused when a model loads rather than when the variable is read.
+A name matching no `GGML_TYPE_*` constant is rejected at startup: the server refuses to come up and names the variable, rather than accepting the value and failing on the first request that needs a model. Note that resolving is not the same as being usable: `llama.cpp` supports only some ggml types as a KV cache, and one it does not support is refused when a model loads, which startup cannot check.
 
 Quantized KV cache also requires flash attention (see `TLLAMA_FLASH_ATTENTION`); without it the setting is ignored silently by `llama.cpp`.
 

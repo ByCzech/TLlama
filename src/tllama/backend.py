@@ -16,7 +16,7 @@ from llama_cpp.llama_chat_format import Jinja2ChatFormatter, MTMDChatHandler
 from typing import Dict, Optional, Any, List
 from datetime import datetime, timezone, timedelta
 
-from tllama.config import BackendConfig, load_backend_config_from_env
+from tllama.config import BackendConfig, ConfigError, load_backend_config_from_env
 from tllama.helpers.common import normalize_keep_alive
 from tllama.helpers.llama_stats import load_llama_with_captured_stats
 from tllama.helpers.gguf_metadata import read_gguf_metadata, build_model_metadata_payload
@@ -271,6 +271,13 @@ class ModelManager:
         # available, so that concurrent callers can wait rather than start a
         # second load, and so that capacity accounts for it.
         self._loading: Dict[str, asyncio.Future] = {}
+
+        # Resolved once, here, so a bad TLLAMA_KV_CACHE_TYPE stops the
+        # server at startup. It used to be resolved on every load, which
+        # meant an unknown name surfaced as a 400 on the first request to
+        # need a model -- possibly hours later, and reported as a failure
+        # to load that model rather than as the misconfiguration it was.
+        self._kv_cache_type = self._resolve_kv_cache_type(self.config.kv_cache_type)
 
         self.hf_models_dir = self.models_dir / "HuggingFace"
         self.local_models_dir = self.models_dir / "Local"
@@ -1705,8 +1712,10 @@ class ModelManager:
 
         The error type is translated: resolve_kv_cache_types speaks about a
         .toml field, which is the wrong thing to tell someone who set an
-        environment variable. TomlModelError subclasses ValueError, so
-        callers catching ValueError are unaffected either way.
+        environment variable. ConfigError is what the entry point turns
+        into a message and a non-zero exit, and both it and TomlModelError
+        subclass ValueError, so anything catching the broader type is
+        unaffected either way.
         """
         if not value:
             return None
@@ -1714,7 +1723,7 @@ class ModelManager:
         try:
             type_k, _ = resolve_kv_cache_types({"type_kv": value.strip().lower()})
         except TomlModelError as exc:
-            raise ValueError(
+            raise ConfigError(
                 f"Unsupported TLLAMA_KV_CACHE_TYPE value: {value}. "
                 "Expected a ggml type name such as f16, q8_0 or q4_0 "
                 f"({exc})."
@@ -1760,10 +1769,9 @@ class ModelManager:
         if self.config.flash_attention:
             kwargs["flash_attn"] = True
 
-        kv_cache_type = self._resolve_kv_cache_type(self.config.kv_cache_type)
-        if kv_cache_type is not None:
-            kwargs["type_k"] = kv_cache_type
-            kwargs["type_v"] = kv_cache_type
+        if self._kv_cache_type is not None:
+            kwargs["type_k"] = self._kv_cache_type
+            kwargs["type_v"] = self._kv_cache_type
 
         if virtual_spec is not None:
             # 1:1 passthrough of [runtime] into Llama() kwargs (spec doc

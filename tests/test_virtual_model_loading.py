@@ -9,6 +9,7 @@ import asyncio
 
 import pytest
 
+from tllama.config import ConfigError
 from tllama.helpers.model_toml import parse_model_toml, resolve_kv_cache_types
 
 
@@ -128,12 +129,12 @@ class TestBuildLlamaLoadKwargs:
         from_toml, _ = resolve_kv_cache_types({"type_kv": "q5_1"})
         assert kwargs["type_k"] == kwargs["type_v"] == from_toml
 
-    def test_a_name_no_ggml_type_matches_is_still_rejected(self, make_manager):
-        manager = make_manager(kv_cache_type="not_a_real_type")
-        spec = parse_model_toml(llm_toml("Local/m.gguf"))
-
-        with pytest.raises(ValueError, match="TLLAMA_KV_CACHE_TYPE"):
-            manager._build_llama_load_kwargs("Local/m.gguf", 8192, spec)
+    def test_a_name_no_ggml_type_matches_is_rejected_at_construction(self, make_manager):
+        # Not at load: an unknown name is a misconfiguration, and waiting
+        # for the first request that needs a model reports it as that
+        # model failing to load, hours after the server came up.
+        with pytest.raises(ConfigError, match="TLLAMA_KV_CACHE_TYPE"):
+            make_manager(kv_cache_type="not_a_real_type")
 
 
 class TestGetModelUsesVirtualSpec:
