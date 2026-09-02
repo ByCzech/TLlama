@@ -2,7 +2,14 @@ import io
 import re
 import contextlib
 
-BACKEND_PREFIX = r"(?:CPU(?:_Host)?|Vulkan\d+|Vulkan_Host|CUDA\d+(?:_Split)?|CUDA_Host|ROCm\d+|ROCm_Host|SYCL\d+|SYCL_Host|Metal)"
+# llama.cpp prints whatever the buffer type calls itself, and that set is
+# open: ggml/src has a dozen backends and each names its own buffers.
+# A hand-kept list silently drops everything it has not heard of, which is
+# how "CPU_Mapped model buffer size" -- the mmapped weights that stay in
+# host RAM -- went uncounted. Match the shape of a buffer type name
+# instead; the "<kind> buffer size = N MiB" suffix is specific enough to
+# carry the match on its own.
+BACKEND_PREFIX = r"[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)*"
 
 LOAD_PATTERNS = {
     "offloaded_layers": re.compile(
