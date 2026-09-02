@@ -57,7 +57,49 @@ def test_a_browser_has_to_declare_json(client, content_type):
     if content_type:
         headers["Content-Type"] = content_type
 
-    assert not body_was_parsed(client.post("/api/generate", content=BODY, headers=headers))
+    response = client.post("/api/generate", content=BODY, headers=headers)
+
+    assert response.status_code == 415
+
+
+def test_the_refusal_names_the_thing_that_is_wrong(client):
+    """Not a schema complaint about a body that was never the problem.
+
+    Whether a body with no Content-Type reaches the route as JSON is
+    FastAPI's decision -- strict_content_type -- and its default has
+    differed between versions. Refusing here gives the same answer on
+    every installation and one that can be acted on.
+    """
+    response = client.post(
+        "/api/generate",
+        content=BODY,
+        headers={"Origin": "https://evil.example", "Content-Type": "text/plain"},
+    )
+
+    assert "Content-Type: application/json" in response.json()["error"]
+
+
+def test_the_refusal_takes_the_shape_of_the_surface_addressed(client):
+    """/v1 has its own error shape, and this runs before routing."""
+    response = client.post(
+        "/v1/chat/completions",
+        content=BODY,
+        headers={"Origin": "https://evil.example", "Content-Type": "text/plain"},
+    )
+
+    assert response.status_code == 415
+    assert "Content-Type: application/json" in response.json()["error"]["message"]
+
+
+def test_a_refused_browser_request_can_still_read_the_refusal(client):
+    """An opaque network error would leave nothing to debug from."""
+    response = client.post(
+        "/api/generate",
+        content=BODY,
+        headers={"Origin": "http://localhost:3000", "Content-Type": "text/plain"},
+    )
+
+    assert response.headers["access-control-allow-origin"] == "http://localhost:3000"
 
 
 @pytest.mark.parametrize("content_type", UNDECLARED)

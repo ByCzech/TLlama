@@ -34,6 +34,14 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+app.add_middleware(UndeclaredJsonBodyMiddleware)
+
+# Added last, so it is outermost: add_middleware inserts at the front of the
+# stack. Every response has to carry the CORS headers, including the ones
+# UndeclaredJsonBodyMiddleware produces itself without reaching a route --
+# a page that cannot read the refusal sees an opaque network failure and has
+# nothing to work from.
+#
 # Without this TLlama cannot be used from a browser at all: a page on any
 # origin gets its request through and is then refused the answer.
 #
@@ -89,7 +97,6 @@ app.add_middleware(
     max_age=600,
 )
 
-app.add_middleware(UndeclaredJsonBodyMiddleware)
 
 # FastAPI's HTTPException subclasses Starlette's, so one registration covers
 # both.

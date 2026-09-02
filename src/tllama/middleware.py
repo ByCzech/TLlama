@@ -40,6 +40,43 @@ def _rewritten_headers(
     return [*headers[:index], _JSON_HEADER, *headers[index + 1:]]
 
 
+UNDECLARED_BODY_MESSAGE = (
+    "A request from a browser must send Content-Type: application/json. "
+    "The permissive content types are accepted only from clients that do "
+    "not send an Origin header, because a browser using one of them would "
+    "reach this server without a preflight and so without the allowed "
+    "origins ever being consulted."
+)
+
+# The body was fine; what it was labelled as is not acceptable here.
+UNDECLARED_BODY_STATUS = 415
+
+
+def _undeclared_body_refusal(path: str):
+    """The refusal, in the error shape the addressed surface uses.
+
+    Built here rather than raised as an exception because this is plain
+    ASGI: it runs before routing, so FastAPI's exception handlers are not
+    in the picture yet and there is nothing to hand an exception to. The
+    two builders are the same ones those handlers use, so a client sees
+    the shape it already parses.
+
+    The CORS middleware sits outside this one, so its headers are still
+    added and the page can read the message rather than seeing an opaque
+    network failure.
+    """
+    from tllama.errors import (
+        is_openai_api_path,
+        ollama_error_response,
+        openai_error_response,
+    )
+
+    if is_openai_api_path(path):
+        return openai_error_response(UNDECLARED_BODY_STATUS, UNDECLARED_BODY_MESSAGE)
+
+    return ollama_error_response(UNDECLARED_BODY_STATUS, UNDECLARED_BODY_MESSAGE)
+
+
 class UndeclaredJsonBodyMiddleware:
     """Accept a JSON request body whatever the client says the content type is.
 
@@ -69,6 +106,16 @@ class UndeclaredJsonBodyMiddleware:
     Requiring a browser to declare application/json puts those requests back
     behind a preflight, where the origin list applies.
 
+    Such a request is refused here rather than left for the route to fail on.
+    Whether a body with no Content-Type at all is parsed as JSON is FastAPI's
+    decision, not ours: strict_content_type governs it and its default has
+    not been the same across versions. Leaning on it meant the protection
+    held on one installation and not on another, and a browser can send a
+    body with no Content-Type -- fetch() omits the header for a Blob with an
+    empty type, and an absent header triggers no preflight either. Refusing
+    explicitly is the same answer everywhere, and says what is actually
+    wrong instead of surfacing a schema complaint about the body.
+
     Origin is the right discriminator because a browser always sends it on a
     cross-origin request and script cannot forge it, while curl -- the client
     this leniency exists for, and the one Ollama's own documentation shows --
@@ -97,10 +144,14 @@ class UndeclaredJsonBodyMiddleware:
             elif name == _ORIGIN:
                 from_a_browser = True
 
-        if (
-            not from_a_browser
-            and _base_content_type(content_type) in UNDECLARED_CONTENT_TYPES
-        ):
+        undeclared = _base_content_type(content_type) in UNDECLARED_CONTENT_TYPES
+
+        if undeclared and from_a_browser:
+            response = _undeclared_body_refusal(scope.get("path", ""))
+            await response(scope, receive, send)
+            return
+
+        if undeclared:
             scope = {**scope, "headers": _rewritten_headers(headers, index)}
 
         await self.app(scope, receive, send)
