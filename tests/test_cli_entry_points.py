@@ -23,9 +23,10 @@ import pytest
 REPO_SRC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src")
 
 
-def run_module(module, *args, models_dir):
+def run_module(module, *args, models_dir, extra_env=None):
     env = dict(os.environ)
     env["TLLAMA_MODELS"] = str(models_dir)
+    env.update(extra_env or {})
     env["PYTHONPATH"] = os.pathsep.join(
         [REPO_SRC] + ([env["PYTHONPATH"]] if env.get("PYTHONPATH") else [])
     )
@@ -63,3 +64,23 @@ def test_help_does_not_need_a_model_store(tmp_path):
 
     assert result.returncode == 0
     assert "rebuildrepo" in result.stdout
+
+
+def test_a_bad_environment_variable_stops_the_command_with_a_message(tmp_path):
+    """The one place an operator sees a configuration mistake.
+
+    A rejected value has to arrive as a line naming the variable and a
+    non-zero exit, not as a traceback -- and not, as before this, as a
+    server that comes up having quietly ignored the setting.
+    """
+    result = run_module(
+        "tllama",
+        "rebuildrepo",
+        "--dryrun",
+        models_dir=tmp_path,
+        extra_env={"TLLAMA_MAX_LOADED_MODELS": "lots"},
+    )
+
+    assert result.returncode != 0
+    assert "TLLAMA_MAX_LOADED_MODELS" in result.stderr
+    assert "Traceback" not in result.stderr

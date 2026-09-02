@@ -5,6 +5,22 @@ from dataclasses import dataclass
 DEFAULT_MODELS_DIR = "/var/lib/tllama/models"
 
 
+class ConfigError(ValueError):
+    """An environment variable holds something that cannot be used.
+
+    Every one of these used to be swallowed: a value that failed to parse
+    returned the default and the server came up as if nothing had been
+    set. For a service started from a systemd unit that is the worst of
+    the available behaviours, because the only evidence of a typo is that
+    the setting quietly does not apply. These are raised instead, and the
+    entry point turns them into a message and a non-zero exit.
+    """
+
+
+def _reject(name: str, value: str, expected: str) -> "ConfigError":
+    return ConfigError(f"{name}={value!r} is not valid: expected {expected}.")
+
+
 def _env_str(name: str, default: str) -> str:
     value = os.getenv(name)
     if value is None or value.strip() == "":
@@ -19,7 +35,7 @@ def _env_int(name: str, default: int) -> int:
     try:
         return int(value)
     except (TypeError, ValueError):
-        return default
+        raise _reject(name, value, "a whole number") from None
 
 
 def _env_float(name: str, default: float) -> float:
@@ -29,7 +45,7 @@ def _env_float(name: str, default: float) -> float:
     try:
         return float(value)
     except (TypeError, ValueError):
-        return default
+        raise _reject(name, value, "a number") from None
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -43,10 +59,12 @@ def _env_bool(name: str, default: bool = False) -> bool:
     if normalized in {"0", "false", "no", "off"}:
         return False
 
-    return default
+    raise _reject(name, value, "one of 1/true/yes/on or 0/false/no/off")
 
 
-def _parse_host_port(value: str, default_host: str, default_port: int) -> tuple[str, int]:
+def _parse_host_port(
+    name: str, value: str, default_host: str, default_port: int
+) -> tuple[str, int]:
     if not value or value.strip() == "":
         return default_host, default_port
 
@@ -60,7 +78,7 @@ def _parse_host_port(value: str, default_host: str, default_port: int) -> tuple[
     try:
         port = int(port_str)
     except ValueError:
-        return default_host, default_port
+        raise _reject(name, value, "HOST:PORT with a numeric port") from None
 
     if not host:
         host = default_host
@@ -107,6 +125,7 @@ def load_backend_config_from_env() -> BackendConfig:
 
 def load_app_config_from_env() -> AppConfig:
     host, port = _parse_host_port(
+        "TLLAMA_HOST",
         _env_str("TLLAMA_HOST", "127.0.0.1:54800"),
         default_host="127.0.0.1",
         default_port=54800,

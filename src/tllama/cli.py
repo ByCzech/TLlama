@@ -14,6 +14,8 @@ import sys
 
 from typing import Any, Dict, List, Optional, Sequence
 
+from tllama.config import ConfigError
+
 
 def _rebuild_repo(args: argparse.Namespace) -> int:
     # Imported here rather than at module scope: `tllama --help` should
@@ -137,9 +139,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if handler is None:
         # No subcommand runs the server, which is what this entry point
         # did before it had subcommands at all.
-        return _serve(args)
+        handler = _serve
 
-    return handler(args)
+    # Every subcommand reads the environment, whether by starting the
+    # server or by constructing the ModelManager, so this wraps all of
+    # them rather than just serve. A bad variable is the operator's typo,
+    # not a bug: a traceback would bury the one line that says which
+    # variable and what it should look like.
+    try:
+        return handler(args)
+    except ConfigError as exc:
+        print(f"tllama: {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":
