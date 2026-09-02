@@ -84,6 +84,20 @@ Listen on all interfaces:
 export TLLAMA_HOST=0.0.0.0:54800
 ```
 
+An IPv6 address works either bracketed or bare; a bare one cannot carry a port, so it takes the default:
+
+```bash
+export TLLAMA_HOST=[::]:54800
+export TLLAMA_HOST=[::1]:54800
+export TLLAMA_HOST=::1
+```
+
+A `http://` or `https://` prefix is accepted and ignored, since that is a documented way to write `OLLAMA_HOST`. The scheme says nothing about how the server listens — TLS belongs to a reverse proxy in front of it, and `https://` here does not enable any. Any other scheme is refused rather than ignored:
+
+```bash
+export TLLAMA_HOST=http://0.0.0.0:54800
+```
+
 > Do not expose TLlama directly to untrusted networks without a reverse proxy, authentication, TLS, and access controls.
 
 ---

@@ -103,3 +103,53 @@ class TestAValueThatWillNotParseIsRefused:
 
         assert config.host == "0.0.0.0"
         assert config.port == 54800
+
+
+class TestHostForms:
+    """Splitting on the last colon was right for one form and wrong for
+    the rest. These are the spellings someone actually writes."""
+
+    @pytest.mark.parametrize(
+        "value,host,port",
+        [
+            ("0.0.0.0:12345", "0.0.0.0", 12345),
+            ("localhost", "localhost", 54800),
+            (":8080", "127.0.0.1", 8080),
+            # A URL is a documented way to write OLLAMA_HOST, so someone
+            # moving across writes one. The scheme used to stay glued to
+            # the host and uvicorn could not bind to "http://0.0.0.0".
+            ("http://0.0.0.0:12345", "0.0.0.0", 12345),
+            ("HTTP://0.0.0.0:12345", "0.0.0.0", 12345),
+            ("https://example.test:1/", "example.test", 1),
+            # Bare IPv6 is all colons. "::1" came out as the host ":" on
+            # port 1 -- wrong, and silently so.
+            ("::1", "::1", 54800),
+            ("[::]", "[::]", 54800),
+            ("[::]:12345", "[::]", 12345),
+            ("[::1]:8080", "[::1]", 8080),
+        ],
+    )
+    def test_the_form_is_recognised_rather_than_split_on_the_last_colon(
+        self, monkeypatch, value, host, port
+    ):
+        monkeypatch.setenv("TLLAMA_HOST", value)
+
+        config = load_app_config_from_env()
+
+        assert (config.host, config.port) == (host, port)
+
+    def test_an_unsupported_scheme_is_refused_not_stripped(self, monkeypatch):
+        # Dropping anything before "://" would take this too, but ftp://
+        # is a mistake and accepting it would be the same swallowing this
+        # module has just stopped doing.
+        monkeypatch.setenv("TLLAMA_HOST", "ftp://0.0.0.0:12345")
+
+        with pytest.raises(ConfigError, match="ftp://"):
+            load_app_config_from_env()
+
+    @pytest.mark.parametrize("value", ["[::1", "[::]x"])
+    def test_a_malformed_bracketed_address_is_refused(self, monkeypatch, value):
+        monkeypatch.setenv("TLLAMA_HOST", value)
+
+        with pytest.raises(ConfigError, match="TLLAMA_HOST"):
+            load_app_config_from_env()

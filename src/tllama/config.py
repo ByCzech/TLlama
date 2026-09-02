@@ -62,23 +62,96 @@ def _env_bool(name: str, default: bool = False) -> bool:
     raise _reject(name, value, "one of 1/true/yes/on or 0/false/no/off")
 
 
+_SUPPORTED_SCHEMES = ("http://", "https://")
+
+
+def _strip_scheme_and_path(name: str, value: str, raw: str) -> str:
+    """Accept the scheme://host:port spelling OLLAMA_HOST accepts.
+
+    A bare host:port is the usual form, but a URL is a documented way to
+    write OLLAMA_HOST and someone moving across writes what they had.
+    Without this the scheme stayed glued to the host and uvicorn was asked
+    to bind to "http://0.0.0.0", which fails at startup with nothing
+    pointing at the variable that caused it.
+
+    An unrecognised scheme is refused rather than stripped. Anything
+    before "://" could be dropped blindly, but ftp:// is a mistake, and
+    silently accepting it would recreate exactly the swallowing this
+    module has just stopped doing.
+    """
+    if "://" not in raw:
+        return raw
+
+    for scheme in _SUPPORTED_SCHEMES:
+        if raw.lower().startswith(scheme):
+            raw = raw[len(scheme):]
+            break
+    else:
+        scheme_given = raw.split("://", 1)[0]
+        raise _reject(
+            name,
+            value,
+            f"no scheme or one of http:// and https://, not {scheme_given}://",
+        )
+
+    # A URL may carry a path; there is nothing here that could use one.
+    return raw.split("/", 1)[0]
+
+
+def _split_host_port(name: str, value: str, raw: str) -> tuple[str, str | None]:
+    """Separate host from port, for IPv6 as well as IPv4 and names.
+
+    Splitting on the last colon is right for "host:port" and wrong for
+    every bare IPv6 address, which is full of them: "::1" came out as the
+    host ":" on port 1, quietly, and "[::]" failed to parse at all
+    because the last colon leaves "]" as the port. A bracketed address
+    delimits itself, so the port is whatever follows the closing bracket;
+    an unbracketed address with more than one colon cannot carry a port
+    and is taken whole.
+    """
+    if raw.startswith("["):
+        closing = raw.find("]")
+        if closing == -1:
+            raise _reject(name, value, "a closing ] after a bracketed IPv6 address")
+
+        host = raw[: closing + 1]
+        rest = raw[closing + 1:]
+
+        if rest == "":
+            return host, None
+        if rest.startswith(":"):
+            return host, rest[1:]
+        raise _reject(name, value, "either [ADDRESS] or [ADDRESS]:PORT")
+
+    if raw.count(":") > 1:
+        # An unbracketed IPv6 address. Written this way it has no room
+        # for a port, so all of it is the host.
+        return raw, None
+
+    if ":" not in raw:
+        return raw, None
+
+    host, port_str = raw.rsplit(":", 1)
+    return host, port_str
+
+
 def _parse_host_port(
     name: str, value: str, default_host: str, default_port: int
 ) -> tuple[str, int]:
     if not value or value.strip() == "":
         return default_host, default_port
 
-    raw = value.strip()
+    raw = _strip_scheme_and_path(name, value, value.strip())
 
-    if ":" not in raw:
-        return raw, default_port
+    host, port_str = _split_host_port(name, value, raw)
 
-    host, port_str = raw.rsplit(":", 1)
-
-    try:
-        port = int(port_str)
-    except ValueError:
-        raise _reject(name, value, "HOST:PORT with a numeric port") from None
+    if port_str is None:
+        port = default_port
+    else:
+        try:
+            port = int(port_str)
+        except ValueError:
+            raise _reject(name, value, "HOST:PORT with a numeric port") from None
 
     if not host:
         host = default_host
