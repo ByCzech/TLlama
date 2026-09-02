@@ -887,13 +887,24 @@ class ModelManager:
             async with self._models_lock:
                 self._ensure_janitor_running()
 
-                model_info = self._build_model_file_info(model_name)
+                try:
+                    model_info = self._build_model_file_info(model_name)
+                except TomlModelError as exc:
+                    # TomlModelError intentionally not swallowed: a broken
+                    # .toml or an out-of-repo path in one should stop this
+                    # request, not be treated as "no virtual model"
+                    # silently. It does mean the resident model, if any,
+                    # can no longer be reached by anything.
+                    self._drop_unreachable_model(model_name, str(exc))
+                    raise
+
                 if not model_info:
+                    self._drop_unreachable_model(
+                        model_name,
+                        f"nothing in {self.models_dir} defines it any more",
+                    )
                     raise FileNotFoundError(f"Model '{model_name}' not found in {self.models_dir}")
 
-                # TomlModelError intentionally not caught here: a broken
-                # .toml or an out-of-repo path in one should stop this
-                # request, not be treated as "no virtual model" silently.
                 virtual_spec = self._resolve_virtual_model_spec(model_name)
 
                 effective_num_ctx = num_ctx
@@ -1016,6 +1027,31 @@ class ModelManager:
                 pending.set_result(None)
 
             return llm
+
+    def _drop_unreachable_model(self, model_name: str, reason: str) -> None:
+        """Free a resident model that nothing can ask for any more.
+
+        A model is only reachable through get_model(), which re-reads the
+        .toml before it will hand the resident one back. Once that file
+        will not parse, or names something that is not there, or is gone,
+        every request for the model fails on the way in -- while the
+        weights stay in memory, and with keep_alive unset stay there until
+        the process ends or a capacity limit evicts them. Unreachable and
+        resident at the same time is a leak with a name.
+
+        Deleting a definition through /api/delete already unloads the model
+        first, for the same reason. This is the same event arriving by a
+        different route: someone editing or removing the file directly.
+
+        Safe mid-generation. unload_model() drops the manager's reference
+        and nothing else, so a request already generating keeps the one it
+        holds and the weights go when it is done.
+        """
+        if model_name not in self.models and model_name not in self.active_models:
+            return
+
+        logger.warning("Unloading %s: %s", model_name, reason)
+        self.unload_model(model_name)
 
     def unload_model(self, model_name: str):
         self._unload_model_internal(model_name)
