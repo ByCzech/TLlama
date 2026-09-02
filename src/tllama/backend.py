@@ -767,10 +767,6 @@ class ModelManager:
                     "expires_at": expires_at,
                     "keep_alive": keep_alive_seconds,
                     "n_ctx": actual_n_ctx,
-                    "n_gpu_layers": -1,
-                    "use_mmap": False,
-                    "flash_attention": self.config.flash_attention,
-                    "kv_cache_type": self.config.kv_cache_type,
 
                     # Stats from load log
                     "processor": load_stats.get("processor", "100% CPU"),
@@ -1731,11 +1727,32 @@ class ModelManager:
         requested_n_ctx: int,
         virtual_spec: Optional[VirtualModelSpec] = None,
     ) -> Dict[str, Any]:
+        # A value belongs here only when TLlama has a reason to differ from
+        # llama-cpp-python's own default; anything else is left out so that
+        # default applies, rather than being restated as a shadow copy that
+        # can drift from it. use_mmap is the case in point: it was pinned to
+        # False as a workaround for a memory leak in a since-superseded GPU
+        # driver / llama.cpp combination, and holding it there now overrides
+        # a library default of True for a reason that no longer exists --
+        # and would also override the library's own handling, which turns
+        # mmap off by itself when a LoRA is in play.
+        #
+        # n_gpu_layers and verbose stay, for two different reasons:
+        #
+        # - n_gpu_layers: the library defaults to 0, i.e. offloading
+        #   nothing. Offloading everything by default is TLlama policy
+        #   (Ollama behaves the same way), so it is a genuine difference,
+        #   not a restatement.
+        # - verbose: the library also defaults to True, so this one does
+        #   agree -- but it is a dependency rather than a preference.
+        #   /api/ps gets every number it reports from
+        #   parse_llama_verbose_load_log() reading the load log, so
+        #   verbose=False empties the memory accounting entirely. It is
+        #   explicit to keep that from being tidied away as redundant.
         kwargs: Dict[str, Any] = {
             "model_path": model_path,
             "n_ctx": requested_n_ctx,
             "n_gpu_layers": -1,
-            "use_mmap": False,
             "verbose": True,
         }
 

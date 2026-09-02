@@ -34,7 +34,12 @@ class TestBuildLlamaLoadKwargs:
         assert kwargs["model_path"] == "Local/model.gguf"
         assert kwargs["n_ctx"] == 8192
         assert kwargs["n_gpu_layers"] == -1
-        assert kwargs["use_mmap"] is False
+
+        # Absent, not False: llama-cpp-python defaults use_mmap to True and
+        # turns it off by itself when a LoRA is loaded. Passing anything
+        # here would override both, and passing True would restate a value
+        # TLlama has no reason to own.
+        assert "use_mmap" not in kwargs
 
     def test_runtime_keys_pass_through_generically(self, manager):
         spec = parse_model_toml(llm_toml("Local/m.gguf", '\n[runtime]\nn_gpu_layers = 20\nuse_mmap = true\n'))
