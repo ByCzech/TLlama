@@ -506,6 +506,7 @@ class ModelManager:
         gpu_compute_mib = self._to_float_mib(load_stats.get("gpu_compute_mib"))
         gpu_output_mib = self._to_float_mib(load_stats.get("gpu_output_mib"))
         gpu_rs_mib = self._to_float_mib(load_stats.get("gpu_rs_mib"))
+        gpu_projector_mib = self._to_float_mib(load_stats.get("gpu_projector_mib"))
 
         gpu_host_model_mib = self._to_float_mib(load_stats.get("gpu_host_model_mib"))
         gpu_host_kv_mib = self._to_float_mib(load_stats.get("gpu_host_kv_mib"))
@@ -518,15 +519,19 @@ class ModelManager:
         cpu_compute_mib = self._to_float_mib(load_stats.get("cpu_compute_mib"))
         cpu_output_mib = self._to_float_mib(load_stats.get("cpu_output_mib"))
         cpu_rs_mib = self._to_float_mib(load_stats.get("cpu_rs_mib"))
+        cpu_projector_mib = self._to_float_mib(load_stats.get("cpu_projector_mib"))
 
-        # True residency buckets for Ollama-like processor split
-        gpu_loaded_mib = gpu_model_mib + gpu_kv_mib
-        cpu_loaded_mib = cpu_model_mib + cpu_kv_mib
+        # True residency buckets for Ollama-like processor split.
+        # A projector's weights are resident the same way the model's are:
+        # loaded once, held for the lifetime of the model, and sitting on
+        # whichever device clip_ctx named.
+        gpu_loaded_mib = gpu_model_mib + gpu_kv_mib + gpu_projector_mib
+        cpu_loaded_mib = cpu_model_mib + cpu_kv_mib + cpu_projector_mib
         loaded_total_mib = gpu_loaded_mib + cpu_loaded_mib
 
         # Ollama-like ps size:
-        # - count real GPU-loaded model+KV
-        # - count true CPU-loaded model+KV
+        # - count real GPU-loaded model+KV+projector
+        # - count true CPU-loaded model+KV+projector
         # - include small GPU helper buffers
         # - intentionally DO NOT include gpu_host_compute_mib, because that is
         #   host-side staging / pinned-memory fallback and it pollutes ps output
@@ -550,6 +555,7 @@ class ModelManager:
             gpu_compute_mib +
             gpu_output_mib +
             gpu_rs_mib +
+            gpu_projector_mib +
             gpu_host_model_mib +
             gpu_host_kv_mib +
             gpu_host_compute_mib +
@@ -562,7 +568,8 @@ class ModelManager:
             cpu_kv_mib +
             cpu_compute_mib +
             cpu_output_mib +
-            cpu_rs_mib
+            cpu_rs_mib +
+            cpu_projector_mib
         )
 
         total_runtime_mib = gpu_total_runtime_mib + cpu_total_runtime_mib

@@ -5,10 +5,12 @@ how they are combined, which is the part that has to stay stable for an
 Ollama client to show a sensible size and processor split.
 """
 
+import pytest
+
 BUCKETS = [
     f"{device}_{bucket}_mib"
     for device in ("gpu", "cpu")
-    for bucket in ("model", "kv", "compute", "output", "rs")
+    for bucket in ("model", "kv", "compute", "output", "rs", "projector")
 ] + [
     f"gpu_host_{bucket}_mib"
     for bucket in ("model", "kv", "compute", "output", "rs")
@@ -99,3 +101,41 @@ def test_byte_fields_follow_their_mib_counterparts(manager):
 
     assert decorated["gpu_loaded_bytes"] == int(4.0 * MIB)
     assert decorated["size"] == int(decorated["ps_size_mib"] * MIB)
+
+
+def test_a_projector_counts_as_resident_memory(manager):
+    """Its weights are loaded once and held, exactly like the model's."""
+    accounting = manager._build_memory_accounting(
+        all_buckets(gpu_model_mib=12634.81, gpu_kv_mib=22.50, gpu_projector_mib=613.14)
+    )
+
+    assert accounting["gpu_loaded_mib"] == pytest.approx(13270.45)
+    assert accounting["cpu_loaded_mib"] == 0.0
+
+
+def test_a_projector_reaches_the_reported_size(manager):
+    without = manager._build_memory_accounting(all_buckets(gpu_model_mib=100.0))
+    with_projector = manager._build_memory_accounting(
+        all_buckets(gpu_model_mib=100.0, gpu_projector_mib=613.14)
+    )
+
+    assert with_projector["ps_size_mib"] == without["ps_size_mib"] + 613.14
+    assert with_projector["ps_size_vram_mib"] == without["ps_size_vram_mib"] + 613.14
+
+
+def test_a_projector_left_on_the_cpu_counts_against_vram(manager):
+    accounting = manager._build_memory_accounting(
+        all_buckets(gpu_model_mib=100.0, cpu_projector_mib=613.14)
+    )
+
+    assert accounting["cpu_loaded_mib"] == 613.14
+    assert accounting["ps_size_vram_mib"] == 100.0
+
+
+def test_a_model_without_a_projector_is_unaffected(manager):
+    accounting = manager._build_memory_accounting(
+        all_buckets(gpu_model_mib=100.0, gpu_kv_mib=20.0)
+    )
+
+    assert accounting["ps_size_mib"] == 120.0
+    assert accounting["gpu_loaded_mib"] == 120.0
