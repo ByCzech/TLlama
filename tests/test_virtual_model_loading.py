@@ -136,6 +136,51 @@ class TestBuildLlamaLoadKwargs:
         with pytest.raises(ConfigError, match="TLLAMA_KV_CACHE_TYPE"):
             make_manager(kv_cache_type="not_a_real_type")
 
+    def test_the_two_sides_can_be_set_apart(self, make_manager):
+        manager = make_manager(k_cache_type="q8_0", v_cache_type="q4_0")
+        spec = parse_model_toml(llm_toml("Local/m.gguf"))
+
+        kwargs = manager._build_llama_load_kwargs("Local/m.gguf", 8192, spec)
+
+        assert kwargs["type_k"] == resolve_kv_cache_types({"type_kv": "q8_0"})[0]
+        assert kwargs["type_v"] == resolve_kv_cache_types({"type_kv": "q4_0"})[0]
+        assert kwargs["type_k"] != kwargs["type_v"]
+
+    def test_one_side_overrides_the_shorthand_and_the_other_keeps_it(self, make_manager):
+        manager = make_manager(kv_cache_type="f16", k_cache_type="q4_0")
+        spec = parse_model_toml(llm_toml("Local/m.gguf"))
+
+        kwargs = manager._build_llama_load_kwargs("Local/m.gguf", 8192, spec)
+
+        assert kwargs["type_k"] == 2  # q4_0, the per-side setting
+        assert kwargs["type_v"] == 1  # f16, still from the shorthand
+
+    def test_the_precedence_matches_the_toml_it_mirrors(self, make_manager):
+        # Not a restatement of the assertions above: this compares the two
+        # layers against each other, which is the property that has to hold
+        # if the same names are to mean the same thing in both places.
+        manager = make_manager(kv_cache_type="f16", v_cache_type="q8_0")
+        spec = parse_model_toml(llm_toml("Local/m.gguf"))
+
+        kwargs = manager._build_llama_load_kwargs("Local/m.gguf", 8192, spec)
+
+        from_toml = resolve_kv_cache_types({"type_kv": "f16", "type_v": "q8_0"})
+        assert (kwargs["type_k"], kwargs["type_v"]) == from_toml
+
+    @pytest.mark.parametrize(
+        "field,variable",
+        [
+            ("kv_cache_type", "TLLAMA_KV_CACHE_TYPE"),
+            ("k_cache_type", "TLLAMA_K_CACHE_TYPE"),
+            ("v_cache_type", "TLLAMA_V_CACHE_TYPE"),
+        ],
+    )
+    def test_a_rejection_names_the_variable_that_was_wrong(
+        self, make_manager, field, variable
+    ):
+        with pytest.raises(ConfigError, match=variable):
+            make_manager(**{field: "not_a_real_type"})
+
 
 class TestGetModelUsesVirtualSpec:
     """End-to-end through get_model(), with _load_model_sync faked out."""

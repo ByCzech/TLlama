@@ -39,7 +39,9 @@ OLLAMA_HOST=127.0.0.1:54800 ollama list
 | `TLLAMA_MODEL_SCAN_TIMEOUT` | `5.0` | float | Explicit metadata scan timeout where applicable |
 | `TLLAMA_METADATA_CACHE_TTL` | `300.0` | float | In-memory metadata cache TTL in seconds |
 | `TLLAMA_FLASH_ATTENTION` | `false` | bool | Enable llama.cpp flash attention |
-| `TLLAMA_KV_CACHE_TYPE` | unset | string | KV cache type override |
+| `TLLAMA_KV_CACHE_TYPE` | unset | string | KV cache type override, both sides |
+| `TLLAMA_K_CACHE_TYPE` | unset | string | K cache type override |
+| `TLLAMA_V_CACHE_TYPE` | unset | string | V cache type override |
 | `TLLAMA_APP_RELOAD` | `false` | bool | Enable application reload mode |
 | `TLLAMA_DEBUG` | `false` | bool | Enable debug mode |
 
@@ -338,6 +340,25 @@ Lower-precision KV cache types can reduce memory usage, but may affect quality o
 A name matching no `GGML_TYPE_*` constant is rejected at startup: the server refuses to come up and names the variable, rather than accepting the value and failing on the first request that needs a model. Note that resolving is not the same as being usable: `llama.cpp` supports only some ggml types as a KV cache, and one it does not support is refused when a model loads, which startup cannot check.
 
 Quantized KV cache also requires flash attention (see `TLLAMA_FLASH_ATTENTION`); without it the setting is ignored silently by `llama.cpp`.
+
+---
+
+### `TLLAMA_K_CACHE_TYPE`, `TLLAMA_V_CACHE_TYPE`
+
+Override the cache type for one side only.
+
+Default: unset, meaning whatever `TLLAMA_KV_CACHE_TYPE` says.
+
+`TLLAMA_KV_CACHE_TYPE` is the shorthand for setting both; either of these takes precedence over it for its own side. That is the same relationship `type_kv`, `type_k` and `type_v` have in a model's `.toml` `[runtime]`, and it is resolved by the same code, so a value means the same thing in both places.
+
+```bash
+# a smaller V cache than K, a common trade-off
+export TLLAMA_KV_CACHE_TYPE=q8_0
+export TLLAMA_V_CACHE_TYPE=q4_0
+```
+
+Ollama has no equivalent: `OLLAMA_KV_CACHE_TYPE` sets both sides together and there is no per-side variable.
+
 
 ---
 

@@ -139,6 +139,10 @@ def _split_host_port(name: str, value: str, raw: str) -> tuple[str, str | None]:
     return host, port_str
 
 
+def _env_cache_type(name: str) -> str | None:
+    return _env_str(name, "").strip().lower() or None
+
+
 def _parse_host_port(
     name: str, value: str, default_host: str, default_port: int
 ) -> tuple[str, int]:
@@ -173,7 +177,14 @@ class BackendConfig:
     model_scan_timeout_seconds: float = 5.0
     metadata_cache_ttl_seconds: float = 300.0
     flash_attention: bool = False
+
+    # kv_cache_type sets both sides; k_cache_type/v_cache_type override it
+    # for one side each, mirroring type_kv/type_k/type_v in a .toml
+    # [runtime]. The names are resolved together, by the same function that
+    # resolves the .toml ones, so the precedence cannot drift apart from it.
     kv_cache_type: str | None = None
+    k_cache_type: str | None = None
+    v_cache_type: str | None = None
 
 
 @dataclass(frozen=True)
@@ -194,9 +205,9 @@ def load_backend_config_from_env() -> BackendConfig:
         model_scan_timeout_seconds=_env_float("TLLAMA_MODEL_SCAN_TIMEOUT", 5.0),
         metadata_cache_ttl_seconds=_env_float("TLLAMA_METADATA_CACHE_TTL", 300.0),
         flash_attention=_env_bool("TLLAMA_FLASH_ATTENTION", False),
-        kv_cache_type=(
-            _env_str("TLLAMA_KV_CACHE_TYPE", "").strip().lower() or None
-        ),
+        kv_cache_type=_env_cache_type("TLLAMA_KV_CACHE_TYPE"),
+        k_cache_type=_env_cache_type("TLLAMA_K_CACHE_TYPE"),
+        v_cache_type=_env_cache_type("TLLAMA_V_CACHE_TYPE"),
     )
 
 

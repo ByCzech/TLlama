@@ -27,6 +27,8 @@ class TestUnsetAndEmptyStillMeanDefault:
             "TLLAMA_JANITOR_INTERVAL",
             "TLLAMA_FLASH_ATTENTION",
             "TLLAMA_KV_CACHE_TYPE",
+            "TLLAMA_K_CACHE_TYPE",
+            "TLLAMA_V_CACHE_TYPE",
         ):
             monkeypatch.delenv(name, raising=False)
 
@@ -36,6 +38,8 @@ class TestUnsetAndEmptyStillMeanDefault:
         assert config.max_loaded_models == 1
         assert config.flash_attention is False
         assert config.kv_cache_type is None
+        assert config.k_cache_type is None
+        assert config.v_cache_type is None
 
     def test_an_empty_value_is_not_an_error(self, monkeypatch):
         # A systemd unit with `Environment=TLLAMA_CONTEXT_LENGTH=` sets the

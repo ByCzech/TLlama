@@ -277,7 +277,7 @@ class ModelManager:
         # meant an unknown name surfaced as a 400 on the first request to
         # need a model -- possibly hours later, and reported as a failure
         # to load that model rather than as the misconfiguration it was.
-        self._kv_cache_type = self._resolve_kv_cache_type(self.config.kv_cache_type)
+        self._type_k, self._type_v = self._resolve_global_kv_cache_types()
 
         self.hf_models_dir = self.models_dir / "HuggingFace"
         self.local_models_dir = self.models_dir / "Local"
@@ -1701,35 +1701,62 @@ class ModelManager:
             logger.warning("File info unavailable for %s: %s", model_name, e)
             return None
 
-    def _resolve_kv_cache_type(self, value: str | None) -> int | None:
-        """Resolve the global KV cache type name into a ggml type int.
+    def _resolve_global_kv_cache_types(self) -> "tuple[Optional[int], Optional[int]]":
+        """Resolve the global cache type names into ggml type ints.
 
-        This defers to the same resolver [runtime] type_k/type_v use, so a
-        name means here exactly what it means in a .toml. It used to carry
-        its own three-entry name table, which made the global setting
-        accept strictly less than the per-model one for no reason and
-        needed an edit for every quantization type llama.cpp gains.
+        The three variables are handed to the resolver [runtime] uses, in
+        the shape it expects, so TLLAMA_KV_CACHE_TYPE means what type_kv
+        means and the per-side ones mean what type_k/type_v mean. Two
+        implementations of the same precedence would be free to drift; one
+        cannot.
 
-        The error type is translated: resolve_kv_cache_types speaks about a
-        .toml field, which is the wrong thing to tell someone who set an
-        environment variable. ConfigError is what the entry point turns
-        into a message and a non-zero exit, and both it and TomlModelError
-        subclass ValueError, so anything catching the broader type is
-        unaffected either way.
+        A name is looked up dynamically against the GGML_TYPE_* constants,
+        so this accepts whatever the installed build knows rather than a
+        list written here.
+
+        Errors are translated on the way out: resolve_kv_cache_types
+        reports about a .toml field, which is the wrong thing to tell
+        someone who set an environment variable. ConfigError is what the
+        entry point turns into a message and a non-zero exit; both it and
+        TomlModelError subclass ValueError, so anything catching the
+        broader type is unaffected.
         """
-        if not value:
-            return None
+        by_variable = {
+            "type_kv": ("TLLAMA_KV_CACHE_TYPE", self.config.kv_cache_type),
+            "type_k": ("TLLAMA_K_CACHE_TYPE", self.config.k_cache_type),
+            "type_v": ("TLLAMA_V_CACHE_TYPE", self.config.v_cache_type),
+        }
 
-        try:
-            type_k, _ = resolve_kv_cache_types({"type_kv": value.strip().lower()})
-        except TomlModelError as exc:
-            raise ConfigError(
-                f"Unsupported TLLAMA_KV_CACHE_TYPE value: {value}. "
-                "Expected a ggml type name such as f16, q8_0 or q4_0 "
-                f"({exc})."
-            ) from exc
+        # Only the ones actually set. A key present with None would read as
+        # "explicitly nothing" to the resolver and defeat the type_kv
+        # fallback, which is the opposite of what an unset variable means.
+        runtime = {
+            field: value
+            for field, (_, value) in by_variable.items()
+            if value
+        }
 
-        return type_k
+        if not runtime:
+            return None, None
+
+        # Each variable is checked on its own first, purely so a rejection
+        # can name the one that was actually wrong. Reading the field name
+        # back out of the combined failure does not work: with only
+        # TLLAMA_KV_CACHE_TYPE set, the resolver reports type_k, because
+        # that is the field the value reached through the fallback.
+        for field, value in runtime.items():
+            variable = by_variable[field][0]
+            try:
+                resolve_kv_cache_types({"type_kv": value})
+            except TomlModelError as exc:
+                raise ConfigError(
+                    f"Unsupported {variable} value: {value}. "
+                    "Expected a ggml type name such as f16, q8_0 or q4_0 "
+                    f"({exc})."
+                ) from exc
+
+        # The precedence itself stays where the .toml gets it from.
+        return resolve_kv_cache_types(runtime)
 
     def _build_llama_load_kwargs(
         self,
@@ -1769,9 +1796,10 @@ class ModelManager:
         if self.config.flash_attention:
             kwargs["flash_attn"] = True
 
-        if self._kv_cache_type is not None:
-            kwargs["type_k"] = self._kv_cache_type
-            kwargs["type_v"] = self._kv_cache_type
+        if self._type_k is not None:
+            kwargs["type_k"] = self._type_k
+        if self._type_v is not None:
+            kwargs["type_v"] = self._type_v
 
         if virtual_spec is not None:
             # 1:1 passthrough of [runtime] into Llama() kwargs (spec doc
