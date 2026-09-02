@@ -35,6 +35,26 @@ LOAD_PATTERNS = {
     ),
 }
 
+# A projector announces its weights without naming a backend:
+#
+#   clip_ctx: CLIP using Vulkan1 backend
+#   ...
+#   load_hparams: model size:         613.14 MiB
+#
+# The size line alone cannot be matched safely -- "load_hparams:" prefixes a
+# dozen other lines, and neither line carries the backend the way every
+# buffer line does. The two have to be paired: the backend comes from
+# clip_ctx, the number from the first model size after it.
+PROJECTOR_BACKEND = re.compile(
+    rf"clip_ctx:\s*CLIP using\s+({BACKEND_PREFIX})\s+backend",
+    re.IGNORECASE,
+)
+
+PROJECTOR_SIZE = re.compile(
+    r"load_hparams:\s*model size:\s*([\d.]+)\s*MiB",
+    re.IGNORECASE,
+)
+
 
 def parse_llama_verbose_load_log(log_text: str) -> dict:
     result = {
@@ -55,6 +75,8 @@ def parse_llama_verbose_load_log(log_text: str) -> dict:
         "gpu_output_mib": 0.0,
         "cpu_rs_mib": 0.0,
         "gpu_rs_mib": 0.0,
+        "cpu_projector_mib": 0.0,
+        "gpu_projector_mib": 0.0,
         "gpu_host_model_mib": 0.0,
         "gpu_host_kv_mib": 0.0,
         "gpu_host_compute_mib": 0.0,
@@ -105,6 +127,15 @@ def parse_llama_verbose_load_log(log_text: str) -> dict:
     ):
         for backend, mib in pattern.findall(log_text):
             add_buffer(kind, backend, float(mib))
+
+    # A projector's weights are the one allocation llama.cpp reports without
+    # a backend prefix, so they used to be dropped on the floor. Pair each
+    # clip_ctx line with the next model size line; anything unpaired is left
+    # alone rather than guessed at.
+    for match in PROJECTOR_BACKEND.finditer(log_text):
+        size = PROJECTOR_SIZE.search(log_text, match.end())
+        if size:
+            add_buffer("projector", match.group(1), float(size.group(1)))
 
     result["cpu_mib"] = (
         result["cpu_model_mib"] +
