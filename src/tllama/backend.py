@@ -31,6 +31,7 @@ from tllama.helpers.model_toml import (
 )
 from tllama.helpers.runtime_params import coerce_runtime_overrides
 from tllama.helpers.metadata_cache import (
+    build_model_file_fingerprint,
     load_metadata_cache,
     save_metadata_cache,
     load_digest_cache,
@@ -450,6 +451,30 @@ class ModelManager:
         text = toml_path.read_text(encoding="utf-8")
         return parse_model_toml(text, source=str(toml_path))
 
+    def _toml_fingerprint_for_reference(self, model_ref: str) -> Optional[Dict[str, Any]]:
+        """Identify the revision of the .toml a model would be built from.
+
+        Deliberately the same fingerprint the metadata cache already uses
+        for .gguf files -- resolved path, size, mtime_ns -- rather than a
+        second idiom for the same job. Timestamp alone would do; size comes
+        free from the one stat() and costs nothing to compare.
+
+        A content hash was considered and rejected: `touch model.toml` as a
+        way to force a reload is a wanted property, and hashing would
+        silently ignore it.
+
+        None when there is no .toml, which for a resident model means the
+        definition has been deleted.
+        """
+        toml_path = self._toml_path_for_reference(model_ref)
+        if toml_path is None:
+            return None
+
+        try:
+            return build_model_file_fingerprint(toml_path)
+        except OSError:
+            return None
+
     def read_model_definition(self, model_ref: str) -> Optional[str]:
         """The raw text of a model's .toml, exactly as it sits on disk.
 
@@ -760,6 +785,7 @@ class ModelManager:
         llm: Llama,
         load_stats: Dict[str, Any],
         keep_alive_seconds: int | None,
+        toml_fingerprint: Optional[Dict[str, Any]] = None,
     ) -> None:
         actual_n_ctx = llm.n_ctx()
         now_iso = self._now_iso()
@@ -783,6 +809,17 @@ class ModelManager:
                     "expires_at": expires_at,
                     "keep_alive": keep_alive_seconds,
                     "n_ctx": actual_n_ctx,
+
+                    # The revision of the definition this model was built
+                    # from, so a later request can tell whether the file
+                    # still says what it said. Taken before the load rather
+                    # than after: a .toml edited while the load was running
+                    # did not shape the model that came out of it, and
+                    # recording the newer revision here would hide that.
+                    #
+                    # Internal to the manager. /api/ps builds its response
+                    # from named keys, so nothing here reaches a client.
+                    "toml_fingerprint": toml_fingerprint,
 
                     # Stats from load log
                     "processor": load_stats.get("processor", "100% CPU"),
@@ -868,10 +905,35 @@ class ModelManager:
                 requested_n_ctx = self._normalize_num_ctx(effective_num_ctx, default=0)
                 keep_alive_seconds = self.resolve_keep_alive(keep_alive)
 
-                current_n_ctx = self.active_models.get(model_name, {}).get("n_ctx")
+                toml_fingerprint = self._toml_fingerprint_for_reference(model_name)
 
-                # Reload only when caller explicitly requested a different context size
-                if model_name in self.models and num_ctx is not None and requested_n_ctx != current_n_ctx:
+                loaded_entry = self.active_models.get(model_name, {})
+                current_n_ctx = loaded_entry.get("n_ctx")
+                loaded_toml_fingerprint = loaded_entry.get("toml_fingerprint")
+
+                # An edited definition has to reach the model it defines.
+                #
+                # Only some of a .toml takes effect without a reload:
+                # [sampling] and [system] are read through
+                # get_model_metadata() at generation time, so they already
+                # follow the file. [runtime], [llm] model, [mmproj] and a
+                # vision [template] are all consumed while Llama() is being
+                # constructed, and nothing afterwards can reach them.
+                #
+                # Reloading on any change rather than on those sections is
+                # the deliberate choice: telling them apart would make the
+                # rule depend on which key someone edited, which is not
+                # something a person editing a file should have to know.
+                # It also makes `touch model.toml` a way to force a reload.
+                #
+                # Without this the reload only ever happened when a client
+                # sent num_ctx explicitly and it differed. `ollama run`
+                # sends no num_ctx at all, so an edited .toml was answered
+                # by the model built from the previous one, indefinitely.
+                if model_name in self.models and (
+                    (num_ctx is not None and requested_n_ctx != current_n_ctx)
+                    or toml_fingerprint != loaded_toml_fingerprint
+                ):
                     self.unload_model(model_name)
 
                 if model_name in self.models:
@@ -947,6 +1009,7 @@ class ModelManager:
                     llm,
                     load_stats,
                     keep_alive_seconds,
+                    toml_fingerprint,
                 )
 
             if not pending.done():
