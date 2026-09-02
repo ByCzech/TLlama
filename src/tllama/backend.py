@@ -1297,6 +1297,13 @@ class ModelManager:
         quantisation is normally in the filename -- but the generator has
         to survive it rather than silently overwrite one with the other, so
         the second one becomes <name>_01.
+
+        That numbering answers a name held by a readable definition of some
+        other model. A candidate that will not parse gets an error instead:
+        it may well be this model's own definition, broken, and stepping
+        around it would answer a mistake in a file with a second file, the
+        very duplicate the numbering exists to prevent. The person is told
+        which file and why, and fixes it.
         """
         for candidate in self._iter_candidate_toml_paths(directory, stem):
             if not candidate.exists():
@@ -1306,11 +1313,12 @@ class ModelManager:
                 existing = parse_model_toml(
                     candidate.read_text(encoding="utf-8"), source=str(candidate)
                 )
-            except (TomlModelError, OSError):
-                # Occupied by something unreadable. Still occupied: the
-                # next name along is the safe answer, and repairing
-                # someone else's file is not this function's business.
-                continue
+            except (TomlModelError, OSError) as exc:
+                raise TomlModelError(
+                    f"Cannot place a .toml for {target_rel}: {candidate} "
+                    f"cannot be read and may be this model's own definition "
+                    f"({exc})."
+                ) from exc
 
             if existing.llm_model == target_rel:
                 return candidate, True

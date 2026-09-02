@@ -183,17 +183,41 @@ class TestNameCollisions:
             "Q8_0/model.gguf"
         )
 
-    def test_a_name_held_by_an_unreadable_file_is_still_taken(self, manager, define, place_gguf):
-        """Repairing someone else's broken file is not this code's
-        business; stepping around it is."""
+    def test_a_name_held_by_an_unreadable_file_is_reported_not_stepped_around(
+        self, manager, define, place_gguf
+    ):
+        """The duplicate this was found producing.
+
+        A .toml holding the name for the very model being defined, with a
+        mistake in it, used to be treated as somebody else's occupied
+        name: the definition went to model_01.toml and the repository
+        grew a second file for one model, the broken one still there and
+        unmentioned. Being told which file is wrong is the only outcome
+        that leads anywhere.
+        """
         (manager.hf_models_dir / "ns" / "repo").mkdir(parents=True, exist_ok=True)
         (manager.hf_models_dir / "ns" / "repo" / "model.toml").write_text(
-            "this is not toml at all\n", encoding="utf-8"
+            '[llm]\nmodel = "HuggingFace/ns/repo/model.gguf"\n'
+            "\n[sampling]\nnum_ctx = 4096\n",
+            encoding="utf-8",
         )
+        place_gguf("HuggingFace/ns/repo/model.gguf")
 
-        _, toml = define("HuggingFace/ns/repo/model.gguf")
+        results = manager.rebuild_repository(force=False, dry_run=True)
 
-        assert toml.name == "model_01.toml"
+        assert not (manager.hf_models_dir / "ns" / "repo" / "model_01.toml").exists()
+        assert [r["action"] for r in results] == ["skip"]
+        assert "num_ctx" in results[0]["reason"]
+        assert "model.toml" in results[0]["reason"]
+
+    def test_an_unrelated_name_is_still_stepped_around(self, manager, define):
+        """The numbering itself stays: a readable definition of a
+        different model holds that name legitimately."""
+        _, first = define("HuggingFace/ns/repo/Q4_K_M/model.gguf")
+        _, second = define("HuggingFace/ns/repo/Q8_0/model.gguf")
+
+        assert first.name == "model.toml"
+        assert second.name == "model_01.toml"
 
 
 class TestTheModelIsThenVisible:
