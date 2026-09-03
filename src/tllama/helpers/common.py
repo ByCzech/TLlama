@@ -85,6 +85,28 @@ _SAMPLING_DEFAULTS = {
     "seed": None,
 }
 
+# Sampling parameters TLlama applies but has no baseline for: unset means
+# unset, so there is nothing to fall back to and the argument is simply not
+# passed. Kept apart from _SAMPLING_DEFAULTS for that reason -- a name in
+# there is a value TLlama always sends, and these are not.
+#
+# Small enough to name rather than derive. Deriving it would mean reading
+# inspect.signature() off both completion methods and subtracting, which
+# needs llama_cpp imported on a path that deliberately does without it, to
+# produce a set that cannot grow on its own: a new entry here is a decision
+# about what TLlama applies, not a consequence of the library gaining a
+# parameter.
+#
+# grammar is deliberately absent despite being in the same gap. A GBNF
+# string llama.cpp cannot parse takes the whole process down with SIGSEGV
+# (measured on hardware: a syntax error, an undefined rule and a missing
+# 'root' all did), llama_sampler_init_grammar() reports the failure only to
+# the log, and 0.3.35's LlamaGrammar.from_string() parses nothing that
+# could catch it first. Accepting the key would trade today's "TLlama does
+# not apply this" for a crash of every loaded model, so it stays refused
+# until there is something to validate with.
+_SAMPLING_NO_BASELINE = ("logit_bias",)
+
 # Ollama's client-facing "options" dict spells this "mirostat"; a .toml's
 # [sampling] section and this function's own kwargs use the
 # llama-cpp-python/[runtime]-style "mirostat_mode" instead, so the two need
@@ -101,9 +123,13 @@ def sampling_parameter_names() -> frozenset:
     it, so a name added to the baseline becomes settable in a .toml
     without a second edit somewhere else. max_tokens and stop are read
     directly rather than through _SAMPLING_DEFAULTS, so they are added
-    here.
+    here, as are the parameters that have no baseline to be listed in.
     """
-    return frozenset(_SAMPLING_DEFAULTS) | {"max_tokens", "stop"}
+    return (
+        frozenset(_SAMPLING_DEFAULTS)
+        | frozenset(_SAMPLING_NO_BASELINE)
+        | {"max_tokens", "stop"}
+    )
 
 
 def build_sampling_kwargs(opts: dict, metadata_info: dict | None = None) -> dict:
@@ -132,6 +158,18 @@ def build_sampling_kwargs(opts: dict, metadata_info: dict | None = None) -> dict
             kwargs[key] = toml_sampling[key]
         else:
             kwargs[key] = default
+
+    # No baseline to fall back to, so absence has to stay absence: passing
+    # logit_bias=None would be the same as omitting it, but passing an
+    # empty dict would not, and neither is what "the .toml said nothing"
+    # means. No request field carries these on any of the three endpoints
+    # -- Ollama's options dict and the OpenAI schema both lack them -- so
+    # opts is not consulted. Giving a request a spelling for something no
+    # client sends today would be inventing an extension, which is its own
+    # decision rather than part of making a .toml key work.
+    for key in _SAMPLING_NO_BASELINE:
+        if key in toml_sampling:
+            kwargs[key] = toml_sampling[key]
 
     if "num_predict" in opts:
         kwargs["max_tokens"] = normalize_max_tokens_from_options(opts)
@@ -313,6 +351,11 @@ def _ollama_parameter_line(name: str, value) -> str:
         rendered = "true" if value else "false"
     elif isinstance(value, str):
         rendered = f'"{value}"'
+    elif isinstance(value, dict):
+        # str() on a dict is Python's repr, single quotes and all, which is
+        # not a value anything could read back. logit_bias is the only
+        # parameter shaped like this today.
+        rendered = json.dumps(value, sort_keys=True)
     else:
         rendered = str(value)
 

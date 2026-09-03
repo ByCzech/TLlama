@@ -117,6 +117,11 @@ def parse_model_toml(text: str, *, source: str = "<toml>") -> VirtualModelSpec:
     sampling_table = dict(document.get("sampling") or {})
     _reject_unknown_sampling_keys(sampling_table, source)
 
+    if "logit_bias" in sampling_table:
+        sampling_table["logit_bias"] = _as_logit_bias(
+            sampling_table["logit_bias"], source
+        )
+
     stop_value = sampling_table.pop("stop", [])
     if stop_value and not isinstance(stop_value, list):
         raise TomlModelError(f"{source}: [sampling] 'stop' must be an array of strings.")
@@ -191,6 +196,48 @@ def _reject_unknown_runtime_keys(runtime: Dict[str, Any], source: str) -> None:
             )
 
 
+def _as_logit_bias(value: Any, source: str) -> Dict[int, float]:
+    """Turn a [sampling] logit_bias table into what create_completion wants.
+
+    The signature says Dict[int, float], but a TOML table's keys are always
+    strings, so the token ids arrive as text and have to be converted here
+    rather than at the call. Doing it at parse time also means a typo names
+    the file it is in, which is not true of anything discovered later.
+
+    A bias is deliberately unbounded: llama.cpp treats it as an addend on
+    the logit and has no documented range, so a limit here would be one
+    TLlama invented.
+    """
+    if not isinstance(value, dict):
+        raise TomlModelError(
+            f"{source}: [sampling] 'logit_bias' must be a table of "
+            f"token id to bias, got {type(value).__name__}."
+        )
+
+    converted: Dict[int, float] = {}
+
+    for token, bias in value.items():
+        try:
+            token_id = int(str(token), 10)
+        except ValueError:
+            raise TomlModelError(
+                f"{source}: [sampling] 'logit_bias' key {token!r} is not a "
+                "token id; keys must be integers."
+            )
+
+        # bool is an int subclass, so it would otherwise pass as a bias of
+        # 1.0 or 0.0 and look deliberate.
+        if isinstance(bias, bool) or not isinstance(bias, (int, float)):
+            raise TomlModelError(
+                f"{source}: [sampling] 'logit_bias' value for token "
+                f"{token_id} must be a number, got {type(bias).__name__}."
+            )
+
+        converted[token_id] = float(bias)
+
+    return converted
+
+
 def _reject_unknown_sampling_keys(sampling: Dict[str, Any], source: str) -> None:
     """A [sampling] key nothing reads is a mistake, not a no-op.
 
@@ -198,10 +245,12 @@ def _reject_unknown_sampling_keys(sampling: Dict[str, Any], source: str) -> None
     the table was read from the file, carried through the parse and then
     dropped without a word.
 
-    The set here is what that function actually consumes. It is smaller
-    than what llama-cpp-python's completion calls accept -- logit_bias and
-    grammar among the absentees -- which is a separate gap, not something
-    this should paper over by accepting names that would still go nowhere.
+    The set here is what that function actually consumes. It is still
+    smaller than what llama-cpp-python's completion calls accept --
+    grammar is the notable absentee, because a GBNF string llama.cpp
+    cannot parse kills the process rather than reporting an error -- which
+    is a separate gap, not something this should paper over by accepting
+    names that would still go nowhere.
     """
     from tllama.helpers.common import sampling_parameter_names
 

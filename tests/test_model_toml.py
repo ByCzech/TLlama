@@ -279,11 +279,13 @@ class TestUnknownKeysAreRefused:
         assert spec.stop == ["<|im_end|>"]
 
     def test_a_sampling_name_llama_takes_but_tllama_does_not_apply_is_refused(self):
-        # logit_bias is a real create_completion parameter that
+        # grammar is a real create_completion parameter that
         # build_sampling_kwargs does not pass on. Accepting it here would
-        # promise something that still goes nowhere; filling that gap is
-        # separate work.
-        with pytest.raises(TomlModelError, match="logit_bias"):
+        # promise something that still goes nowhere -- and worse than
+        # nowhere: GBNF llama.cpp cannot parse kills the process, and
+        # nothing available parses it early enough to catch that.
+        # logit_bias used to stand here and is applied as of this patch.
+        with pytest.raises(TomlModelError, match="grammar"):
             parse_model_toml(
-                '[llm]\nmodel = "Local/m.gguf"\n[sampling]\nlogit_bias = {}\n'
+                '[llm]\nmodel = "Local/m.gguf"\n[sampling]\ngrammar = "root ::= \\"a\\""\n'
             )

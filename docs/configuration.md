@@ -359,10 +359,11 @@ Overridden by a request's own `options`, and overriding TLlama's baseline.
 | `mirostat_tau` | `5.0` | |
 | `mirostat_eta` | `0.1` | |
 | `seed` | unset | |
+| `logit_bias` | unset | Table of token id to bias, e.g. `{ "128009" = -100.0 }`. Keys are token ids; no request field carries this, so it is settable only here |
 | `max_tokens` | unset | Ollama's client options spell this `num_predict` |
 | `stop` | none | Array of strings |
 
-This set is narrower than what `llama-cpp-python`'s completion calls accept — `logit_bias` and `grammar` are not among them. A name that is real to the library but unapplied here is refused rather than accepted and dropped.
+This set is still narrower than what `llama-cpp-python`'s completion calls accept. `grammar` is the notable absentee, and deliberately so: GBNF that llama.cpp cannot parse takes the server process down with `SIGSEGV` rather than returning an error, and nothing in the installed library parses it early enough to catch that first. A name that is real to the library but unapplied here is refused rather than accepted and dropped.
 
 Applied identically by `/api/generate`, `/api/chat` and `/v1/chat/completions`, so a model behaves the same whichever endpoint a client uses.
 
