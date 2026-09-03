@@ -121,7 +121,7 @@ async def chat_completions(request: ChatCompletionRequest):
     functions = getattr(request, "functions", None)
     function_call = getattr(request, "function_call", None)
 
-    gen_params = build_sampling_kwargs(opts, metadata_info)
+    gen_params = build_sampling_kwargs(opts, metadata_info, model_manager.sampling_overrides)
 
     if response_format is not None:
         gen_params["response_format"] = response_format

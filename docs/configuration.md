@@ -49,8 +49,8 @@ Not every setting exists at every layer. A request cannot change how a model was
 | Context length | request `num_ctx` → `.toml` `[runtime] n_ctx` → `TLLAMA_CONTEXT_LENGTH` → `0`, meaning the model's trained maximum |
 | Load parameters | `.toml` `[runtime]` → `TLLAMA_RUNTIME_*` → `Llama()` default |
 | K/V cache type | `.toml` `[runtime]` `type_k`/`type_v`/`type_kv` → `TLLAMA_K_CACHE_TYPE`/`TLLAMA_V_CACHE_TYPE`/`TLLAMA_KV_CACHE_TYPE` → unset |
-| Sampling | request `options` → `.toml` `[sampling]` → TLlama's baseline |
-| Stop strings | request `stop` → `.toml` `[sampling] stop` → none |
+| Sampling | request `options` → `.toml` `[sampling]` → `TLLAMA_SAMPLING_*` → TLlama's baseline |
+| Stop strings | request `stop` → `.toml` `[sampling] stop` → none (no environment layer: a list is not a string) |
 | Chat template | `.toml` `[template] jinja` → the GGUF's own template |
 | System prompt | the request's own system message → `.toml` `[system] prompt` |
 | Keep-alive | request `keep_alive` → `TLLAMA_KEEP_ALIVE` |
@@ -289,6 +289,27 @@ Ollama has no per-side equivalent; `OLLAMA_KV_CACHE_TYPE` sets both.
 
 ---
 
+## Sampling: `TLLAMA_SAMPLING_*`
+
+Sampling set for the whole server. A model's `.toml` `[sampling]` overrides it, and a request's own options override both.
+
+```bash
+export TLLAMA_SAMPLING_TEMPERATURE=0.6
+export TLLAMA_SAMPLING_TOP_K=20
+```
+
+**Everything here is unset by default, and that matters.** A global sampling value overrules what a model's own definition recommends, for every model at once. Shipping numbers in this layer would silence those recommendations on a server nobody configured, so an unset variable stays genuinely unset and TLlama's baseline applies as before.
+
+Which names exist is read off `create_completion()` and `create_chat_completion()` in the installed `llama-cpp-python`, narrowed to what TLlama actually applies — the same set a `.toml` `[sampling]` may use, listed under [`[sampling]`](#sampling) below. A name outside it stops the server at startup, and says which of the two reasons applies: TLlama does not apply this parameter, or the library has no such parameter at all.
+
+The type each value has to become is read off the same signatures. `logit_bias` and `stop` are therefore refused here — a table and a list are not things an environment variable can hold — with a message pointing at the `.toml`, where they can be set.
+
+A value that will not convert stops the server at startup rather than failing on the first request that generates anything.
+
+Ollama has no equivalent. Its sampling is per-model or per-request only.
+
+---
+
 ## Per-model configuration: the `.toml`
 
 One file per model, named for the model. The repository layout and naming rules are in `docs/model-repositories.md`; what follows is the configuration each section carries.
@@ -342,7 +363,7 @@ An unrecognised key is refused when the file is read.
 
 ### `[sampling]`
 
-Overridden by a request's own `options`, and overriding TLlama's baseline.
+Overridden by a request's own `options`, and overriding `TLLAMA_SAMPLING_*` and TLlama's baseline.
 
 | Key | Baseline | Notes |
 |---|---:|---|

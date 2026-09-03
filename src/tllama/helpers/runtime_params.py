@@ -66,7 +66,33 @@ def _coerce_bool(variable: str, value: str) -> bool:
     )
 
 
-def _coerce(variable: str, annotation: str, value: str) -> Any:
+def coerce_from_annotation(
+    variable: str,
+    annotation: str,
+    value: str,
+    *,
+    unsupported_hint: str = "",
+) -> Any:
+    """Turn one environment string into what an annotation asks for.
+
+    Shared with the sampling layer, which reads its annotations off a
+    different function but faces the same problem: an environment variable
+    is a string and a signature says what it has to become.
+
+    unsupported_hint is appended when the annotation names something a
+    string cannot express, so the message can say where that setting does
+    belong instead of only that it does not belong here.
+    """
+    return _coerce(variable, annotation, value, unsupported_hint=unsupported_hint)
+
+
+def _coerce(
+    variable: str,
+    annotation: str,
+    value: str,
+    *,
+    unsupported_hint: str = "",
+) -> Any:
     kind = _strip_optional(annotation)
     raw = value.strip()
 
@@ -125,7 +151,7 @@ def _coerce(variable: str, annotation: str, value: str) -> Any:
 
     raise ConfigError(
         f"{variable} cannot be set from the environment: {kind} is not a "
-        "value a string can express."
+        f"value a string can express.{unsupported_hint}"
     )
 
 

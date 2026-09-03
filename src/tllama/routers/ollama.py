@@ -174,7 +174,7 @@ async def ollama_chat(request: OllamaChatRequest):
         raise HTTPException(status_code=400, detail=str(exc))
     kwargs_ex = build_chat_kwargs_ex(request)
 
-    gen_params = build_sampling_kwargs(opts, metadata_info)
+    gen_params = build_sampling_kwargs(opts, metadata_info, model_manager.sampling_overrides)
 
     if request.tools:
         gen_params["tools"] = request.tools
@@ -485,7 +485,7 @@ async def ollama_generate(request: OllamaGenerateRequest):
     if request_carries_images(request.images):
         raise HTTPException(status_code=400, detail=NO_MULTIMODAL_SUPPORT)
 
-    generation_kwargs = build_sampling_kwargs(opts, metadata_info)
+    generation_kwargs = build_sampling_kwargs(opts, metadata_info, model_manager.sampling_overrides)
     generation_kwargs.pop("stop", None)  # stop is computed below, alongside eos_token
     generation_kwargs["echo"] = False
 

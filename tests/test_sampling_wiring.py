@@ -29,3 +29,21 @@ def test_chat_handler_calls_build_sampling_kwargs():
     source = inspect.getsource(ollama_router.ollama_chat)
 
     assert "build_sampling_kwargs(" in source
+
+
+def test_every_handler_passes_the_global_layer_too():
+    """Calling build_sampling_kwargs() is no longer enough: with the third
+    argument omitted, TLLAMA_SAMPLING_* would parse at startup, sit in the
+    manager and change nothing. Each handler has to hand it over."""
+    from tllama.routers import openai as openai_router
+
+    handlers = (
+        ollama_router.ollama_generate,
+        ollama_router.ollama_chat,
+        openai_router.chat_completions,
+    )
+
+    for handler in handlers:
+        source = inspect.getsource(handler)
+        assert "build_sampling_kwargs(" in source, handler.__name__
+        assert "model_manager.sampling_overrides" in source, handler.__name__

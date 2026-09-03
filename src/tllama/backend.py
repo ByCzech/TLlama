@@ -30,6 +30,7 @@ from tllama.helpers.model_toml import (
     write_model_toml,
 )
 from tllama.helpers.runtime_params import coerce_runtime_overrides
+from tllama.helpers.sampling_params import coerce_sampling_overrides
 from tllama.helpers.metadata_cache import (
     build_model_file_fingerprint,
     load_metadata_cache,
@@ -287,6 +288,15 @@ class ModelManager:
         # of surfacing on the first request that needs a model.
         self._runtime_overrides = coerce_runtime_overrides(
             self.config.runtime_overrides
+        )
+
+        # Same reasoning for the sampling layer, read off the completion
+        # signatures instead of Llama()'s. Public because the routers
+        # hand it to build_sampling_kwargs() on every request: a global
+        # value is server configuration, not model metadata, so it does
+        # not belong in the metadata dict the other layers travel in.
+        self.sampling_overrides = coerce_sampling_overrides(
+            self.config.sampling_overrides
         )
 
         self.hf_models_dir = self.models_dir / "HuggingFace"

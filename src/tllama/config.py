@@ -180,6 +180,31 @@ def _collect_runtime_overrides() -> dict[str, str]:
     return collected
 
 
+SAMPLING_ENV_PREFIX = "TLLAMA_SAMPLING_"
+
+
+def _collect_sampling_overrides() -> dict[str, str]:
+    """Gather the raw strings; nothing is converted or checked here.
+
+    Same division of labour as _collect_runtime_overrides: what a value
+    has to become is decided from a signature, in a module that can see
+    one, and this file deliberately cannot import llama_cpp.
+
+    No aliases. TLLAMA_SAMPLING_* is new, so there is no older spelling
+    of it for anything to keep working.
+    """
+    collected: dict[str, str] = {}
+
+    for variable, value in os.environ.items():
+        if not variable.startswith(SAMPLING_ENV_PREFIX):
+            continue
+        if value.strip() == "":
+            continue
+        collected[variable[len(SAMPLING_ENV_PREFIX):].lower()] = value
+
+    return collected
+
+
 def _env_cache_type(name: str) -> str | None:
     return _env_str(name, "").strip().lower() or None
 
@@ -311,6 +336,12 @@ class BackendConfig:
     # module deliberately cannot see. A model's [runtime] overrides these.
     runtime_overrides: Mapping[str, str] = field(default_factory=dict)
 
+    # Sampling values set server-wide, still as strings. Empty by default
+    # and deliberately so: a global sampling value overrules what a model
+    # recommends, for every model at once, so it has to be something a
+    # person asked for rather than a number TLlama shipped.
+    sampling_overrides: Mapping[str, str] = field(default_factory=dict)
+
     # kv_cache_type sets both sides; k_cache_type/v_cache_type override it
     # for one side each, mirroring type_kv/type_k/type_v in a .toml
     # [runtime]. The names are resolved together, by the same function that
@@ -338,6 +369,7 @@ def load_backend_config_from_env() -> BackendConfig:
         model_scan_timeout_seconds=_env_float("TLLAMA_MODEL_SCAN_TIMEOUT", 5.0),
         metadata_cache_ttl_seconds=_env_float("TLLAMA_METADATA_CACHE_TTL", 300.0),
         runtime_overrides=_collect_runtime_overrides(),
+        sampling_overrides=_collect_sampling_overrides(),
         kv_cache_type=_env_cache_type("TLLAMA_KV_CACHE_TYPE"),
         k_cache_type=_env_cache_type("TLLAMA_K_CACHE_TYPE"),
         v_cache_type=_env_cache_type("TLLAMA_V_CACHE_TYPE"),

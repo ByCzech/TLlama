@@ -132,15 +132,25 @@ def sampling_parameter_names() -> frozenset:
     )
 
 
-def build_sampling_kwargs(opts: dict, metadata_info: dict | None = None) -> dict:
+def build_sampling_kwargs(
+    opts: dict,
+    metadata_info: dict | None = None,
+    global_sampling: dict | None = None,
+) -> dict:
     """Build create_completion()/create_chat_completion() sampling kwargs.
 
     Priority for every parameter: the request's own options (opts) win if
     present, then a virtual model's [sampling] default (via metadata_info,
-    see backend.ModelManager.get_model_metadata), then TLlama's own fixed
-    baseline in _SAMPLING_DEFAULTS. The same rule applies to max_tokens and
-    stop, layered on top of the existing Ollama-specific normalization
-    (num_predict's semantics, stop accepting a bare string or a list).
+    see backend.ModelManager.get_model_metadata), then the server-wide
+    values from TLLAMA_SAMPLING_* (global_sampling), then TLlama's own
+    fixed baseline in _SAMPLING_DEFAULTS. The same rule applies to
+    max_tokens and stop, layered on top of the existing Ollama-specific
+    normalization (num_predict's semantics, stop accepting a bare string
+    or a list).
+
+    global_sampling holds only what somebody set, never a default, so an
+    unconfigured server behaves exactly as it did before this layer
+    existed.
 
     Used identically by /api/generate, /api/chat, and /v1/chat/completions
     so a virtual model's [sampling] section behaves the same regardless of
@@ -148,6 +158,7 @@ def build_sampling_kwargs(opts: dict, metadata_info: dict | None = None) -> dict
     """
     opts = opts or {}
     toml_sampling = (metadata_info or {}).get("sampling_defaults") or {}
+    global_sampling = global_sampling or {}
 
     kwargs = {}
     for key, default in _SAMPLING_DEFAULTS.items():
@@ -156,6 +167,8 @@ def build_sampling_kwargs(opts: dict, metadata_info: dict | None = None) -> dict
             kwargs[key] = opts[client_key]
         elif key in toml_sampling:
             kwargs[key] = toml_sampling[key]
+        elif key in global_sampling:
+            kwargs[key] = global_sampling[key]
         else:
             kwargs[key] = default
 
@@ -167,14 +180,23 @@ def build_sampling_kwargs(opts: dict, metadata_info: dict | None = None) -> dict
     # opts is not consulted. Giving a request a spelling for something no
     # client sends today would be inventing an extension, which is its own
     # decision rather than part of making a .toml key work.
+    #
+    # The global layer cannot reach these anyway: an environment variable
+    # is a string and neither a table nor a list is one, so
+    # coerce_sampling_overrides refuses them outright. Consulting it here
+    # would be dead code pretending to be a layer.
     for key in _SAMPLING_NO_BASELINE:
         if key in toml_sampling:
             kwargs[key] = toml_sampling[key]
 
     if "num_predict" in opts:
         kwargs["max_tokens"] = normalize_max_tokens_from_options(opts)
+    elif "max_tokens" in toml_sampling:
+        kwargs["max_tokens"] = normalize_optional_max_tokens(toml_sampling["max_tokens"])
     else:
-        kwargs["max_tokens"] = normalize_optional_max_tokens(toml_sampling.get("max_tokens"))
+        kwargs["max_tokens"] = normalize_optional_max_tokens(
+            global_sampling.get("max_tokens")
+        )
 
     stop = normalize_stop(opts.get("stop"))
     if not stop:
