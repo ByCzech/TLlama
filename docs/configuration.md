@@ -33,12 +33,16 @@ Weakest to strongest:
 
 | Layer | Where | Scope |
 |---|---|---|
-| Library and model defaults | `llama-cpp-python`, the GGUF header | whatever nothing else sets |
+| Library defaults | `llama-cpp-python` | whatever TLlama passes no argument for |
+| TLlama's own baseline | built in | the few settings TLlama has a reason to differ on |
+| Model header | the GGUF | that one model, where its author said something |
 | Environment | `TLLAMA_*` | the whole server |
 | Model definition | a model's `.toml` | that one model |
 | Request | the API call | that one call |
 
 A stronger layer wins only where it says something. TLlama does not restate a default it agrees with: where nothing sets a value, the argument is not passed at all and `llama-cpp-python`'s own default applies. That is deliberate, since a restated default is a copy that can drift from what it copies.
+
+The library default and the GGUF header are separate layers, and not adjacent ones. A library default is what happens when TLlama passes nothing — an absence. A GGUF header is a positive statement by the model's author about that model, so it beats TLlama's own baseline, which is a fallback for when nothing said anything. Both still sit under anything a person configured.
 
 ### Precedence per setting
 
@@ -49,13 +53,13 @@ Not every setting exists at every layer. A request cannot change how a model was
 | Context length | request `num_ctx` → `.toml` `[runtime] n_ctx` → `TLLAMA_CONTEXT_LENGTH` → `0`, meaning the model's trained maximum |
 | Load parameters | `.toml` `[runtime]` → `TLLAMA_RUNTIME_*` → `Llama()` default |
 | K/V cache type | `.toml` `[runtime]` `type_k`/`type_v`/`type_kv` → `TLLAMA_K_CACHE_TYPE`/`TLLAMA_V_CACHE_TYPE`/`TLLAMA_KV_CACHE_TYPE` → unset |
-| Sampling | request `options` → `.toml` `[sampling]` → `TLLAMA_SAMPLING_*` → TLlama's baseline |
+| Sampling | request `options` → `.toml` `[sampling]` → `TLLAMA_SAMPLING_*` → GGUF `general.sampling.*` → TLlama's baseline |
 | Stop strings | request `stop` → `.toml` `[sampling] stop` → none (no environment layer: a list is not a string) |
 | Chat template | `.toml` `[template] jinja` → the GGUF's own template |
 | System prompt | the request's own system message → `.toml` `[system] prompt` |
 | Keep-alive | request `keep_alive` → `TLLAMA_KEEP_ALIVE` |
 
-A GGUF may carry the model author's recommended sampling values under `general.sampling.*`. TLlama reads them and reports them through `/api/show`, but does not yet apply them; when it does they will sit between the environment and the `.toml`.
+A GGUF may carry the model author's recommended sampling values under `general.sampling.*` — `temp`, `top_k` and `top_p`, no others. TLlama applies them directly above its own baseline, so they take effect on a model whose `.toml` pins nothing and the server sets nothing, and are overridden by either. `/api/show` reports them regardless. It is a newer convention and most files do not carry it; its absence says nothing about a model.
 
 ### When a setting is wrong
 
@@ -363,7 +367,9 @@ An unrecognised key is refused when the file is read.
 
 ### `[sampling]`
 
-Overridden by a request's own `options`, and overriding `TLLAMA_SAMPLING_*` and TLlama's baseline.
+Overridden by a request's own `options`, and overriding `TLLAMA_SAMPLING_*`, the GGUF's recommended values and TLlama's baseline.
+
+The baselines below apply only where nothing else does. On a model whose GGUF recommends `temperature`, `top_k` or `top_p`, that recommendation applies instead.
 
 | Key | Baseline | Notes |
 |---|---:|---|

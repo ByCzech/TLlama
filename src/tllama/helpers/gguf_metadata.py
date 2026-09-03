@@ -325,9 +325,10 @@ def _shard_position(meta: Mapping[str, Any]) -> "tuple[Optional[int], Optional[i
 def _recommended_sampling(meta: Mapping[str, Any]) -> Dict[str, Any]:
     """The sampling values the model's author put in the GGUF, if any.
 
-    Read and reported only. Nothing decides anything by these yet: making
-    them a tier in the priority chain build_sampling_kwargs() applies is a
-    change to what inference actually does and belongs in its own patch.
+    Applied by build_sampling_kwargs() directly above TLlama's own
+    baseline: a header saying something about this model beats a fallback
+    that says nothing about any model, and anything a person configured
+    beats both. Reported by /api/show either way.
     """
     recommended: Dict[str, Any] = {}
 

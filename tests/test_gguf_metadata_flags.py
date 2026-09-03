@@ -151,16 +151,33 @@ class TestRecommendedSampling:
 
         assert recommended == {"top_k": 64}
 
-    def test_nothing_is_decided_by_them_yet(self, write_gguf):
-        """They are reported, not applied. build_sampling_kwargs() gaining
-        a tier for these changes what inference does and is deliberately a
-        separate patch."""
+    def test_they_now_decide_something(self, write_gguf):
+        """They are applied, not only reported -- from a real header on
+        disk through the metadata payload to the kwargs a completion call
+        gets, which is the only path that proves the names line up.
+
+        This assertion used to be the opposite: build_sampling_kwargs()
+        gaining a tier changes what inference does, so it was held back
+        for a patch of its own.
+        """
         from tllama.helpers.common import build_sampling_kwargs
 
         path = write_gguf(general__sampling__temp=1.0)
         metadata_info = payload_for(path)
 
-        assert build_sampling_kwargs({}, metadata_info)["temperature"] == 0.8
+        assert build_sampling_kwargs({}, metadata_info)["temperature"] == 1.0
+
+    def test_a_configured_value_still_wins_over_the_header(self, write_gguf):
+        """Applying the header must not have put it above the layers a
+        person controls."""
+        from tllama.helpers.common import build_sampling_kwargs
+
+        path = write_gguf(general__sampling__temp=1.0)
+        metadata_info = payload_for(path)
+
+        kwargs = build_sampling_kwargs({}, metadata_info, {"temperature": 0.3})
+
+        assert kwargs["temperature"] == 0.3
 
 
 class TestExistingPayloadIsUnchanged:

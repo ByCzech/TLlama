@@ -142,11 +142,22 @@ def build_sampling_kwargs(
     Priority for every parameter: the request's own options (opts) win if
     present, then a virtual model's [sampling] default (via metadata_info,
     see backend.ModelManager.get_model_metadata), then the server-wide
-    values from TLLAMA_SAMPLING_* (global_sampling), then TLlama's own
+    values from TLLAMA_SAMPLING_* (global_sampling), then whatever the
+    model's author recommended in the GGUF header, then TLlama's own
     fixed baseline in _SAMPLING_DEFAULTS. The same rule applies to
     max_tokens and stop, layered on top of the existing Ollama-specific
     normalization (num_predict's semantics, stop accepting a bare string
     or a list).
+
+    The GGUF sits directly above the baseline and below the environment,
+    which is where a model's own header sits for every other setting:
+    n_ctx = 0 means "ask the model", and the GGUF's chat template applies
+    until a .toml replaces it, both under the environment. It is above the
+    baseline because the two answer different questions -- the header is a
+    statement about this model, while the baseline is what TLlama falls
+    back to when nothing said anything at all. Only general.sampling.temp,
+    top_k and top_p exist to be read, and only a minority of files carry
+    them.
 
     global_sampling holds only what somebody set, never a default, so an
     unconfigured server behaves exactly as it did before this layer
@@ -159,6 +170,7 @@ def build_sampling_kwargs(
     opts = opts or {}
     toml_sampling = (metadata_info or {}).get("sampling_defaults") or {}
     global_sampling = global_sampling or {}
+    recommended = (metadata_info or {}).get("recommended_sampling") or {}
 
     kwargs = {}
     for key, default in _SAMPLING_DEFAULTS.items():
@@ -169,6 +181,8 @@ def build_sampling_kwargs(
             kwargs[key] = toml_sampling[key]
         elif key in global_sampling:
             kwargs[key] = global_sampling[key]
+        elif key in recommended:
+            kwargs[key] = recommended[key]
         else:
             kwargs[key] = default
 
