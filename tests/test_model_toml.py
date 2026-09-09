@@ -237,6 +237,44 @@ class TestUnknownKeysAreRefused:
     from the outside which.
     """
 
+    def test_a_misspelt_mmproj_key_is_refused(self):
+        with pytest.raises(TomlModelError, match="mmproj_model"):
+            parse_model_toml(
+                '[llm]\nmodel = "Local/m.gguf"\n'
+                '[mmproj]\nmmproj_model = "Local/mmproj.gguf"\n'
+            )
+
+    def test_an_unread_mmproj_key_is_refused_beside_a_good_one(self):
+        # The one that actually got past: model is set, so the section
+        # resolves, the projector loads, and warmup is carried through the
+        # parse and thrown away. Nothing downstream ever sees it and
+        # nothing says so.
+        with pytest.raises(TomlModelError, match="warmup"):
+            parse_model_toml(
+                '[llm]\nmodel = "Local/m.gguf"\n'
+                '[mmproj]\nmodel = "Local/mmproj.gguf"\nwarmup = false\n'
+            )
+
+    def test_the_two_keys_the_section_does_read_still_work(self):
+        # The counterweight. from is the one at risk: it is only there
+        # until an import rewrites it to model, so a check written from
+        # what a settled file looks like would lose it.
+        spec = parse_model_toml(
+            '[llm]\nmodel = "Local/m.gguf"\n[mmproj]\nfrom = "/outside/mmproj.gguf"\n'
+        )
+
+        assert spec.mmproj_from == "/outside/mmproj.gguf"
+
+    def test_an_unknown_key_is_named_before_the_section_is_judged_complete(self):
+        # A section holding only a misspelt name has two things wrong with
+        # it at once. The useful one to hear is the misspelling; being
+        # told it needs 'model' or 'from' describes a file nobody wrote.
+        with pytest.raises(TomlModelError, match="mmprojector"):
+            parse_model_toml(
+                '[llm]\nmodel = "Local/m.gguf"\n'
+                '[mmproj]\nmmprojector = "Local/mmproj.gguf"\n'
+            )
+
     def test_a_misspelt_runtime_key_is_refused(self):
         with pytest.raises(TomlModelError, match="n_threds"):
             parse_model_toml(

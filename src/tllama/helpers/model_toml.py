@@ -107,6 +107,7 @@ def parse_model_toml(text: str, *, source: str = "<toml>") -> VirtualModelSpec:
     mmproj_model: Optional[str] = None
     mmproj_from: Optional[str] = None
     if mmproj is not None:
+        _reject_unknown_mmproj_keys(mmproj, source)
         mmproj_model = _as_optional_str(mmproj.get("model"), field_name="mmproj.model", source=source)
         mmproj_from = _as_optional_str(mmproj.get("from"), field_name="mmproj.from", source=source)
         _require_xor("mmproj", mmproj_model, mmproj_from, source)
@@ -168,6 +169,31 @@ _RUNTIME_EXTRA_KEYS = {"type_kv"}
 # [runtime] naming it would point somewhere else and the model would stop
 # being the one the file defines, so it is refused rather than ignored.
 _RUNTIME_FORBIDDEN_KEYS = {"model_path": "the model path comes from [llm]"}
+
+# The whole vocabulary of [mmproj], which parse_model_toml reads by name.
+_MMPROJ_KEYS = frozenset({"model", "from"})
+
+
+def _reject_unknown_mmproj_keys(mmproj: Any, source: str) -> None:
+    """An [mmproj] key nothing reads is a mistake, not a no-op.
+
+    [runtime] and [sampling] already say so, each for its own reason.
+    [mmproj] said nothing: parse_model_toml asks it for two names and
+    never looks at the rest, so anything else was read from the file and
+    dropped in silence, leaving a section that appeared to have been
+    obeyed.
+
+    Unlike the other two the vocabulary here is not derived from anything
+    outside TLlama -- there is no foreign signature to read it off. It is
+    the section's own, and it is written out because parse_model_toml
+    asks for exactly these two by name a few lines up.
+    """
+    for key in mmproj:
+        if key not in _MMPROJ_KEYS:
+            raise TomlModelError(
+                f"{source}: [mmproj] '{key}' is not a key TLlama reads. "
+                f"The section takes {' and '.join(sorted(_MMPROJ_KEYS))}."
+            )
 
 
 def _reject_unknown_runtime_keys(runtime: Dict[str, Any], source: str) -> None:

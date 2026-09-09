@@ -358,6 +358,8 @@ jinja = """
 
 A path escaping the repository root is refused. An `[mmproj]` is checked to be a projector.
 
+`[mmproj]` takes no keys beyond those two; an unrecognised one is refused when the file is read.
+
 Several models may point at one physical file; the weights are not copied.
 
 ### `[runtime]`
