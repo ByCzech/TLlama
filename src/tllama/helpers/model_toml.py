@@ -47,6 +47,7 @@ class VirtualModelSpec:
     llm_from: Optional[str] = None
     mmproj_model: Optional[str] = None
     mmproj_from: Optional[str] = None
+    mmproj_context: Dict[str, Any] = field(default_factory=dict)
     runtime: Dict[str, Any] = field(default_factory=dict)
     sampling: Dict[str, Any] = field(default_factory=dict)
     stop: List[str] = field(default_factory=list)
@@ -106,8 +107,10 @@ def parse_model_toml(text: str, *, source: str = "<toml>") -> VirtualModelSpec:
     mmproj = document.get("mmproj")
     mmproj_model: Optional[str] = None
     mmproj_from: Optional[str] = None
+    mmproj_context: Dict[str, Any] = {}
     if mmproj is not None:
         _reject_unknown_mmproj_keys(mmproj, source)
+        mmproj_context = _as_mmproj_context(mmproj, source)
         mmproj_model = _as_optional_str(mmproj.get("model"), field_name="mmproj.model", source=source)
         mmproj_from = _as_optional_str(mmproj.get("from"), field_name="mmproj.from", source=source)
         _require_xor("mmproj", mmproj_model, mmproj_from, source)
@@ -152,6 +155,7 @@ def parse_model_toml(text: str, *, source: str = "<toml>") -> VirtualModelSpec:
         llm_from=llm_from,
         mmproj_model=mmproj_model,
         mmproj_from=mmproj_from,
+        mmproj_context=mmproj_context,
         runtime=runtime,
         sampling=sampling_table,
         stop=stop,
@@ -171,7 +175,21 @@ _RUNTIME_EXTRA_KEYS = {"type_kv"}
 _RUNTIME_FORBIDDEN_KEYS = {"model_path": "the model path comes from [llm]"}
 
 # The whole vocabulary of [mmproj], which parse_model_toml reads by name.
-_MMPROJ_KEYS = frozenset({"model", "from"})
+_MMPROJ_PATH_KEYS = frozenset({"model", "from"})
+
+# Fields of mtmd_context_params that _init_mtmd_context leaves at their
+# defaults, so setting them here is the only way they can ever differ.
+# The four upstream does set -- use_gpu, print_timings, n_threads and
+# flash_attn_type -- are deliberately absent: it writes them after we do,
+# so a value here would be overwritten and the file would lie.
+_MMPROJ_CONTEXT_KEYS = {
+    "warmup": bool,
+    "image_min_tokens": int,
+    "image_max_tokens": int,
+    "batch_max_tokens": int,
+}
+
+_MMPROJ_KEYS = _MMPROJ_PATH_KEYS | frozenset(_MMPROJ_CONTEXT_KEYS)
 
 
 def _reject_unknown_mmproj_keys(mmproj: Any, source: str) -> None:
@@ -192,8 +210,45 @@ def _reject_unknown_mmproj_keys(mmproj: Any, source: str) -> None:
         if key not in _MMPROJ_KEYS:
             raise TomlModelError(
                 f"{source}: [mmproj] '{key}' is not a key TLlama reads. "
-                f"The section takes {' and '.join(sorted(_MMPROJ_KEYS))}."
+                f"The section takes {', '.join(sorted(_MMPROJ_KEYS))}."
             )
+
+
+def _as_mmproj_context(mmproj: Any, source: str) -> Dict[str, Any]:
+    """The mtmd context fields an [mmproj] asks to be set.
+
+    Kept apart from the two path keys because they go somewhere else
+    entirely: the paths say which files to open, these are written into
+    mtmd_context_params before the context is built.
+
+    Types are checked here rather than at the far end. A ctypes Structure
+    takes a wrong type only as far as the assignment and then raises from
+    inside the library, in the middle of a load, naming a field instead of
+    a file -- and bool is a subclass of int, so an unchecked
+    'image_max_tokens = true' would quietly mean 1.
+    """
+    context: Dict[str, Any] = {}
+
+    for key, expected in _MMPROJ_CONTEXT_KEYS.items():
+        if key not in mmproj:
+            continue
+
+        value = mmproj[key]
+        if expected is bool:
+            ok = isinstance(value, bool)
+        else:
+            ok = isinstance(value, int) and not isinstance(value, bool)
+
+        if not ok:
+            raise TomlModelError(
+                f"{source}: [mmproj] '{key}' must be "
+                f"{'a boolean' if expected is bool else 'an integer'}, "
+                f"got {type(value).__name__}."
+            )
+
+        context[key] = expected(value)
+
+    return context
 
 
 def _reject_unknown_runtime_keys(runtime: Dict[str, Any], source: str) -> None:

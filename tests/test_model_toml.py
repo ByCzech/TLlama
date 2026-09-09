@@ -246,13 +246,16 @@ class TestUnknownKeysAreRefused:
 
     def test_an_unread_mmproj_key_is_refused_beside_a_good_one(self):
         # The one that actually got past: model is set, so the section
-        # resolves, the projector loads, and warmup is carried through the
-        # parse and thrown away. Nothing downstream ever sees it and
-        # nothing says so.
-        with pytest.raises(TomlModelError, match="warmup"):
+        # resolves and the projector loads, while handler is carried
+        # through the parse and thrown away. Nothing downstream ever sees
+        # it and nothing says so. handler stands here because choosing a
+        # different ChatHandler class is a real thing to want and is not
+        # implemented, so a file asking for it is asking for silence.
+        with pytest.raises(TomlModelError, match="handler"):
             parse_model_toml(
                 '[llm]\nmodel = "Local/m.gguf"\n'
-                '[mmproj]\nmodel = "Local/mmproj.gguf"\nwarmup = false\n'
+                '[mmproj]\nmodel = "Local/mmproj.gguf"\n'
+                'handler = "Qwen25VLChatHandler"\n'
             )
 
     def test_the_two_keys_the_section_does_read_still_work(self):

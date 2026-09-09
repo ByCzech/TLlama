@@ -358,7 +358,20 @@ jinja = """
 
 A path escaping the repository root is refused. An `[mmproj]` is checked to be a projector.
 
-`[mmproj]` takes no keys beyond those two; an unrecognised one is refused when the file is read.
+`[mmproj]` takes no keys beyond those two and the projector context settings below; an unrecognised one is refused when the file is read.
+
+#### Projector context
+
+`_init_mtmd_context` in llama-cpp-python sets four fields of `mtmd_context_params` — `use_gpu`, `print_timings`, `n_threads` and `flash_attn_type` — and leaves the rest at their defaults. Those four are not settable here: they are written after these are, so a value would be overwritten. The rest are.
+
+| Key | Type | Default | Notes |
+|---|---|---|---|
+| `warmup` | boolean | `true` | Reserves a compute graph for a full-size image at load. That graph grows with the square of the image token count; `false` defers the reservation to the first real image |
+| `image_min_tokens` | integer | `-1` | `-1` leaves it to the projector. llama.cpp's own log suggests `1024` for Qwen-VL on grounding tasks |
+| `image_max_tokens` | integer | `-1` | `-1` leaves it to the projector. The only lever on projector compute size when `flash_attn` is off |
+| `batch_max_tokens` | integer | library default | |
+
+A key here that is not a field of `mtmd_context_params` in the installed llama-cpp-python fails the load rather than being ignored: assigning to a name a ctypes structure does not have succeeds and does nothing.
 
 Several models may point at one physical file; the weights are not copied.
 

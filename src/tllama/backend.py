@@ -130,6 +130,48 @@ class CachedMetadataEntry:
     value: Dict[str, Any]
 
 
+class _ConfiguredMtmdCpp:
+    """A stand-in for a handler's mtmd_cpp that pre-fills context params.
+
+    _init_mtmd_context builds its params by calling
+    mtmd_context_params_default() and then writing four fields of its own
+    over the result. Overriding the method itself would mean carrying a
+    copy of somebody else's body; standing in front of the one call it
+    makes for its defaults reaches the same place and stays out of the
+    way of everything after it -- including those four, which are written
+    later and so still win.
+
+    A ctypes Structure accepts an assignment to a name it does not have,
+    silently and with no effect on the C struct (verified). So the field
+    names are checked against _fields_ rather than trusted, or a renamed
+    field upstream would turn a .toml into a no-op.
+    """
+
+    def __init__(self, wrapped, overrides: Dict[str, Any]):
+        self._wrapped = wrapped
+        self._overrides = overrides
+        self.consulted = False
+
+    def __getattr__(self, name):
+        return getattr(self._wrapped, name)
+
+    def mtmd_context_params_default(self):
+        params = self._wrapped.mtmd_context_params_default()
+        known = {name for name, _ in getattr(type(params), "_fields_", ())}
+
+        for key, value in self._overrides.items():
+            if key not in known:
+                raise RuntimeError(
+                    f"[mmproj] '{key}' is not a field of mtmd_context_params "
+                    "in the installed llama-cpp-python, so setting it would "
+                    "do nothing."
+                )
+            setattr(params, key, value)
+
+        self.consulted = True
+        return params
+
+
 class _TemplateOverridingMTMDChatHandler(MTMDChatHandler):
     """A projector handler that renders a [template] instead of the GGUF's.
 
@@ -193,6 +235,20 @@ def _initialise_projector(llm) -> None:
         return
 
     initialise(llm)
+
+    # A .toml that asked for something and did not get it is the failure
+    # this whole section exists to prevent. The stand-in is the only thing
+    # that can say whether _init_mtmd_context still takes its defaults the
+    # way it did when this was written; if some later version stops
+    # asking, the settings vanish and nothing else notices.
+    shim = getattr(handler, "_mtmd_cpp", None)
+    if isinstance(shim, _ConfiguredMtmdCpp) and not shim.consulted:
+        raise RuntimeError(
+            "the projector context was built without reading the [mmproj] "
+            "settings; _init_mtmd_context no longer takes its defaults from "
+            "mtmd_context_params_default() in the installed "
+            "llama-cpp-python."
+        )
 
 
 def _apply_template_override_to_chat_handler(llm, virtual_spec: Optional[VirtualModelSpec]) -> None:
@@ -1971,12 +2027,19 @@ class ModelManager:
             return None
 
         if virtual_spec.template is not None:
-            return _TemplateOverridingMTMDChatHandler(
+            handler = _TemplateOverridingMTMDChatHandler(
                 clip_model_path=str(projector_path),
                 template=virtual_spec.template,
             )
+        else:
+            handler = MTMDChatHandler(clip_model_path=str(projector_path))
 
-        return MTMDChatHandler(clip_model_path=str(projector_path))
+        if virtual_spec.mmproj_context:
+            handler._mtmd_cpp = _ConfiguredMtmdCpp(
+                handler._mtmd_cpp, dict(virtual_spec.mmproj_context)
+            )
+
+        return handler
 
     async def start(self):
         self.ensure_storage()
