@@ -105,6 +105,8 @@ A `http://` or `https://` prefix is accepted and discarded, that being a documen
 
 Brackets around an IPv6 address are how the written form separates address from port. They are not part of the address and are removed before binding.
 
+The port has to be from `1` to `65535`. `0` is refused rather than passed on: it is the spelling for "any free port", so the server would start and listen somewhere nobody can predict.
+
 > Do not expose TLlama to an untrusted network without a reverse proxy, authentication, TLS and access controls.
 
 ### `TLLAMA_ORIGINS`

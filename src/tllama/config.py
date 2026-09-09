@@ -366,6 +366,16 @@ def _parse_host_port(
         except ValueError:
             raise _reject(name, value, "HOST:PORT with a numeric port") from None
 
+        # A port outside this range never reaches a working server, and
+        # each end of it fails differently. Above 65535 or below zero,
+        # bind() raises somewhere inside uvicorn, far from the variable
+        # that caused it. Zero is worse, because it succeeds: the kernel
+        # hands out an arbitrary free port, so the service starts and is
+        # listening on an address nobody can predict, including whoever
+        # configured it.
+        if not 1 <= port <= 65535:
+            raise _reject(name, value, "a port from 1 to 65535")
+
     if not host:
         host = default_host
 

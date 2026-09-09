@@ -177,3 +177,36 @@ class TestHostForms:
 
         with pytest.raises(ConfigError, match="TLLAMA_HOST"):
             load_app_config_from_env()
+
+
+class TestAPortOutsideWhatASocketTakes:
+    """int() was the whole check, so anything numeric got through.
+
+    The two ends fail differently and neither points at the variable: a
+    port above 65535 raises inside uvicorn's bind, and 0 does not fail at
+    all -- the kernel allocates a free port and the server listens on an
+    address its operator cannot predict.
+    """
+
+    @pytest.mark.parametrize("value", ["0.0.0.0:0", "0.0.0.0:65536", "0.0.0.0:-1"])
+    def test_it_is_refused(self, monkeypatch, value):
+        monkeypatch.setenv("TLLAMA_HOST", value)
+
+        with pytest.raises(ConfigError) as excinfo:
+            load_app_config_from_env()
+
+        assert "TLLAMA_HOST" in str(excinfo.value)
+        assert "65535" in str(excinfo.value)
+
+    @pytest.mark.parametrize(
+        "value,expected_port",
+        [("0.0.0.0:1", 1), ("0.0.0.0:65535", 65535), ("[::1]:54800", 54800)],
+    )
+    def test_the_ends_of_the_range_still_pass(
+        self, monkeypatch, value, expected_port
+    ):
+        # A bound one step too strict would take a usable port away, and
+        # 1 and 65535 are both usable.
+        monkeypatch.setenv("TLLAMA_HOST", value)
+
+        assert load_app_config_from_env().port == expected_port
