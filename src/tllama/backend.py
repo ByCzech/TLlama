@@ -1168,7 +1168,6 @@ class ModelManager:
     async def get_model_metadata(
         self,
         model_name: str,
-        timeout_seconds: float | None = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Get model metadata without loading the full model into inference memory.
@@ -1186,7 +1185,7 @@ class ModelManager:
         the messages it was given already carry one (client always wins),
         never a value to send outright.
         """
-        metadata = await self._get_raw_model_metadata(model_name, timeout_seconds)
+        metadata = await self._get_raw_model_metadata(model_name)
         if metadata is None:
             return None
 
@@ -1230,7 +1229,6 @@ class ModelManager:
     async def _get_raw_model_metadata(
         self,
         model_name: str,
-        timeout_seconds: float | None = None,
     ) -> Optional[Dict[str, Any]]:
         """
         The GGUF header's own metadata, unaffected by any .toml override.
@@ -1259,16 +1257,9 @@ class ModelManager:
             return persistent_cached_value
 
         try:
-            scan_task = asyncio.to_thread(self._get_model_metadata_sync, model_info["path"])
-
-            if timeout_seconds is None:
-                metadata = await scan_task
-            else:
-                metadata = await asyncio.wait_for(scan_task, timeout=timeout_seconds)
-
-        except asyncio.TimeoutError:
-            logger.warning("Metadata scan timed out for model %s", model_name)
-            return None
+            metadata = await asyncio.to_thread(
+                self._get_model_metadata_sync, model_info["path"]
+            )
         except Exception as exc:
             logger.warning("Metadata scan failed for model %s: %s", model_name, exc)
             return None

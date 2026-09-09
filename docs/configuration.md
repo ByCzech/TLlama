@@ -151,10 +151,6 @@ A `.gguf` that no `.toml` points at is not a model: it is not listed and cannot 
 
 How long in-memory metadata stays valid, in seconds. Default `300.0`. The on-disk cache is separate and keyed by content rather than by time; see `docs/metadata-cache.md`.
 
-### `TLLAMA_MODEL_SCAN_TIMEOUT`
-
-How long a metadata scan may take, in seconds. Default `5.0`.
-
 ---
 
 ## Model lifecycle options

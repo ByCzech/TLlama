@@ -200,7 +200,7 @@ After the persistent cache exists, model listing can be fast even after restarti
 
 ---
 
-## Timeout Behavior
+## Scan Duration
 
 First-time metadata scanning of large GGUF files can be slow.
 
@@ -214,13 +214,7 @@ The scan time depends on:
 
 On fast NVMe storage, a large model may take seconds to scan. On network storage, a large model can take much longer.
 
-For this reason, TLlama's persistent-cache creation path may avoid short default scan timeouts. Otherwise, large models might never get their metadata cache created.
-
-Some code paths may still support an explicit scan timeout through:
-
-```bash
-export TLLAMA_MODEL_SCAN_TIMEOUT=300
-```
+A scan is therefore never cut short by a timeout: one that is abandoned leaves no cache entry behind, so the next request pays the same cost again. The wait happens once per file, and every later read comes from the cache.
 
 ---
 
