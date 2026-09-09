@@ -366,12 +366,20 @@ A path escaping the repository root is refused. An `[mmproj]` is checked to be a
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
-| `warmup` | boolean | `true` | Reserves a compute graph for a full-size image at load. That graph grows with the square of the image token count; `false` defers the reservation to the first real image |
+| `warmup` | boolean | `true` | Reserves the projector's compute graph at load. `false` skips the reservation |
 | `image_min_tokens` | integer | `-1` | `-1` leaves it to the projector. llama.cpp's own log suggests `1024` for Qwen-VL on grounding tasks |
-| `image_max_tokens` | integer | `-1` | `-1` leaves it to the projector. The only lever on projector compute size when `flash_attn` is off |
+| `image_max_tokens` | integer | `-1` | `-1` leaves it to the projector. Bounds how large an image may be after scaling, and so how much a real request costs |
 | `batch_max_tokens` | integer | library default | |
 
 A key here that is not a field of `mtmd_context_params` in the installed llama-cpp-python fails the load rather than being ignored: assigning to a name a ctypes structure does not have succeeds and does nothing.
+
+##### What `warmup` costs
+
+The reservation is sized from a warmup image whose dimensions the projector fixes at load. It does not follow `image_max_tokens`: setting a smaller limit changes the reported `image_max_pixels` and leaves the reservation exactly as it was, even when the limit is below the warmup image's own size. So `image_max_tokens` is a bound on real requests, not a way to make loading cheaper.
+
+What the reservation costs depends almost entirely on `flash_attn`. With it enabled the graph is small and reserving it is cheap. With it disabled the attention matrix over the warmup image is materialised in full and the reservation runs to gigabytes — where it lands then differs by backend, and neither outcome is good: it may be split across many graph parts and pushed onto the CPU, or the allocation may simply fail, be written to the log, and be carried on past. The load reports success either way.
+
+`warmup = false` skips all of it. The graph is then built when an image first arrives, at whatever size that image needs.
 
 Several models may point at one physical file; the weights are not copied.
 
