@@ -74,6 +74,10 @@ $ echo $?
 
 An unset or empty variable is not an error. `TLLAMA_CONTEXT_LENGTH=` in a unit file says "I set nothing", not "I set nonsense", and means the default.
 
+Whether a value converts and whether it means anything are separate questions, and TLlama's own numeric settings are checked for both. `TLLAMA_JANITOR_INTERVAL=0` converts to a number and then asks for a wait that does not wait; `TLLAMA_MAX_LOADED_MODELS=0` converts and then behaves as `1`. Each section below states the accepted range.
+
+`TLLAMA_SAMPLING_*` is deliberately not range-checked. Values that look out of range there are defined by llama.cpp rather than meaningless: `top_k` at or below zero disables top-k sampling, `top_p` at or above `1.0` disables top-p, and a negative `temperature` selects a different sampler chain. A bound would close off configurations the library supports.
+
 A model's `.toml` works the same way: a key in `[runtime]` or `[sampling]` that TLlama will not act on is refused when the file is read, and that model is not listed and cannot be loaded until the file is corrected. `tllama rebuildrepo --dryrun` reports which file and which key, and writes nothing.
 
 Booleans accept `1`, `true`, `yes`, `on` and `0`, `false`, `no`, `off`, in any case. Anything else is refused.
@@ -149,7 +153,7 @@ A `.gguf` that no `.toml` points at is not a model: it is not listed and cannot 
 
 ### `TLLAMA_METADATA_CACHE_TTL`
 
-How long in-memory metadata stays valid, in seconds. Default `300.0`. The on-disk cache is separate and keyed by content rather than by time; see `docs/metadata-cache.md`.
+How long in-memory metadata stays valid, in seconds. Default `300.0`. `0` or more; `0` makes every entry stale on arrival, which turns the in-memory cache off. The on-disk cache is separate and keyed by content rather than by time; see `docs/metadata-cache.md`.
 
 ---
 
@@ -157,7 +161,7 @@ How long in-memory metadata stays valid, in seconds. Default `300.0`. The on-dis
 
 ### `TLLAMA_CONTEXT_LENGTH`
 
-Default context length. Default `0`, meaning the model's trained maximum.
+Default context length. Default `0`, meaning the model's trained maximum. `0` or more.
 
 That differs from Ollama, whose `OLLAMA_CONTEXT_LENGTH` defaults to 4096. Whether a model's maximum fits depends on the KV cache type and flash attention: a large context with a quantized cache and flash attention on can take less memory than a modest one without.
 
@@ -178,11 +182,11 @@ Overridden per request by `keep_alive`, which is how Ollama treats `OLLAMA_KEEP_
 
 ### `TLLAMA_MAX_LOADED_MODELS`
 
-How many models may be resident at once. Default `1`. Asking for one more than fits unloads to make room.
+How many models may be resident at once. Default `1`, and `1` is the smallest accepted value. Asking for one more than fits unloads to make room.
 
 ### `TLLAMA_JANITOR_INTERVAL`
 
-How often expired models are collected, in seconds. Default `10.0`.
+How often expired models are collected, in seconds. Default `10.0`. Must be greater than `0`: a delay of zero or less does not wait at all.
 
 ---
 

@@ -31,24 +31,74 @@ def _env_str(name: str, default: str) -> str:
     return value
 
 
-def _env_int(name: str, default: int) -> int:
+def _check_minimum(
+    name: str, value: str, number, minimum, *, inclusive: bool, kind: str
+) -> None:
+    """Refuse a number that parsed but means nothing at this setting.
+
+    Whether a value converts and whether it makes sense are two questions,
+    and only the first was ever asked. TLLAMA_JANITOR_INTERVAL=0 converts
+    to a float and then turns the janitor into a busy loop, because
+    asyncio.sleep() returns immediately for any delay at or below zero.
+    TLLAMA_MAX_LOADED_MODELS=0 converts and then behaves as 1, since the
+    capacity check reads `<= 1` as "keep one". Both are settings that
+    silently do something other than what was written, which is the
+    outcome this module exists to stop.
+
+    Only TLlama's own scalars are checked here. A sampling value is a
+    different case: llama.cpp defines what its out-of-range values do --
+    top_k at or below zero disables top-k, a negative temperature selects
+    a different sampler chain entirely -- so a bound on those would close
+    off configurations the library supports.
+    """
+    if number < minimum or (not inclusive and number == minimum):
+        readable = f"{minimum:g}" if isinstance(minimum, float) else str(minimum)
+        expected = (
+            f"{kind}, {readable} or more"
+            if inclusive
+            else f"{kind} greater than {readable}"
+        )
+        raise _reject(name, value, expected)
+
+
+def _env_int(name: str, default: int, *, minimum: int | None = None) -> int:
     value = os.getenv(name)
     if value is None or value.strip() == "":
         return default
     try:
-        return int(value)
+        number = int(value)
     except (TypeError, ValueError):
         raise _reject(name, value, "a whole number") from None
 
+    if minimum is not None:
+        _check_minimum(
+            name, value, number, minimum, inclusive=True, kind="a whole number"
+        )
 
-def _env_float(name: str, default: float) -> float:
+    return number
+
+
+def _env_float(
+    name: str,
+    default: float,
+    *,
+    minimum: float | None = None,
+    inclusive: bool = True,
+) -> float:
     value = os.getenv(name)
     if value is None or value.strip() == "":
         return default
     try:
-        return float(value)
+        number = float(value)
     except (TypeError, ValueError):
         raise _reject(name, value, "a number") from None
+
+    if minimum is not None:
+        _check_minimum(
+            name, value, number, minimum, inclusive=inclusive, kind="a number"
+        )
+
+    return number
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -361,11 +411,20 @@ class AppConfig:
 def load_backend_config_from_env() -> BackendConfig:
     return BackendConfig(
         models_dir=_env_str("TLLAMA_MODELS", DEFAULT_MODELS_DIR),
-        context_length=_env_int("TLLAMA_CONTEXT_LENGTH", 0),
+        # 0 is the documented "ask the model for its trained maximum", so
+        # it is a value rather than an absence; below that there is
+        # nothing for a context length to mean.
+        context_length=_env_int("TLLAMA_CONTEXT_LENGTH", 0, minimum=0),
         keep_alive=_env_str("TLLAMA_KEEP_ALIVE", "5m"),
-        max_loaded_models=_env_int("TLLAMA_MAX_LOADED_MODELS", 1),
-        janitor_interval_seconds=_env_float("TLLAMA_JANITOR_INTERVAL", 10.0),
-        metadata_cache_ttl_seconds=_env_float("TLLAMA_METADATA_CACHE_TTL", 300.0),
+        max_loaded_models=_env_int("TLLAMA_MAX_LOADED_MODELS", 1, minimum=1),
+        janitor_interval_seconds=_env_float(
+            "TLLAMA_JANITOR_INTERVAL", 10.0, minimum=0.0, inclusive=False
+        ),
+        # 0 means every cached entry is already stale, which is a way of
+        # saying "do not cache in memory" and worth allowing.
+        metadata_cache_ttl_seconds=_env_float(
+            "TLLAMA_METADATA_CACHE_TTL", 300.0, minimum=0.0
+        ),
         runtime_overrides=_collect_runtime_overrides(),
         sampling_overrides=_collect_sampling_overrides(),
         kv_cache_type=_env_cache_type("TLLAMA_KV_CACHE_TYPE"),
