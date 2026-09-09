@@ -107,6 +107,63 @@ _SAMPLING_DEFAULTS = {
 # until there is something to validate with.
 _SAMPLING_NO_BASELINE = ("logit_bias",)
 
+# Sampling values a person may set that have to be one of a few things.
+#
+# This is the whole list, and it stays this short on purpose. A sampling
+# value that merely looks out of range is usually a documented mode:
+# llama_sampler_top_k_impl() returns immediately for k <= 0, so a
+# non-positive top_k disables top-k; llama_sampler_top_p_apply() returns
+# for p >= 1.0; and llama-cpp-python's _init_sampler() builds a chain of
+# add_dist alone for a negative temperature, skipping every truncation
+# sampler. Refusing those would close off configurations llama.cpp
+# supports.
+#
+# mirostat_mode is the exception, because it is not a range at all.
+# _init_sampler() reads it as `if == 1 ... elif == 2 ... else`, so
+# anything else falls through to the ordinary chain: a request for
+# mirostat 3 turns mirostat off and says nothing. That is a value doing
+# something other than what it says, which is the one thing worth
+# refusing.
+#
+# The set is written out rather than derived because nothing to derive it
+# from exists: the annotation on both completion methods says int, and
+# which integers mean something is a fact about llama.cpp's sampler.
+_SAMPLING_ALLOWED_VALUES = {
+    "mirostat_mode": ((0, 1, 2), "any other value turns mirostat off without saying so"),
+}
+
+
+def sampling_value_problem(name: str, value) -> str | None:
+    """Say what is wrong with a configured sampling value, or nothing.
+
+    Returns a description rather than raising, because the two callers
+    report differently: a .toml names the file it read, and the
+    environment layer names the variable. Neither wants the other's
+    exception type, and a shared check that raised one of them would put
+    the wrong word in half the messages.
+
+    Only values a person configured are checked -- a .toml key and an
+    environment variable. A request's own options are left alone: Ollama
+    passes those through, and turning one into a 400 would be a change of
+    behaviour on the wire rather than a configuration check.
+    """
+    entry = _SAMPLING_ALLOWED_VALUES.get(name)
+    if entry is None:
+        return None
+
+    allowed, consequence = entry
+    expected = f"'{name}' must be one of {', '.join(str(item) for item in allowed)}"
+
+    # bool is a subclass of int, so True would otherwise pass as mirostat
+    # mode 1 and look deliberate.
+    if isinstance(value, bool) or not isinstance(value, int):
+        return f"{expected}, got {type(value).__name__}"
+
+    if value not in allowed:
+        return f"{expected}, got {value}; {consequence}"
+
+    return None
+
 # Ollama's client-facing "options" dict spells this "mirostat"; a .toml's
 # [sampling] section and this function's own kwargs use the
 # llama-cpp-python/[runtime]-style "mirostat_mode" instead, so the two need

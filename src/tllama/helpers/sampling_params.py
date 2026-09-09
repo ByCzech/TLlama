@@ -23,7 +23,7 @@ import inspect
 from typing import Any, Dict, Mapping
 
 from tllama.config import ConfigError
-from tllama.helpers.common import sampling_parameter_names
+from tllama.helpers.common import sampling_parameter_names, sampling_value_problem
 from tllama.helpers.runtime_params import coerce_from_annotation
 
 
@@ -118,5 +118,12 @@ def coerce_sampling_overrides(raw: Mapping[str, str]) -> Dict[str, Any]:
         coerced[name] = coerce_from_annotation(
             variable, annotation, value, unsupported_hint=_TOML_HINT
         )
+
+        # After coercion, not before: the check asks about the value the
+        # sampler will be given, and until the annotation has been applied
+        # there is only a string.
+        problem = sampling_value_problem(name, coerced[name])
+        if problem is not None:
+            raise ConfigError(f"{variable} is not usable: {problem}.")
 
     return coerced

@@ -76,7 +76,9 @@ An unset or empty variable is not an error. `TLLAMA_CONTEXT_LENGTH=` in a unit f
 
 Whether a value converts and whether it means anything are separate questions, and TLlama's own numeric settings are checked for both. `TLLAMA_JANITOR_INTERVAL=0` converts to a number and then asks for a wait that does not wait; `TLLAMA_MAX_LOADED_MODELS=0` converts and then behaves as `1`. Each section below states the accepted range.
 
-`TLLAMA_SAMPLING_*` is deliberately not range-checked. Values that look out of range there are defined by llama.cpp rather than meaningless: `top_k` at or below zero disables top-k sampling, `top_p` at or above `1.0` disables top-p, and a negative `temperature` selects a different sampler chain. A bound would close off configurations the library supports.
+Sampling values are almost never range-checked, whether they come from `TLLAMA_SAMPLING_*` or from a model's `.toml`. Values that look out of range there are defined by llama.cpp rather than meaningless: `top_k` at or below zero disables top-k sampling, `top_p` at or above `1.0` disables top-p, and a negative `temperature` selects a different sampler chain. A bound would close off configurations the library supports.
+
+The exception is `mirostat_mode`, which is a choice rather than a range: `0`, `1` or `2`. Any other number is not clamped and does not fail — it falls through to the ordinary sampler chain, so mirostat ends up off without a word. Both layers refuse it.
 
 A model's `.toml` works the same way: a key in `[runtime]` or `[sampling]` that TLlama will not act on is refused when the file is read, and that model is not listed and cannot be loaded until the file is corrected. `tllama rebuildrepo --dryrun` reports which file and which key, and writes nothing.
 
@@ -382,7 +384,7 @@ The baselines below apply only where nothing else does. On a model whose GGUF re
 | `frequency_penalty` | `0.0` | |
 | `repeat_penalty` | `1.0` | `1.0` disables |
 | `tfs_z` | `1.0` | `1.0` disables |
-| `mirostat_mode` | `0` | Ollama's client options spell this `mirostat` |
+| `mirostat_mode` | `0` | `0`, `1` or `2`; anything else is refused. Ollama's client options spell this `mirostat` |
 | `mirostat_tau` | `5.0` | |
 | `mirostat_eta` | `0.1` | |
 | `seed` | unset | |

@@ -122,6 +122,8 @@ def parse_model_toml(text: str, *, source: str = "<toml>") -> VirtualModelSpec:
             sampling_table["logit_bias"], source
         )
 
+    _reject_unusable_sampling_values(sampling_table, source)
+
     stop_value = sampling_table.pop("stop", [])
     if stop_value and not isinstance(stop_value, list):
         raise TomlModelError(f"{source}: [sampling] 'stop' must be an array of strings.")
@@ -236,6 +238,23 @@ def _as_logit_bias(value: Any, source: str) -> Dict[int, float]:
         converted[token_id] = float(bias)
 
     return converted
+
+
+def _reject_unusable_sampling_values(sampling: Dict[str, Any], source: str) -> None:
+    """A value the key accepts but the sampler does not.
+
+    Separate from _reject_unknown_sampling_keys: that one asks whether
+    anything reads the name, this one whether the sampler can do what the
+    value asks for. The judgement itself lives in helpers/common.py, next
+    to the chain that applies these, so the environment layer reaches the
+    same verdict on the same value.
+    """
+    from tllama.helpers.common import sampling_value_problem
+
+    for name, value in sampling.items():
+        problem = sampling_value_problem(name, value)
+        if problem is not None:
+            raise TomlModelError(f"{source}: [sampling] {problem}.")
 
 
 def _reject_unknown_sampling_keys(sampling: Dict[str, Any], source: str) -> None:
