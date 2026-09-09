@@ -138,8 +138,9 @@ Credentials are never allowed: TLlama has no cookie or session for a browser to 
 
 A request carrying an `Origin` header must send `Content-Type: application/json`; anything else is refused with `415`. Everywhere else TLlama accepts a JSON body whatever the content type says, because `curl -d` with no header sends `application/x-www-form-urlencoded` and the Ollama documentation shows exactly that. Those lenient content types are also the ones that let a browser skip the preflight entirely, so accepting them from a page would put the request beyond the reach of the origin list. `curl` never sends `Origin` and is unaffected; `fetch()` sends it always and should be declaring JSON in any case.
 
+### `TLLAMA_DEBUG`
 
-Debug logging. Default `false`.
+Debug logging. Default `false`. Sets TLlama's own log level and uvicorn's to `debug`.
 
 ### `TLLAMA_APP_RELOAD`
 
