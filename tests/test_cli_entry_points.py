@@ -104,3 +104,32 @@ def test_a_kv_cache_type_no_ggml_type_matches_stops_the_command(tmp_path):
     assert result.returncode != 0
     assert "TLLAMA_KV_CACHE_TYPE" in result.stderr
     assert "Traceback" not in result.stderr
+
+
+def test_overwrite_backups_without_force_is_refused(tmp_path):
+    """A destructive flag that quietly does nothing is the fault it fixes.
+
+    --overwrite-backups says an existing .toml.bak may be replaced. There
+    is nothing to replace unless --force is also replacing definitions,
+    so accepting it alone would mean somebody typed the dangerous option,
+    saw a clean run, and learnt nothing about why nothing happened.
+    """
+    result = run_module(
+        "tllama.cli", "rebuildrepo", "--overwrite-backups", models_dir=tmp_path
+    )
+
+    assert result.returncode == 2
+    assert "--force" in result.stderr
+
+
+def test_overwrite_backups_with_force_is_accepted(tmp_path):
+    result = run_module(
+        "tllama.cli",
+        "rebuildrepo",
+        "--force",
+        "--overwrite-backups",
+        "--dryrun",
+        models_dir=tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr

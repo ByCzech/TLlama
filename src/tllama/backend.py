@@ -1760,6 +1760,7 @@ class ModelManager:
         self,
         *,
         force: bool = False,
+        overwrite_backups: bool = False,
         dry_run: bool = False,
     ) -> List[Dict[str, Any]]:
         """Give every .gguf on disk a .toml, so that every one is a model.
@@ -1780,6 +1781,16 @@ class ModelManager:
         anyone reaching for force is thinking about what they want to gain,
         not about what they are about to lose, and would only think to ask
         for the copy once it was already too late to make one.
+
+        A copy that already exists is not replaced by another one. Running
+        force twice used to overwrite the .toml.bak with a copy of the
+        generated file, so the second run destroyed the only thing
+        protecting against the first -- and the longer a mistake went
+        unnoticed, the less was left to recover. Those files are skipped
+        instead, one by one rather than as an abort, so everything without
+        a backup is still done. overwrite_backups says the copy is
+        expendable; on its own it is not a licence to replace anything,
+        and does nothing without force.
 
         Returns one entry per file describing what was done or would be,
         so a caller can report it without repeating the reasoning.
@@ -1816,6 +1827,7 @@ class ModelManager:
                     metadata,
                     projectors=projectors,
                     force=force,
+                    overwrite_backups=overwrite_backups,
                     dry_run=dry_run,
                 )
             )
@@ -1862,6 +1874,7 @@ class ModelManager:
         *,
         projectors: Optional[Dict[Path, List[Path]]] = None,
         force: bool,
+        overwrite_backups: bool = False,
         dry_run: bool,
     ) -> Dict[str, Any]:
         def outcome(action, toml=None, reason=""):
@@ -1891,6 +1904,21 @@ class ModelManager:
         if already_defined and not force:
             return outcome("skip", toml_path, "already defined")
 
+        backup_path = toml_path.with_name(toml_path.name + ".bak")
+
+        # Ahead of the dry run rather than beside the copy itself: a dry
+        # run that promises an overwrite the real run refuses is worse
+        # than no dry run at all, because it is consulted precisely by
+        # someone deciding whether to go ahead.
+        if already_defined and backup_path.exists() and not overwrite_backups:
+            return outcome(
+                "skip",
+                toml_path,
+                f"{backup_path.name} already exists; it holds what was "
+                "replaced last time and would be lost. Move it aside, or "
+                "pass --overwrite-backups to say it is expendable",
+            )
+
         action = "overwrite" if already_defined else "create"
 
         if dry_run:
@@ -1898,7 +1926,7 @@ class ModelManager:
 
         try:
             if already_defined:
-                shutil.copy2(toml_path, toml_path.with_name(toml_path.name + ".bak"))
+                shutil.copy2(toml_path, backup_path)
 
             text = render_model_toml(
                 target_rel,

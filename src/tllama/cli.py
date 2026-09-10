@@ -22,10 +22,23 @@ def _rebuild_repo(args: argparse.Namespace) -> int:
     # not have to load llama_cpp and construct a ModelManager first.
     from tllama.backend import model_manager
 
+    # argparse cannot say "this one depends on that one", and letting it
+    # pass silently would be the worse half of the same fault this whole
+    # option exists to fix: a person who typed the destructive flag and
+    # got no destruction, and no word about why.
+    if args.overwrite_backups and not args.force:
+        print(
+            "tllama: --overwrite-backups only means something with --force; "
+            "on its own there is nothing to back up.",
+            file=sys.stderr,
+        )
+        return 2
+
     model_manager.ensure_storage()
 
     results = model_manager.rebuild_repository(
         force=args.force,
+        overwrite_backups=args.overwrite_backups,
         dry_run=args.dryrun,
     )
 
@@ -118,7 +131,16 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "Also replace definitions that already exist. Each replaced "
-            "file is kept as a .toml.bak alongside it."
+            "file is kept as a .toml.bak alongside it, and a file whose "
+            ".toml.bak is already there is skipped rather than losing it."
+        ),
+    )
+    rebuild.add_argument(
+        "--overwrite-backups",
+        action="store_true",
+        help=(
+            "Replace an existing .toml.bak instead of skipping the file. "
+            "Says the previous backup is expendable; needs --force."
         ),
     )
     rebuild.set_defaults(handler=_rebuild_repo)
