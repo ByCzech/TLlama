@@ -122,6 +122,12 @@ def parse_llama_verbose_load_log(log_text: str) -> dict:
         "gpu_rs_mib": 0.0,
         "cpu_projector_mib": 0.0,
         "gpu_projector_mib": 0.0,
+
+        # Model weights left out of the buckets below because they are
+        # input tensors rather than anything a processor computes. Named
+        # rather than dropped so the difference between the buckets and
+        # the log is on the record instead of being a silent subtraction.
+        "input_model_mib": 0.0,
         "gpu_host_model_mib": 0.0,
         "gpu_host_kv_mib": 0.0,
         "gpu_host_compute_mib": 0.0,
@@ -192,6 +198,44 @@ def parse_llama_verbose_load_log(log_text: str) -> dict:
         size = PROJECTOR_SIZE.search(log_text, match.end())
         if size:
             add_buffer("projector", match.group(1), float(size.group(1)))
+
+    # What ps answers is which processor does the heavy work, because a
+    # layer or a KV cache computed on the CPU is the thing that costs
+    # tokens per second. Input tensors are not that. llama.cpp keeps
+    # token_embd.weight off the device unconditionally -- its buffer type
+    # list does not contain the device at all -- and uses it for a
+    # GGML_OP_GET_ROWS, one row copied per token. It is resident whatever
+    # happens and it never moves work anywhere.
+    #
+    # Counting it made ps say a fully offloaded model was 2% on the CPU,
+    # and made the figure depend on use_mmap: the same tensor, the same
+    # bytes in the same place, lands in a CPU_Mapped buffer with mmap on
+    # and a <device>_Host one with it off, which changed size_vram by its
+    # whole size for a setting that has nothing to do with where the work
+    # happens.
+    #
+    # With every layer on the device, nothing in a non-device model buffer
+    # can be a layer, so all of it is input tensors and all of it goes.
+    # That is an exclusion, not an estimate. Short of that the log does
+    # not separate them -- one line covers every tensor the same rule
+    # moved, 385 of them in the measured 20-of-41 case -- so the buffer is
+    # left whole. It is the case where the CPU really is computing, ps
+    # says so, and the input tensors are a small part of a number that is
+    # already telling the truth.
+    #
+    # buffers is left alone either way: it is the record of what the log
+    # said, and _device_residency() compares it against what the devices
+    # can hold.
+    fully_offloaded = (
+        result["total_layers"] > 0
+        and result["offloaded_layers"] == result["total_layers"]
+    )
+    if fully_offloaded:
+        result["input_model_mib"] = (
+            result["cpu_model_mib"] + result["gpu_host_model_mib"]
+        )
+        result["cpu_model_mib"] = 0.0
+        result["gpu_host_model_mib"] = 0.0
 
     result["cpu_mib"] = (
         result["cpu_model_mib"] +

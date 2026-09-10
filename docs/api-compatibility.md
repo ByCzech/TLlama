@@ -133,7 +133,13 @@ curl -s http://127.0.0.1:54800/api/chat \
 
 Returns currently loaded models.
 
-`size_vram` counts the model as resident on the device unless a layer was actually placed on the CPU. llama.cpp names the device of every layer in its load log, for the weights and again for the KV cache, and that is what this follows. Buffer sizes alone would not do: an input tensor whose buffer type list holds no device at all is left in a CPU buffer even when everything was offloaded, and is announced under the same name as half a model that really is on the CPU. Clients read `size_vram` short of `size` as a partly resident model, which in that case it is not.
+`size` and `size_vram` are about the memory that decides how fast the model answers -- the weights and the KV cache, and which processor computes over them. A client turns the two into the `PROCESSOR` column, and work landing on the CPU is what costs tokens per second.
+
+Input tensors are left out of both. `token_embd.weight` has no device in its buffer type list, so llama.cpp keeps it in host RAM at every offload setting and on a machine with room to spare; it serves a row lookup, one row copied per token, and moves no work anywhere. Counting it reported a fully offloaded model as a few percent on the CPU, and made the figure depend on `use_mmap`, which decides how the weights are read rather than where anything is computed.
+
+They can only be told apart when every layer is on the device, because then nothing in a host-side model buffer can be a layer. Short of that llama.cpp reports one buffer covering every tensor it moved, without dividing the bytes, and the buffer is counted whole -- the CPU is computing in that case, `size_vram` says so, and the input tensors are a small part of a figure that is already right.
+
+`size_vram` counts the model as resident on the device unless a layer was actually placed on the CPU. llama.cpp names the device of every layer in its load log, for the weights and again for the KV cache, and that is what this follows.
 
 It is also capped at what the devices hold. A driver may accept an allocation larger than the card and keep the remainder in host memory without saying so anywhere in the load log, and TLlama asks the devices for their capacity so that `size_vram` does not repeat the claim. The model still loads: trading speed for a larger context or a larger model is a decision to leave to whoever asked for it.
 

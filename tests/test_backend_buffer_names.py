@@ -26,23 +26,28 @@ sched_reserve:    Vulkan1 compute buffer size =   554.28 MiB
 
 
 class TestHostResidentWeightsAreSeen:
-    def test_mapped_weights_land_in_the_cpu_bucket(self):
+    def test_mapped_weights_are_read_off_the_line(self):
+        """The point of the open-ended name matching, unchanged.
+
+        Where the number goes afterwards is a different question, asked
+        in test_input_tensors_are_not_the_processor_split.py. It has to
+        be read before it can be placed anywhere.
+        """
         stats = parse_llama_verbose_load_log(FULLY_OFFLOADED)
 
-        assert stats["cpu_model_mib"] == 397.85
         assert stats["buffers"]["CPU_Mapped"]["model"] == 397.85
 
-    def test_they_change_the_split_when_nothing_says_where_layers_went(self):
-        """The fallback, for a log that never names a layer's device.
+    def test_they_do_not_change_the_split_when_every_layer_is_offloaded(self):
+        """No layer line here, and none needed.
 
-        This used to be the whole rule, on the grounds that weights in RAM
-        are weights in RAM however many layers were offloaded. They are
-        not the same thing: see test_layer_placement.py.
+        The old rule read weights in host RAM as work on the CPU whatever
+        the offload said, so this fixture came out GPU+CPU. Every layer is
+        on the device, so there is nothing on the CPU to compute with.
         """
         stats = parse_llama_verbose_load_log(FULLY_OFFLOADED)
 
         assert stats["layer_devices_seen"] is False
-        assert stats["processor"] == "GPU+CPU"
+        assert stats["processor"] == "GPU"
 
     def test_the_gpu_side_is_unaffected(self):
         stats = parse_llama_verbose_load_log(FULLY_OFFLOADED)
