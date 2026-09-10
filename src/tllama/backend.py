@@ -270,6 +270,62 @@ def _route_projector_output_to_llama_cpps_logger() -> None:
         )
 
 
+def _match_llama_cpp_log_level_to_ours() -> None:
+    """Close llama.cpp's filter behind a load that has finished.
+
+    Everything /api/ps reports is parsed out of what llama.cpp says while
+    loading, so a load runs with verbose on and the filter wide open --
+    Llama.__init__ calls set_verbose(True) itself, so every load reopens
+    it whatever it was set to before. What is loud during a load is
+    routine; what is loud afterwards is not.
+
+    llama.cpp keeps talking through the same callback for the life of the
+    process. Per-request timings the API already carries since the
+    durations went on the wire, slot bookkeeping, and -- since the
+    projector's output was pointed at this same callback -- mtmd's
+    add_text, which prints the rendered prompt of every image request:
+
+        // tools/mtmd/mtmd.cpp
+        LOG_DBG("%s: %s\\n", __func__, txt.c_str());
+
+    On a server that may be answering several people, a full transcript
+    of their requests appearing on the console without anyone turning it
+    on is a question of privacy rather than of tidiness.
+
+    The level is the seam, and verbose deliberately is not. verbose also
+    serves as the disable flag for suppress_stdout_stderr, which dup2s
+    file descriptors 1 and 2 to /dev/null process-wide (_utils.py). It is
+    reached on the image path at every request and around the projector's
+    teardown, so turning verbose off would black out the server's own
+    stderr in the middle of unrelated work -- including the account of a
+    load failing in another thread. Moving the level moves nothing but a
+    comparison in the callback:
+
+        if logger.level <= GGML_LOG_LEVEL_TO_LOGGING_LEVEL[level]: print(...)
+
+    WARNING is the quietest setting that cannot lose that account: ERROR
+    maps to 40 and WARN to 30, both of which still pass, while INFO and
+    DEBUG do not. set_verbose(False) would go to ERROR and drop warnings
+    with the rest, which is why the level is set rather than the flag.
+
+    TLLAMA_DEBUG reaches here through TLlama's own logger level, the same
+    route the captured load log takes, rather than through a second
+    reading of the environment that could disagree with it.
+    """
+    try:
+        from llama_cpp import _logger
+    except ImportError:
+        return
+
+    library_logger = getattr(_logger, "logger", None)
+    if library_logger is None:
+        return
+
+    library_logger.setLevel(
+        logging.DEBUG if logger.isEnabledFor(logging.DEBUG) else logging.WARNING
+    )
+
+
 def _initialise_projector(llm) -> None:
     """Bring a projector into memory now rather than at the first image.
 
@@ -953,6 +1009,25 @@ class ModelManager:
 
         return llm, stats, log_text
 
+    def _close_llama_cpps_filter_if_nothing_is_loading(self) -> None:
+        """Quieten llama.cpp, but not while another load still needs it.
+
+        Two loads of different models run in parallel threads whenever
+        max_loaded_models allows more than one, and neither holds a lock
+        across the load itself. Lowering the level the moment any one of
+        them finished would cut the rest of the other one's output --
+        which is not a matter of noise: that output is where every figure
+        /api/ps reports comes from, so the second model would be
+        registered with buffers missing and nothing would say so.
+
+        _loading answers this exactly rather than approximately. It is
+        keyed by model name, and it is read and written only under
+        _models_lock on the event loop, so an empty one here means no
+        load is in flight. Callers must already hold that lock.
+        """
+        if not self._loading:
+            _match_llama_cpp_log_level_to_ours()
+
     def _ensure_capacity_for_load(self, requested_model_name: str) -> None:
         if requested_model_name in self.models:
             return
@@ -1246,6 +1321,7 @@ class ModelManager:
             except BaseException as exc:
                 async with self._models_lock:
                     self._loading.pop(model_name, None)
+                    self._close_llama_cpps_filter_if_nothing_is_loading()
 
                 if not pending.done():
                     if isinstance(exc, asyncio.CancelledError):
@@ -1260,6 +1336,7 @@ class ModelManager:
 
             async with self._models_lock:
                 self._loading.pop(model_name, None)
+                self._close_llama_cpps_filter_if_nothing_is_loading()
                 self._register_loaded_model(
                     model_name,
                     model_info,

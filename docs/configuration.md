@@ -144,6 +144,12 @@ Debug logging. Default `false`. Sets TLlama's own log level and uvicorn's to `de
 
 With it on, everything llama.cpp writes while loading a model is logged too -- around two thousand lines per load, which is why it is off by default. This includes what the projector says about itself on a vision model, which used to go to the console whatever this was set to: mtmd's own logger ignores the level it is given, so its several hundred lines of tensor inventory were unfilterable until TLlama pointed that logger at the same place as everything else. A load that fails, or one TLlama refuses because ggml could not allocate a buffer, logs the same output at `ERROR` regardless of this setting: it is the only account of why, and the model it describes is gone by the time anyone could turn a setting on.
 
+It also governs what llama.cpp says between loads, which is a separate matter. A load is loud on purpose — every figure `/api/ps` reports is parsed out of that output — but llama.cpp goes on talking through the same channel for the life of the process: per-request timings the API already carries in `prompt_eval_duration` and `eval_duration`, slot bookkeeping, and, on a vision model, the rendered prompt of every image request. With `TLLAMA_DEBUG` off, all of that is filtered out once the last load has finished. A server answering several people should not put a transcript of their requests on the console without being asked to.
+
+Errors and warnings from llama.cpp pass the filter whatever this is set to. Only informational and debug output is dropped, so the account of something going wrong mid-request is never the thing that goes missing.
+
+Two Python-level lines are outside this and still appear: `Llama.generate: …` and, on a vision request, one copy of the rendered prompt. Both are printed by `llama-cpp-python` itself under its `verbose` flag, and that flag also switches on a process-wide redirection of file descriptors 1 and 2 to `/dev/null` around parts of the image path. Turning it off would silence those two lines at the price of intermittently blacking out the server's own log, including the account of a failed load in another thread, so it is left alone.
+
 ### `TLLAMA_APP_RELOAD`
 
 Reload the application when its source changes. Default `false`. For development: it restarts the process, so loaded models are dropped.
