@@ -96,9 +96,13 @@ def parse_model_toml(text: str, *, source: str = "<toml>") -> VirtualModelSpec:
     except tomlkit.exceptions.ParseError as e:
         raise TomlModelError(f"{source}: invalid TOML: {e}") from e
 
+    _reject_unknown_sections(document, source)
+
     llm = document.get("llm")
     if llm is None:
         raise TomlModelError(f"{source}: missing required [llm] section.")
+
+    _reject_unknown_keys(llm, "llm", _LLM_KEYS, source)
 
     llm_model = _as_optional_str(llm.get("model"), field_name="llm.model", source=source)
     llm_from = _as_optional_str(llm.get("from"), field_name="llm.from", source=source)
@@ -143,11 +147,13 @@ def parse_model_toml(text: str, *, source: str = "<toml>") -> VirtualModelSpec:
     template_table = document.get("template")
     template = None
     if template_table is not None:
+        _reject_unknown_keys(template_table, "template", _TEMPLATE_KEYS, source)
         template = _as_optional_str(template_table.get("jinja"), field_name="template.jinja", source=source)
 
     system_table = document.get("system")
     system_prompt = None
     if system_table is not None:
+        _reject_unknown_keys(system_table, "system", _SYSTEM_KEYS, source)
         system_prompt = _as_optional_str(system_table.get("prompt"), field_name="system.prompt", source=source)
 
     return VirtualModelSpec(
@@ -163,6 +169,73 @@ def parse_model_toml(text: str, *, source: str = "<toml>") -> VirtualModelSpec:
         system_prompt=system_prompt,
         document=document,
     )
+
+
+# Every section parse_model_toml knows how to read. A name outside this
+# set is refused rather than skipped, including one that is planned but
+# not yet implemented: an unread [lora] means a model running without the
+# adapter its file asked for, which is a wrong answer rather than a
+# missing feature. The cost is that a .toml written for a later TLlama is
+# refused by an earlier one, which is the intended outcome.
+_KNOWN_SECTIONS = frozenset({
+    "llm", "mmproj", "runtime", "sampling", "template", "system",
+})
+
+# The vocabularies parse_model_toml reads out of the three sections that
+# had no check of their own. Each is short because each is asked for by
+# name a few lines apart in the function above.
+_LLM_KEYS = frozenset({"model", "from"})
+_TEMPLATE_KEYS = frozenset({"jinja"})
+_SYSTEM_KEYS = frozenset({"prompt"})
+
+
+def _reject_unknown_sections(document: Any, source: str) -> None:
+    """A section name nothing reads loses everything written under it.
+
+    [mmproj], [runtime] and [sampling] each refuse a key they will not
+    read. None of them can say anything about the name above it, so
+    [smapling] parsed as valid TOML, was never looked at, and left
+    sampling empty -- the file appearing to have set five values that
+    reached nothing. That is the worse of the two mistakes: a misspelt
+    key loses one setting, a misspelt section loses all of them at once,
+    and neither the load nor the model shows any sign of it.
+
+    Shape is checked here too, and for a sharper reason than tidiness.
+    [[runtime]] is one bracket away from [runtime] and produced an array
+    of tables, which dict() turned into a bare ValueError naming no file
+    -- and get_model_metadata catches ValueError to mean "not a virtual
+    model", so that typo discarded the entire .toml rather than being
+    reported. A key at the top level with no section above it goes the
+    same way: 'model = ...' written above [llm] belongs to nothing.
+    """
+    for name, value in document.items():
+        if name not in _KNOWN_SECTIONS:
+            raise TomlModelError(
+                f"{source}: '{name}' is not a section TLlama reads. "
+                f"The file takes {', '.join(f'[{s}]' for s in sorted(_KNOWN_SECTIONS))}."
+            )
+
+        if not isinstance(value, dict):
+            raise TomlModelError(
+                f"{source}: '{name}' must be a table written as [{name}], "
+                f"not {type(value).__name__.lower()}."
+            )
+
+
+def _reject_unknown_keys(
+    table: Any, section: str, allowed: frozenset, source: str
+) -> None:
+    """The same refusal the other sections make, for a fixed vocabulary.
+
+    Unlike [runtime], whose valid names are read off Llama()'s signature,
+    these three are TLlama's own and short enough to name outright.
+    """
+    for key in table:
+        if key not in allowed:
+            raise TomlModelError(
+                f"{source}: [{section}] '{key}' is not a key TLlama reads. "
+                f"The section takes {', '.join(sorted(allowed))}."
+            )
 
 
 # type_kv is TLlama's shorthand for setting type_k and type_v together; it

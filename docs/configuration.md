@@ -356,6 +356,10 @@ jinja = """
 """
 ```
 
+The six sections above are the whole vocabulary. A name outside them is refused when the file is read, and so is a key inside a section that nothing acts on. That includes a section named in the plans but not yet implemented, `[lora]` among them: a file asking for an adapter and getting none would run and answer, which is a wrong answer rather than a missing feature.
+
+A misspelt section name is the mistake this catches that the per-section checks could not. `[smapling]` is valid TOML and reads as a section of its own, so every value under it used to be loaded and dropped in one go, leaving a file that looked obeyed. Shape counts as well: `[[runtime]]` is one bracket from `[runtime]` and means something else entirely, and a key written above the first section belongs to no section at all.
+
 ### `[llm]` and `[mmproj]`
 
 `model` is a path relative to the repository root, including the category directory. `from` imports a file from outside the repository instead, physically into `TLlama/`, and is rewritten to `model` afterwards. Exactly one of the two.
@@ -430,11 +434,11 @@ Applied identically by `/api/generate`, `/api/chat` and `/v1/chat/completions`, 
 
 ### `[system]`
 
-`prompt` is the system prompt used when the request carries none of its own. A request always wins.
+`prompt` is the system prompt used when the request carries none of its own. A request always wins. It is the section's only key.
 
 ### `[template]`
 
-`jinja` is a chat template overriding the GGUF's own, for text and vision models alike. Rendered by real Jinja2.
+`jinja` is a chat template overriding the GGUF's own, for text and vision models alike. Rendered by real Jinja2. It is the section's only key.
 
 ---
 
