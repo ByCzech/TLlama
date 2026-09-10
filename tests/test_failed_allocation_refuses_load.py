@@ -104,6 +104,35 @@ class TestRefusingTheLoad:
         assert "CUDA0" in str(raised.value)
         assert "4657.81 MiB" in str(raised.value)
 
+    def test_it_names_the_setting_that_always_works(self, manager, monkeypatch):
+        """The others may not apply; this one always does.
+
+        flash_attn may already be on, n_ctx may already be where it is
+        wanted, and warmup only exists for a projector. Fewer layers on
+        the device always leaves it more room, and it is what Ollama
+        reaches for on its own -- it estimates the fit and reduces the
+        offload, which llama.cpp does not do and cannot be asked to. On
+        the measured card Ollama loaded the same model at 25% CPU where
+        this refused, and the difference is one setting the message did
+        not mention.
+        """
+        monkeypatch.setattr(
+            "tllama.backend.load_llama_with_captured_stats",
+            lambda *args, **kwargs: (
+                object(),
+                parse_llama_verbose_load_log(RESERVE_FAILED),
+                RESERVE_FAILED,
+            ),
+        )
+        monkeypatch.setattr(
+            manager, "_build_llama_load_kwargs", lambda *args, **kwargs: {}
+        )
+
+        with pytest.raises(RuntimeError) as raised:
+            manager._load_model_sync("Local/model.gguf", 2048)
+
+        assert "n_gpu_layers" in str(raised.value)
+
     def test_a_healthy_load_is_not_refused(self, manager, monkeypatch):
         sentinel = object()
         monkeypatch.setattr(

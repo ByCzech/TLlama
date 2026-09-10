@@ -860,8 +860,9 @@ class ModelManager:
                 f"{worst['backend']} while loading this model"
                 + (f" (and {len(failed) - 1} more)" if len(failed) > 1 else "")
                 + ". The model would load but crash on first use. Leave the "
-                "device more room: enable flash_attn, lower n_ctx, or, for a "
-                "projector, set warmup = false in [mmproj]."
+                "device more room: lower n_gpu_layers in [runtime] to compute "
+                "some layers on the CPU, lower n_ctx, enable flash_attn, or, "
+                "for a projector, set warmup = false in [mmproj]."
             )
 
         _apply_template_override_to_chat_handler(llm, virtual_spec)

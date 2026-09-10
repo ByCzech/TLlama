@@ -212,6 +212,8 @@ Values are converted according to the declared type: whole numbers for `int`, `1
 
 The table is that signature as of `llama-cpp-python` 0.3.35. Descriptions are TLlama's summary; `llama.cpp` is the authority on what each does.
 
+`n_gpu_layers` is worth knowing about before you need it. TLlama passes `-1`, so every layer goes to the device and the KV cache follows it there. llama.cpp has no view on whether that fits: it asks for the memory and finds out. Where the driver refuses outright the load is refused too, because a model whose buffers failed to reserve crashes on first use. Lowering `n_gpu_layers` computes some layers on the CPU instead, which is slower but loads -- it is the same trade Ollama makes for you by estimating the fit and reducing the offload on its own. Nothing in TLlama does that yet.
+
 | Parameter | Type | `Llama()` default | Notes |
 |---|---|---:|---|
 | `n_gpu_layers` | int | `0` | Layers offloaded to GPU, `-1` for all. **TLlama passes `-1`** unless overridden |
