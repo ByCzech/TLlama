@@ -142,6 +142,8 @@ A request carrying an `Origin` header must send `Content-Type: application/json`
 
 Debug logging. Default `false`. Sets TLlama's own log level and uvicorn's to `debug`.
 
+With it on, everything llama.cpp writes while loading a model is logged too -- around two thousand lines per load, which is why it is off by default. A load that fails, or one TLlama refuses because ggml could not allocate a buffer, logs the same output at `ERROR` regardless of this setting: it is the only account of why, and the model it describes is gone by the time anyone could turn a setting on.
+
 ### `TLLAMA_APP_RELOAD`
 
 Reload the application when its source changes. Default `false`. For development: it restarts the process, so loaded models are dropped.

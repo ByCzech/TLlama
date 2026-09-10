@@ -11,6 +11,8 @@ name in the middle is filled in by ggml_backend_buft_name(), so one
 pattern serves every backend.
 """
 
+import logging
+
 import pytest
 
 from tllama.helpers.llama_stats import parse_llama_verbose_load_log
@@ -150,6 +152,31 @@ class TestRefusingTheLoad:
         llm, _, _ = manager._load_model_sync("Local/model.gguf", 2048)
 
         assert llm is sentinel
+
+    def test_the_log_behind_the_refusal_is_shown(self, manager, monkeypatch, caplog):
+        """The load worked, so its output went to DEBUG with every other.
+
+        This one is not routine: the model is about to be discarded and
+        those lines are why. They should not need a setting turned on
+        after the fact, when the load is gone.
+        """
+        monkeypatch.setattr(
+            "tllama.backend.load_llama_with_captured_stats",
+            lambda *args, **kwargs: (
+                object(),
+                parse_llama_verbose_load_log(RESERVE_FAILED),
+                RESERVE_FAILED,
+            ),
+        )
+        monkeypatch.setattr(
+            manager, "_build_llama_load_kwargs", lambda *args, **kwargs: {}
+        )
+
+        with caplog.at_level(logging.ERROR, logger="tllama.backend"):
+            with pytest.raises(RuntimeError):
+                manager._load_model_sync("Local/model.gguf", 2048)
+
+        assert "failed to allocate" in caplog.text
 
     def test_the_largest_failure_is_the_one_named(self, manager, monkeypatch):
         # Several can be reported for one load. Naming the biggest gives

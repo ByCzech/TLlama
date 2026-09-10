@@ -853,6 +853,15 @@ class ModelManager:
             del llm
             gc.collect()
 
+            # It loaded, so the output went to DEBUG with every other
+            # routine load. This one is not routine: the reason is in
+            # those lines and the model is about to be thrown away.
+            logger.error(
+                "Refusing a model whose buffers ggml could not allocate. "
+                "llama.cpp said:\n%s",
+                log_text,
+            )
+
             worst = max(failed, key=lambda item: item["bytes"])
             raise RuntimeError(
                 "ggml could not allocate a "

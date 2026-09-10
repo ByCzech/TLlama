@@ -1,6 +1,9 @@
 import io
+import logging
 import re
 import contextlib
+
+logger = logging.getLogger(__name__)
 
 # llama.cpp prints whatever the buffer type calls itself, and that set is
 # open: ggml/src has a dozen backends and each names its own buffers.
@@ -305,12 +308,36 @@ def load_llama_with_captured_stats(llama_cls, after_load=None, **kwargs):
     model and reports it the same way llama.cpp does -- initialising a
     projector, for one -- so that those buffers land in the same reading
     rather than being written to a stderr nobody is watching.
+
+    The capture is total: redirect_stderr takes everything llama.cpp says
+    during a load, so none of it reaches the server's own stderr. That is
+    fine while the load succeeds and the numbers are parsed out of it, and
+    it is not fine when the load throws, because the text is then the only
+    account of why. It used to be read after the with block and so was
+    dropped on exactly that path, leaving a caller with
+    "Failed to create llama_context" -- a constant string that says the
+    same thing for a card that ran out of memory and for a quantised V
+    cache asked for without flash attention.
+
+    So it is logged either way. At DEBUG when the load worked, which keeps
+    two thousand routine lines out of a default log while leaving them one
+    setting away; at ERROR when it did not, because a failed load is rare
+    and is the moment to have everything.
     """
     stderr_capture = io.StringIO()
-    with contextlib.redirect_stderr(stderr_capture):
-        llm = llama_cls(**kwargs)
-        if after_load is not None:
-            after_load(llm)
+    try:
+        with contextlib.redirect_stderr(stderr_capture):
+            llm = llama_cls(**kwargs)
+            if after_load is not None:
+                after_load(llm)
+    except BaseException:
+        logger.error(
+            "Model load failed. llama.cpp said:\n%s",
+            stderr_capture.getvalue() or "(nothing was captured)",
+        )
+        raise
+
     log_text = stderr_capture.getvalue()
+    logger.debug("llama.cpp load output:\n%s", log_text)
     stats = parse_llama_verbose_load_log(log_text)
     return llm, stats, log_text
