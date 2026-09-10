@@ -145,6 +145,8 @@ They can only be told apart when every layer is on the device, because then noth
 
 Everything else on the host side counts against `size_vram`: weights, KV cache and a projector alike. A projector that did not fit on the device is computed on the CPU, and that is the kind of thing this figure exists to show.
 
+A vision model's figures include its projector -- both the weights and the compute buffer reserved for them, several hundred MiB between them on a typical model. mtmd logs through a channel of its own, so until TLlama pointed that channel at the same place as everything else, none of it was counted and `/api/ps` described a vision model as though it had no projector at all.
+
 The accounting is done once, while the model is loading, out of the whole load log. `/api/ps` reads that result back rather than working it out again, so what a client sees is what was measured at load time.
 
 It is also capped at what the devices hold. A driver may accept an allocation larger than the card and keep the remainder in host memory without saying so anywhere in the load log, and TLlama asks the devices for their capacity so that `size_vram` does not repeat the claim. The model still loads: trading speed for a larger context or a larger model is a decision to leave to whoever asked for it.

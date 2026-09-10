@@ -5,6 +5,7 @@ import logging
 import threading
 from contextlib import asynccontextmanager
 import gc
+import ctypes
 import shutil
 
 from dataclasses import dataclass
@@ -209,6 +210,66 @@ def model_has_projector(llm) -> bool:
     return isinstance(getattr(llm, "chat_handler", None), MTMDChatHandler)
 
 
+def _route_projector_output_to_llama_cpps_logger() -> None:
+    """Send clip.cpp's output where llama.cpp's already goes.
+
+    mtmd keeps its own logger, separate from llama.cpp's and from ggml's,
+    and its default writes straight to the C-level stderr:
+
+        // tools/mtmd/clip-impl.h
+        static void clip_log_callback_default(...) {
+            (void) level; fputs(text, stderr); fflush(stderr);
+        }
+
+    llama_log_set() does not reach it -- different state, different
+    symbol -- so contextlib.redirect_stderr, which swaps the Python
+    object, never sees a line of it. Everything the projector reports
+    about itself went past the capture and out to the console: measured
+    on a vision load, 613.14 MiB of weights and a 248.10 MiB compute
+    buffer that /api/ps therefore reported as nothing at all.
+
+    mtmd_log_set() is the seam, an MTMD_API entry point already bound in
+    llama-cpp-python, and it takes the same callback type. Handing it
+    llama-cpp-python's own means the projector's output is filtered and
+    delivered exactly like the model's, and the existing capture picks it
+    up with no further change.
+
+    Two things follow from clip's default ignoring the level argument.
+    One, it printed its whole tensor inventory -- 334 lines on the
+    measured model -- at every load, with no way to turn it off; that now
+    goes through the same level filter as everything else. Two, this is
+    a report about memory rather than a part of loading, so failing to
+    set it says so and leaves the load alone.
+    """
+    try:
+        from llama_cpp import mtmd_cpp
+        from llama_cpp._logger import llama_log_callback
+    except ImportError as exc:
+        logger.error(
+            "Cannot reach mtmd's logging hook (%s). The projector's weights "
+            "and compute buffers will be missing from /api/ps, and its own "
+            "output will bypass TLLAMA_DEBUG.", exc,
+        )
+        return
+
+    set_log = getattr(mtmd_cpp, "mtmd_log_set", None)
+    if set_log is None:
+        logger.error(
+            "The installed llama-cpp-python does not bind mtmd_log_set. The "
+            "projector's weights and compute buffers will be missing from "
+            "/api/ps, and its own output will bypass TLLAMA_DEBUG."
+        )
+        return
+
+    try:
+        set_log(llama_log_callback, ctypes.c_void_p(0))
+    except Exception as exc:
+        logger.error(
+            "mtmd_log_set failed (%s). The projector's weights and compute "
+            "buffers will be missing from /api/ps.", exc,
+        )
+
+
 def _initialise_projector(llm) -> None:
     """Bring a projector into memory now rather than at the first image.
 
@@ -234,6 +295,11 @@ def _initialise_projector(llm) -> None:
     initialise = getattr(handler, "_init_mtmd_context", None)
     if initialise is None:
         return
+
+    # Before, not after: everything worth reading is printed during the
+    # call below, and mtmd restores its own callback around some
+    # operations, so this is set each time rather than once at startup.
+    _route_projector_output_to_llama_cpps_logger()
 
     initialise(llm)
 
