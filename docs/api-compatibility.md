@@ -104,6 +104,10 @@ curl -s http://127.0.0.1:54800/api/generate \
 
 Streaming responses are supported where implemented.
 
+Both this and `/api/chat` report timings the way Ollama does: `total_duration` for the whole request, `load_duration` for fetching the model, and `prompt_eval_duration` and `eval_duration` for the two halves of the work, all in nanoseconds. A client divides the counts by them -- it is where `ollama run --verbose` gets its tokens per second.
+
+The two evaluation figures come from llama.cpp's own counters for the context, zeroed before the request so they describe that request alone. Where the counters cannot be read they are sent as `null` rather than as a number that would be quietly wrong. `load_duration` is measured whether or not a load actually happened: a resident model still costs a lookup, and reporting that is what Ollama does.
+
 ---
 
 ### `/api/chat`

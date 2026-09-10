@@ -204,6 +204,50 @@ def counted_for_request(was_reset: bool, llm: Any) -> tuple[Optional[int], Optio
     return counters
 
 
+def eval_durations(llm: Any) -> Optional[tuple[float, float]]:
+    """Milliseconds a context spent evaluating, as (prompt, generation).
+
+    The same struct eval_counters() reads, two more of its fields. These
+    are what llama.cpp prints as "prompt eval time" and "eval time", and
+    like the counts they run from the last reset rather than over the
+    life of the context.
+    """
+    data = _perf_context_data(llm)
+    if data is None:
+        return None
+
+    try:
+        return float(data.t_p_eval_ms), float(data.t_eval_ms)
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
+def timed_for_request(was_reset: bool, llm: Any) -> tuple[Optional[int], Optional[int]]:
+    """Nanoseconds spent on one request, as (prompt_eval, eval).
+
+    Nanoseconds because that is the unit the Ollama reply uses for every
+    other duration in it. A pair of None unless the counters were zeroed
+    beforehand, for the same reason counted_for_request() gives: without
+    that the reading covers an unknown number of earlier requests, and a
+    figure a client divides into a tokens-per-second rate is worse wrong
+    than absent.
+
+    t_load_ms is deliberately not read here. llama_context::perf_reset()
+    zeroes the two evaluation timers and leaves that one alone, so it
+    holds the time the model took to load and would report it again on
+    every request made against that context for as long as it lives.
+    """
+    if not was_reset:
+        return None, None
+
+    durations = eval_durations(llm)
+    if durations is None:
+        return None, None
+
+    prompt_ms, eval_ms = durations
+    return int(prompt_ms * 1_000_000), int(eval_ms * 1_000_000)
+
+
 class _ggml_backend_dev_caps(ctypes.Structure):
     _fields_ = [
         ("async_", ctypes.c_bool),

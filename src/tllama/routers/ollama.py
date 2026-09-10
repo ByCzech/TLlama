@@ -17,7 +17,7 @@ from starlette.concurrency import iterate_in_threadpool
 from llama_cpp import LlamaGrammar
 from tllama.schemas.ollama import OllamaChatRequest, OllamaGenerateRequest
 from tllama.backend import model_manager, model_has_projector, HF_LOOKUP_MISSING, PullProgress
-from tllama._ext import counted_for_request, reset_eval_counters
+from tllama._ext import counted_for_request, reset_eval_counters, timed_for_request
 from tllama.lib.llama_wrap import create_chat_completion_ex
 
 from tllama.errors import ollama_stream_error_line
@@ -143,6 +143,13 @@ async def ollama_chat(request: OllamaChatRequest):
             "done_reason": "load",
         }
 
+    # Before the load, not after it. Ollama's total_duration covers the
+    # whole request and its load_duration is a part of it, so a client
+    # adding the pieces up expects them to fit inside the total. Starting
+    # the clock afterwards left a cold start outside every figure the
+    # reply carried.
+    start_time = time.time_ns()
+
     try:
         llm = await model_manager.get_model(
             request.model,
@@ -153,6 +160,11 @@ async def ollama_chat(request: OllamaChatRequest):
         raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Error loading model: {str(e)}")
+
+    # Measured whether or not a load happened. A resident model still
+    # costs a lookup, and Ollama reports that cost rather than a zero --
+    # 2.2 ms in a measured comparison against a model already in memory.
+    load_duration = time.time_ns() - start_time
 
     metadata_info = await model_manager.get_model_metadata(request.model) or {}
     reasoning_format = detect_reasoning_format(request.model, metadata_info)
@@ -183,8 +195,6 @@ async def ollama_chat(request: OllamaChatRequest):
         gen_params.update(build_chat_response_format_kwargs(getattr(request, "format", None)))
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid format schema: {e}")
-
-    start_time = time.time_ns()
 
     if request.stream:
         def chat_stream_generator():
@@ -286,6 +296,7 @@ async def ollama_chat(request: OllamaChatRequest):
                 # It does not today: llama.cpp cannot remove part of a KV cache
                 # entry, so it re-evaluates the whole prompt and the two agree.
                 counted_prompt, counted_eval = counted_for_request(counters_reset, llm)
+                timed_prompt, timed_eval = timed_for_request(counters_reset, llm)
 
                 yield f"{json.dumps({
                     'model': request.model,
@@ -298,6 +309,9 @@ async def ollama_chat(request: OllamaChatRequest):
                     'done': True,
                     'done_reason': finish_reason,
                     'total_duration': end_time - start_time,
+                    'load_duration': load_duration,
+                    'prompt_eval_duration': timed_prompt,
+                    'eval_duration': timed_eval,
                     'prompt_eval_count': counted_prompt,
                     'eval_count': eval_count if eval_count is not None else counted_eval,
                 })}\n"
@@ -331,6 +345,7 @@ async def ollama_chat(request: OllamaChatRequest):
                 **kwargs_ex
             )
             counted_prompt, counted_eval = counted_for_request(counters_reset, llm)
+            timed_prompt, timed_eval = timed_for_request(counters_reset, llm)
     except HTTPException:
         raise
     except Exception as e:
@@ -376,6 +391,9 @@ async def ollama_chat(request: OllamaChatRequest):
         "done": True,
         "done_reason": choice.get("finish_reason"),
         "total_duration": end_time - start_time,
+        "load_duration": load_duration,
+        "prompt_eval_duration": timed_prompt,
+        "eval_duration": timed_eval,
         # The context's own counters first, usage second. For a text
         # request the two agree; for one carrying an image they do not,
         # and usage is the one that is wrong. MTMDChatHandler evaluates
@@ -465,6 +483,13 @@ async def ollama_generate(request: OllamaGenerateRequest):
             "done_reason": "load"
         }
 
+    # Before the load, not after it. Ollama's total_duration covers the
+    # whole request and its load_duration is a part of it, so a client
+    # adding the pieces up expects them to fit inside the total. Starting
+    # the clock afterwards left a cold start outside every figure the
+    # reply carried.
+    start_time = time.time_ns()
+
     try:
         llm = await model_manager.get_model(
             request.model,
@@ -475,6 +500,11 @@ async def ollama_generate(request: OllamaGenerateRequest):
         raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Error loading model: {str(e)}")
+
+    # Measured whether or not a load happened. A resident model still
+    # costs a lookup, and Ollama reports that cost rather than a zero --
+    # 2.2 ms in a measured comparison against a model already in memory.
+    load_duration = time.time_ns() - start_time
 
     metadata_info = await model_manager.get_model_metadata(request.model) or {}
 
@@ -507,8 +537,6 @@ async def ollama_generate(request: OllamaGenerateRequest):
     reasoning_format = detect_reasoning_format(request.model, metadata_info)
 
     prompt_eval_count = estimate_completion_prompt_eval_count(llm, prompt_for_completion)
-
-    start_time = time.time_ns()
 
     if request.stream:
         def generate_stream():
@@ -582,6 +610,7 @@ async def ollama_generate(request: OllamaGenerateRequest):
                 # It does not today: llama.cpp cannot remove part of a KV cache
                 # entry, so it re-evaluates the whole prompt and the two agree.
                 counted_prompt, counted_eval = counted_for_request(counters_reset, llm)
+                timed_prompt, timed_eval = timed_for_request(counters_reset, llm)
 
                 yield f"{json.dumps({
                     'model': request.model,
@@ -589,6 +618,9 @@ async def ollama_generate(request: OllamaGenerateRequest):
                     'done': True,
                     'done_reason': finish_reason,
                     'total_duration': end_time - start_time,
+                    'load_duration': load_duration,
+                    'prompt_eval_duration': timed_prompt,
+                    'eval_duration': timed_eval,
                     'prompt_eval_count': counted_prompt if counted_prompt is not None else prompt_eval_count,
                     'eval_count': eval_count if eval_count is not None else counted_eval,
                     'context': []
@@ -609,6 +641,12 @@ async def ollama_generate(request: OllamaGenerateRequest):
 
         return StreamingResponse(guarded_generate_stream(), media_type="application/x-ndjson")
 
+    # The only inference path that never zeroed these. Its token counts
+    # come from usage and are left that way; the timings have nowhere
+    # else to come from, and without the reset they would cover every
+    # earlier request this context served.
+    counters_reset = reset_eval_counters(llm)
+
     try:
         async with model_manager.acquire_inference_slot(request.model):
             response = await asyncio.to_thread(
@@ -619,6 +657,7 @@ async def ollama_generate(request: OllamaGenerateRequest):
                 stop=stop_tokens,
                 **generation_kwargs
             )
+            timed_prompt, timed_eval = timed_for_request(counters_reset, llm)
     except HTTPException:
         raise
     except Exception as e:
@@ -644,6 +683,9 @@ async def ollama_generate(request: OllamaGenerateRequest):
         "done": True,
         "done_reason": done_reason,
         "total_duration": end_time - start_time,
+        "load_duration": load_duration,
+        "prompt_eval_duration": timed_prompt,
+        "eval_duration": timed_eval,
         "prompt_eval_count": response.get("usage", {}).get("prompt_tokens", prompt_eval_count),
         "eval_count": response.get("usage", {}).get("completion_tokens"),
         "context": []
