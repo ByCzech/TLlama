@@ -16,6 +16,7 @@ from llama_cpp.llama_chat_format import Jinja2ChatFormatter, MTMDChatHandler
 from typing import Dict, Optional, Any, List
 from datetime import datetime, timezone, timedelta
 
+from tllama._ext import device_memory_totals
 from tllama.config import BackendConfig, ConfigError, load_backend_config_from_env
 from tllama.helpers.common import normalize_keep_alive
 from tllama.helpers.llama_stats import load_llama_with_captured_stats
@@ -290,6 +291,48 @@ def _apply_template_override_to_chat_handler(llm, virtual_spec: Optional[Virtual
         bos_token=bos_token,
         stop_token_ids=[eos_id] if eos_id != -1 else None,
     ).to_chat_handler()
+
+
+def _device_residency(stats: Dict[str, Any]) -> Dict[str, Any]:
+    """What the devices can actually hold of what they were asked to.
+
+    A driver may accept an allocation larger than the card and put the
+    remainder in host memory. amdgpu does: measured, a load claiming
+    26334.90 MiB on a 16368.00 MiB card succeeded and every line of the
+    log named that card. A wider context on the same card reached
+    31454.90 MiB and still loaded. Nothing written down distinguishes it from a
+    load that fitted, so the capacity has to be asked of the device.
+
+    Only buffers named after a device count towards its claim; a host
+    buffer carries a device's name but was never going to it.
+
+    Returns the ceiling on how much of this model can be resident on
+    devices at all, and which devices were asked for more than they have.
+    Empty when the devices cannot be read, and then nothing changes.
+    """
+    totals = device_memory_totals()
+    if not totals:
+        return {}
+
+    capacity_mib = 0.0
+    overflow_mib = {}
+
+    for backend, kinds in (stats.get("buffers") or {}).items():
+        capacity_bytes = totals.get(backend)
+        if capacity_bytes is None:
+            continue
+
+        device_capacity_mib = capacity_bytes / 1024 / 1024
+        capacity_mib += device_capacity_mib
+
+        excess_mib = sum(kinds.values()) - device_capacity_mib
+        if excess_mib > 0:
+            overflow_mib[backend] = excess_mib
+
+    if not capacity_mib:
+        return {}
+
+    return {"capacity_mib": capacity_mib, "overflow_mib": overflow_mib}
 
 
 class ModelManager:
@@ -672,6 +715,18 @@ class ModelManager:
 
         ps_size_vram_mib = max(ps_size_mib - cpu_resident_mib, 0.0)
 
+        # A device cannot hold more than it has. When the driver took an
+        # allocation larger than the card and put the rest in host RAM
+        # without saying so, this is the only thing that knows. Capping
+        # rather than subtracting the excess, because the excess is
+        # measured against everything the device was asked for while this
+        # figure counts only part of it -- taking one from the other
+        # would understate what is really resident.
+        residency = load_stats.get("device_residency") or {}
+        capacity_mib = residency.get("capacity_mib")
+        if capacity_mib is not None:
+            ps_size_vram_mib = min(ps_size_vram_mib, self._to_float_mib(capacity_mib))
+
         # Full debug/runtime footprint
         gpu_total_runtime_mib = (
             gpu_model_mib +
@@ -809,6 +864,15 @@ class ModelManager:
             )
 
         _apply_template_override_to_chat_handler(llm, virtual_spec)
+
+        stats["device_residency"] = _device_residency(stats)
+
+        if stats["device_residency"].get("overflow_mib") and stats.get("processor") == "GPU":
+            # Every layer is computed on the device, so the layer rule says
+            # GPU and is right about the work. But part of what the device
+            # is reading sits in host RAM, size_vram is about to say so,
+            # and two numbers disagreeing is worse than either alone.
+            stats["processor"] = "GPU+CPU"
 
         return llm, stats, log_text
 

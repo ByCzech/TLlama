@@ -135,6 +135,8 @@ Returns currently loaded models.
 
 `size_vram` counts the model as resident on the device unless a layer was actually placed on the CPU. llama.cpp names the device of every layer in its load log, for the weights and again for the KV cache, and that is what this follows. Buffer sizes alone would not do: an input tensor whose buffer type list holds no device at all is left in a CPU buffer even when everything was offloaded, and is announced under the same name as half a model that really is on the CPU. Clients read `size_vram` short of `size` as a partly resident model, which in that case it is not.
 
+It is also capped at what the devices hold. A driver may accept an allocation larger than the card and keep the remainder in host memory without saying so anywhere in the load log, and TLlama asks the devices for their capacity so that `size_vram` does not repeat the claim. The model still loads: trading speed for a larger context or a larger model is a decision to leave to whoever asked for it.
+
 Example:
 
 ```bash
