@@ -63,6 +63,28 @@ PROJECTOR_SIZE = re.compile(
 )
 
 
+# Which device each layer was put on, said twice: once for the weights
+# and once for the KV cache, which llama.cpp places per layer according
+# to where that layer's weights went (llama-kv-cache.cpp).
+#
+# This is the only thing in the log that separates "a few hundred MiB of
+# weights that were never going to a device" from "half the model is on
+# the CPU". Both are announced as a CPU_Mapped model buffer and the
+# buffer names cannot tell them apart -- measured, 397.85 MiB against
+# 6782.69 MiB under the same name.
+#
+# A KV line reads either "dev = <name>" or "filtered", the latter for a
+# layer that has no KV cache at all; only the first form matches here.
+LAYER_DEVICE = re.compile(
+    rf"^load_tensors: layer\s+\d+ assigned to device ({BACKEND_PREFIX}),",
+    re.MULTILINE,
+)
+
+KV_LAYER_DEVICE = re.compile(
+    rf"^llama_kv_cache: layer\s+\d+: dev = ({BACKEND_PREFIX})\s*$",
+    re.MULTILINE,
+)
+
 # ggml reports an allocation it could not make and then, in some paths,
 # carries on. Both lines come from ggml/src/ggml-alloc.c and are prefixed
 # with __func__, so the function name is what distinguishes them from any
@@ -108,6 +130,11 @@ def parse_llama_verbose_load_log(log_text: str) -> dict:
         "gpu_host_mib": 0.0,
         "processor": "100% CPU",
         "failed_allocations": [],
+        "layer_devices_seen": False,
+        "cpu_layers": 0,
+        "gpu_layers": 0,
+        "cpu_kv_layers": 0,
+        "gpu_kv_layers": 0,
     }
 
     result["failed_allocations"] = [
@@ -190,12 +217,35 @@ def parse_llama_verbose_load_log(log_text: str) -> dict:
         result["gpu_rs_mib"]
     )
 
-    gpu_loaded_mib = result["gpu_model_mib"] + result["gpu_kv_mib"]
-    cpu_loaded_mib = result["cpu_model_mib"] + result["cpu_kv_mib"]
+    for backend in LAYER_DEVICE.findall(log_text):
+        key = "cpu_layers" if is_true_cpu_backend(backend) else "gpu_layers"
+        result[key] += 1
 
-    if gpu_loaded_mib > 0 and cpu_loaded_mib == 0:
+    for backend in KV_LAYER_DEVICE.findall(log_text):
+        key = "cpu_kv_layers" if is_true_cpu_backend(backend) else "gpu_kv_layers"
+        result[key] += 1
+
+    result["layer_devices_seen"] = bool(
+        result["cpu_layers"] or result["gpu_layers"]
+    )
+
+    if result["layer_devices_seen"]:
+        # What the split is asking is which processor does the work, and
+        # llama.cpp answers that per layer. Buffer sizes cannot: a tensor
+        # that no device was ever going to take sits in the same CPU
+        # bucket as a layer that will be computed there.
+        on_gpu = result["gpu_layers"] + result["gpu_kv_layers"] > 0
+        on_cpu = result["cpu_layers"] + result["cpu_kv_layers"] > 0
+    else:
+        # A log from a build or a version that does not say where its
+        # layers went. Falling back to buffer sizes is worse, but it is
+        # the only thing left.
+        on_gpu = result["gpu_model_mib"] + result["gpu_kv_mib"] > 0
+        on_cpu = result["cpu_model_mib"] + result["cpu_kv_mib"] > 0
+
+    if on_gpu and not on_cpu:
         result["processor"] = "GPU"
-    elif gpu_loaded_mib > 0 and cpu_loaded_mib > 0:
+    elif on_gpu and on_cpu:
         result["processor"] = "GPU+CPU"
     else:
         result["processor"] = "CPU"

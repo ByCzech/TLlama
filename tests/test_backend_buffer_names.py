@@ -32,10 +32,16 @@ class TestHostResidentWeightsAreSeen:
         assert stats["cpu_model_mib"] == 397.85
         assert stats["buffers"]["CPU_Mapped"]["model"] == 397.85
 
-    def test_they_change_the_reported_processor_split(self):
-        """Weights in RAM are weights in RAM, however many layers offloaded."""
+    def test_they_change_the_split_when_nothing_says_where_layers_went(self):
+        """The fallback, for a log that never names a layer's device.
+
+        This used to be the whole rule, on the grounds that weights in RAM
+        are weights in RAM however many layers were offloaded. They are
+        not the same thing: see test_layer_placement.py.
+        """
         stats = parse_llama_verbose_load_log(FULLY_OFFLOADED)
 
+        assert stats["layer_devices_seen"] is False
         assert stats["processor"] == "GPU+CPU"
 
     def test_the_gpu_side_is_unaffected(self):

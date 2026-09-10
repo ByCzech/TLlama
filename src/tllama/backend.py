@@ -653,7 +653,24 @@ class ModelManager:
 
         # For Ollama-like PROCESSOR split, only true CPU-loaded model/KV memory
         # should count as CPU. GPU host/helper buffers are still GPU-associated.
-        ps_size_vram_mib = max(ps_size_mib - cpu_loaded_mib, 0.0)
+        #
+        # And only when a layer is actually there. With every layer on the
+        # device, whatever is left in a CPU buffer is something no device
+        # was going to take -- an input tensor whose buffer type list does
+        # not contain the device at all -- so subtracting it says the model
+        # is partly resident in RAM when nothing about the work moved.
+        # A client seeing size_vram short of size draws exactly that
+        # conclusion, and it is the wrong one.
+        if load_stats.get("layer_devices_seen"):
+            cpu_resident_mib = (
+                cpu_loaded_mib
+                if (load_stats.get("cpu_layers") or load_stats.get("cpu_kv_layers"))
+                else 0.0
+            )
+        else:
+            cpu_resident_mib = cpu_loaded_mib
+
+        ps_size_vram_mib = max(ps_size_mib - cpu_resident_mib, 0.0)
 
         # Full debug/runtime footprint
         gpu_total_runtime_mib = (

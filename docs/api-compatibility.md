@@ -133,6 +133,8 @@ curl -s http://127.0.0.1:54800/api/chat \
 
 Returns currently loaded models.
 
+`size_vram` counts the model as resident on the device unless a layer was actually placed on the CPU. llama.cpp names the device of every layer in its load log, for the weights and again for the KV cache, and that is what this follows. Buffer sizes alone would not do: an input tensor whose buffer type list holds no device at all is left in a CPU buffer even when everything was offloaded, and is announced under the same name as half a model that really is on the CPU. Clients read `size_vram` short of `size` as a partly resident model, which in that case it is not.
+
 Example:
 
 ```bash
