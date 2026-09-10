@@ -381,6 +381,8 @@ What the reservation costs depends almost entirely on `flash_attn`. With it enab
 
 `warmup = false` skips all of it. The graph is then built when an image first arrives, at whatever size that image needs.
 
+A reservation that fails is not survivable, so the load is refused rather than allowed to look healthy: measured on a 16 GB card, the model loaded, reported success, and the first request carrying an image killed the process. The refusal names the buffer and its size.
+
 Several models may point at one physical file; the weights are not copied.
 
 ### `[runtime]`

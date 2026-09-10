@@ -63,6 +63,22 @@ PROJECTOR_SIZE = re.compile(
 )
 
 
+# ggml reports an allocation it could not make and then, in some paths,
+# carries on. Both lines come from ggml/src/ggml-alloc.c and are prefixed
+# with __func__, so the function name is what distinguishes them from any
+# other line; the buffer type name is filled in by
+# ggml_backend_buft_name(), which is why one pattern covers every backend
+# rather than only the one this was first seen on.
+#
+#   ggml_gallocr_reserve_n_impl  reserving a compute graph
+#   alloc_tensor_range           allocating weights
+FAILED_ALLOCATION = re.compile(
+    rf"^(ggml_gallocr_reserve_n_impl|alloc_tensor_range): "
+    rf"failed to allocate ({BACKEND_PREFIX}) buffer of size (\d+)",
+    re.MULTILINE,
+)
+
+
 def parse_llama_verbose_load_log(log_text: str) -> dict:
     result = {
         "raw_log": log_text,
@@ -91,7 +107,13 @@ def parse_llama_verbose_load_log(log_text: str) -> dict:
         "gpu_host_rs_mib": 0.0,
         "gpu_host_mib": 0.0,
         "processor": "100% CPU",
+        "failed_allocations": [],
     }
+
+    result["failed_allocations"] = [
+        {"func": func, "backend": backend, "bytes": int(size)}
+        for func, backend, size in FAILED_ALLOCATION.findall(log_text)
+    ]
 
     m = LOAD_PATTERNS["offloaded_layers"].search(log_text)
     if m:
