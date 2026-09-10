@@ -25,6 +25,18 @@ def all_buckets(value=0.0, **overrides):
     return stats
 
 
+def registered_entry(manager, **overrides):
+    """An active_models entry, built the way registration builds one.
+
+    The accounting runs once, over the whole load log, and its result is
+    stored; /api/ps reads that back. A bare bucket dict is not an entry,
+    and handing one to _with_runtime_totals only used to work because it
+    did the accounting a second time.
+    """
+    buckets = all_buckets(**overrides)
+    return {**buckets, **manager._build_memory_accounting(buckets)}
+
+
 def test_resident_memory_is_model_plus_kv(manager):
     accounting = manager._build_memory_accounting(
         all_buckets(gpu_model_mib=100.0, gpu_kv_mib=20.0, cpu_model_mib=8.0, cpu_kv_mib=2.0)
@@ -77,7 +89,11 @@ def test_runtime_free_input_produces_a_complete_answer(manager):
 
 
 def test_runtime_totals_preserve_the_entry_they_decorate(manager):
-    entry = {"model": "m", "path": "/models/m.gguf", **all_buckets(gpu_model_mib=64.0)}
+    entry = {
+        "model": "m",
+        "path": "/models/m.gguf",
+        **registered_entry(manager, gpu_model_mib=64.0),
+    }
 
     decorated = manager._with_runtime_totals(entry)
 
@@ -88,7 +104,7 @@ def test_runtime_totals_preserve_the_entry_they_decorate(manager):
 
 def test_runtime_totals_expose_the_names_an_ollama_client_reads(manager):
     decorated = manager._with_runtime_totals(
-        all_buckets(gpu_model_mib=100.0, gpu_kv_mib=20.0, cpu_model_mib=10.0)
+        registered_entry(manager, gpu_model_mib=100.0, gpu_kv_mib=20.0, cpu_model_mib=10.0)
     )
 
     assert decorated["size"] == decorated["ps_size_bytes"]
@@ -97,7 +113,9 @@ def test_runtime_totals_expose_the_names_an_ollama_client_reads(manager):
 
 
 def test_byte_fields_follow_their_mib_counterparts(manager):
-    decorated = manager._with_runtime_totals(all_buckets(gpu_model_mib=3.0, gpu_kv_mib=1.0))
+    decorated = manager._with_runtime_totals(
+        registered_entry(manager, gpu_model_mib=3.0, gpu_kv_mib=1.0)
+    )
 
     assert decorated["gpu_loaded_bytes"] == int(4.0 * MIB)
     assert decorated["size"] == int(decorated["ps_size_mib"] * MIB)

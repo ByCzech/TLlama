@@ -139,7 +139,9 @@ Input tensors are left out of both. `token_embd.weight` has no device in its buf
 
 They can only be told apart when every layer is on the device, because then nothing in a host-side model buffer can be a layer. Short of that llama.cpp reports one buffer covering every tensor it moved, without dividing the bytes, and the buffer is counted whole -- the CPU is computing in that case, `size_vram` says so, and the input tensors are a small part of a figure that is already right.
 
-`size_vram` counts the model as resident on the device unless a layer was actually placed on the CPU. llama.cpp names the device of every layer in its load log, for the weights and again for the KV cache, and that is what this follows.
+Everything else on the host side counts against `size_vram`: weights, KV cache and a projector alike. A projector that did not fit on the device is computed on the CPU, and that is the kind of thing this figure exists to show.
+
+The accounting is done once, while the model is loading, out of the whole load log. `/api/ps` reads that result back rather than working it out again, so what a client sees is what was measured at load time.
 
 It is also capped at what the devices hold. A driver may accept an allocation larger than the card and keep the remainder in host memory without saying so anywhere in the load log, and TLlama asks the devices for their capacity so that `size_vram` does not repeat the claim. The model still loads: trading speed for a larger context or a larger model is a decision to leave to whoever asked for it.
 

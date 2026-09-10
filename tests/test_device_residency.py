@@ -19,6 +19,7 @@ from tllama.helpers.llama_stats import parse_llama_verbose_load_log
 
 # Shortened from the run that overflowed. Vulkan1 is the RX 6900 XT.
 OVERFLOWED = """load_tensors: layer   0 assigned to device Vulkan1, is_swa = 0
+load_tensors: offloaded 1/1 layers to GPU
 load_tensors:   CPU_Mapped model buffer size =   397.85 MiB
 load_tensors:      Vulkan1 model buffer size = 12634.81 MiB
 llama_kv_cache: layer   1: dev = Vulkan1
@@ -29,6 +30,7 @@ sched_reserve: Vulkan_Host compute buffer size =  2056.29 MiB
 """
 
 FITTED = """load_tensors: layer   0 assigned to device CUDA0, is_swa = 0
+load_tensors: offloaded 1/1 layers to GPU
 load_tensors:   CPU_Mapped model buffer size =   397.85 MiB
 load_tensors:        CUDA0 model buffer size = 12634.81 MiB
 llama_kv_cache: layer   1: dev = CUDA0

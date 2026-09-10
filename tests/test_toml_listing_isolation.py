@@ -112,6 +112,10 @@ def resident_model_with_a_broken_toml():
         "n_ctx": 4096,
         "expires_at": None,
         "processor": "100% CPU",
+
+        # Registration stores the accounting alongside the rest; /api/ps
+        # reads it rather than working it out again.
+        **model_manager._build_memory_accounting({}),
     }
     try:
         yield "resident"

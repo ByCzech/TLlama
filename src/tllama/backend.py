@@ -694,26 +694,19 @@ class ModelManager:
             gpu_host_output_mib
         )
 
-        # For Ollama-like PROCESSOR split, only true CPU-loaded model/KV memory
-        # should count as CPU. GPU host/helper buffers are still GPU-associated.
+        # For Ollama-like PROCESSOR split, only true CPU-loaded model/KV
+        # memory should count as CPU. GPU host/helper buffers are still
+        # GPU-associated.
         #
-        # And only when a layer is actually there. With every layer on the
-        # device, whatever is left in a CPU buffer is something no device
-        # was going to take -- an input tensor whose buffer type list does
-        # not contain the device at all -- so subtracting it says the model
-        # is partly resident in RAM when nothing about the work moved.
-        # A client seeing size_vram short of size draws exactly that
-        # conclusion, and it is the wrong one.
-        if load_stats.get("layer_devices_seen"):
-            cpu_resident_mib = (
-                cpu_loaded_mib
-                if (load_stats.get("cpu_layers") or load_stats.get("cpu_kv_layers"))
-                else 0.0
-            )
-        else:
-            cpu_resident_mib = cpu_loaded_mib
-
-        ps_size_vram_mib = max(ps_size_mib - cpu_resident_mib, 0.0)
+        # Everything left in these buckets is something a processor
+        # computes with, because the parser keeps input tensors out of
+        # them. This used to ask how many layers went to the CPU and zero
+        # the buckets when none did, which was a way of removing those
+        # same input tensors after the fact -- and it removed a projector
+        # spilled into host RAM along with them, though a projector
+        # computed on the CPU is exactly the kind of work this figure
+        # exists to show.
+        ps_size_vram_mib = max(ps_size_mib - cpu_loaded_mib, 0.0)
 
         # A device cannot hold more than it has. When the driver took an
         # allocation larger than the card and put the rest in host RAM
@@ -781,8 +774,16 @@ class ModelManager:
         Return a copy of loaded model info with:
         - Ollama-like ps fields (size, size_vram, size_ram)
         - debug/runtime totals
+
+        The accounting itself was done once, when the model was
+        registered, out of the whole load log. This reads that result
+        rather than working it out again: nothing about a loaded model's
+        memory changes afterwards, so a second pass could only ever agree
+        -- and it could not, because the entry holds the buckets and not
+        the rest of the log the first pass had. It quietly disagreed for
+        a year, and what a client got was the second answer.
         """
-        item = {**model_info, **self._build_memory_accounting(model_info)}
+        item = dict(model_info)
 
         # Ollama-compatible public fields
         item["size_vram"] = item["ps_size_vram_bytes"]
