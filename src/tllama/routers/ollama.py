@@ -645,10 +645,9 @@ async def ollama_generate(request: OllamaGenerateRequest):
     # come from usage and are left that way; the timings have nowhere
     # else to come from, and without the reset they would cover every
     # earlier request this context served.
-    counters_reset = reset_eval_counters(llm)
-
     try:
         async with model_manager.acquire_inference_slot(request.model):
+            counters_reset = reset_eval_counters(llm)
             response = await asyncio.to_thread(
                 llm.create_completion,
                 prompt=prompt_for_completion,

@@ -219,3 +219,78 @@ class TestWhatTheReplyCarries:
 
         assert reply["prompt_eval_duration"] is None
         assert reply["eval_duration"] is None
+
+
+async def test_waiting_generate_does_not_reset_running_inference(
+    manager, monkeypatch
+):
+    import asyncio
+    import threading
+    from contextlib import asynccontextmanager
+
+    from tllama.routers import ollama as router
+    from tllama.schemas.ollama import OllamaGenerateRequest
+
+    started = asyncio.Event()
+    queued = asyncio.Event()
+    release = threading.Event()
+    loop = asyncio.get_running_loop()
+    events = []
+
+    class BlockingLlm(FakeLlm):
+        def create_completion(self, *, prompt, **kwargs):
+            events.append(f"{prompt}:start")
+            if prompt == "first":
+                loop.call_soon_threadsafe(started.set)
+                assert release.wait(timeout=5)
+            events.append(f"{prompt}:end")
+            return super().create_completion()
+
+    llm = BlockingLlm()
+
+    async def get_model(*args, **kwargs):
+        return llm
+
+    async def metadata(*args, **kwargs):
+        return {}
+
+    original_slot = manager.acquire_inference_slot
+
+    @asynccontextmanager
+    async def tracked_slot(name):
+        if started.is_set():
+            queued.set()
+        async with original_slot(name):
+            yield
+
+    def reset(model):
+        events.append("reset")
+        return True
+
+    monkeypatch.setattr(router, "model_manager", manager)
+    monkeypatch.setattr(manager, "get_model", get_model)
+    monkeypatch.setattr(manager, "get_model_metadata", metadata)
+    monkeypatch.setattr(manager, "acquire_inference_slot", tracked_slot)
+    monkeypatch.setattr(router, "reset_eval_counters", reset)
+    monkeypatch.setattr(router, "timed_for_request", lambda *args: (1, 2))
+
+    def request(prompt):
+        return OllamaGenerateRequest(
+            model="m", prompt=prompt, raw=True, stream=False
+        )
+
+    first = asyncio.create_task(router.ollama_generate(request("first")))
+    second = None
+    try:
+        await asyncio.wait_for(started.wait(), timeout=2)
+        second = asyncio.create_task(router.ollama_generate(request("second")))
+        await asyncio.wait_for(queued.wait(), timeout=2)
+        assert events == ["reset", "first:start"]
+    finally:
+        release.set()
+        await asyncio.gather(first, *([second] if second is not None else []))
+
+    assert events == [
+        "reset", "first:start", "first:end",
+        "reset", "second:start", "second:end",
+    ]
