@@ -140,6 +140,14 @@ object to constrain output. An omitted, null, or empty-string format leaves
 output unconstrained. Other strings and non-string/non-object values return
 HTTP 400; invalid format selection is rejected before model loading or unloading.
 
+### Thinking selection
+
+Ollama chat/generate accept `think` as a boolean or a model-defined string,
+including levels such as `"max"`. Numeric values are rejected. Omitting the
+field preserves the template default; `false`, `"false"`, or `"none"` explicitly disables
+thinking where the template supports it. Accepting a level does not guarantee
+that every model implements it.
+
 ---
 
 ### `/api/ps`

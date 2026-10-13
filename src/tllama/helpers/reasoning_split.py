@@ -20,7 +20,7 @@ def _normalize_text(value) -> str:
 def _think_explicitly_disabled(think_value) -> bool:
     if think_value is False:
         return True
-    if isinstance(think_value, str) and think_value.strip().lower() == "none":
+    if isinstance(think_value, str) and think_value.strip().lower() in {"false", "none"}:
         return True
     return False
 

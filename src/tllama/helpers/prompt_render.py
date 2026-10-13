@@ -110,7 +110,7 @@ def render_generate_prompt(
         reasoning_effort = "none"
     elif isinstance(think_value, str):
         normalized_think = think_value.strip().lower()
-        if normalized_think == "none":
+        if normalized_think in {"false", "none"}:
             think_enabled = False
             think_level = "none"
             reasoning_effort = "none"
