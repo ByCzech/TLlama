@@ -48,6 +48,15 @@ OLLAMA_HOST=127.0.0.1:54800 ollama show <model-name>
 
 ## Common Ollama Endpoints
 
+### `/api/version`
+
+Returns `{"version": "..."}` with the installed Python distribution version
+of TLlama. A source checkout without installed distribution metadata returns
+`0.0.0-dev`. Debian packaging may normalize version spelling; this endpoint
+reports Python metadata, not the native runtime version or an Ollama version.
+
+---
+
 ### `/api/tags`
 
 Lists available models.

@@ -22,6 +22,7 @@ from tllama.lib.llama_wrap import create_chat_completion_ex
 
 from tllama.errors import ollama_stream_error_line
 from tllama.helpers.model_toml import TomlModelError
+from tllama.version import get_version as get_tllama_version
 
 from tllama.helpers.common import (
     format_ollama_parameters,
@@ -70,7 +71,7 @@ _PULL_PROGRESS_INTERVAL_SECONDS = 0.5
 
 @router.get("/version")
 async def get_version():
-    return {"version": "0.0.0"}  # Return version, that client expect
+    return {"version": get_tllama_version()}
 
 
 @router.get("/tags")
