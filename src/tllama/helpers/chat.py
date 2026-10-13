@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .schemas import OllamaChatRequest, Message
 
-from tllama.helpers.common import normalize_message_content
+from tllama.helpers.common import normalize_message_content, validate_format
 from tllama.helpers.vision import build_multimodal_content, content_carries_images
 
 
@@ -51,7 +51,8 @@ def build_chat_response_format_kwargs(format_value) -> dict[str, Any]:
     If you already have a shared helper that returns chat-compatible response_format,
     reuse it here.
     """
-    if format_value is None:
+    validate_format(format_value)
+    if format_value is None or format_value == "":
         return {}
 
     if format_value == "json":

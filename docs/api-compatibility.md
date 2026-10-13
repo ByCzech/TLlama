@@ -133,6 +133,15 @@ curl -s http://127.0.0.1:54800/api/chat \
 
 ---
 
+### Output format
+
+Both `/api/chat` and `/api/generate` accept `format: "json"` or a JSON Schema
+object to constrain output. An omitted, null, or empty-string format leaves
+output unconstrained. Other strings and non-string/non-object values return
+HTTP 400; invalid format selection is rejected before model loading or unloading.
+
+---
+
 ### `/api/ps`
 
 Returns currently loaded models.

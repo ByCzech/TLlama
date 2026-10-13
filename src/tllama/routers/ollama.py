@@ -32,6 +32,7 @@ from tllama.helpers.common import (
     estimate_completion_prompt_eval_count,
     build_completion_format_kwargs,
     build_sampling_kwargs,
+    validate_format,
 )
 
 from tllama.helpers.prompt_render import (
@@ -103,6 +104,11 @@ async def list_models_ollama():
 async def ollama_chat(request: OllamaChatRequest):
     """Handle Ollama-compatible /chat requests via create_chat_completion_ex()."""
     opts = request.options or {}
+
+    try:
+        validate_format(request.format)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
     try:
         keep_alive_seconds = model_manager.resolve_keep_alive(request.keep_alive)
@@ -428,6 +434,11 @@ async def ollama_generate(request: OllamaGenerateRequest):
             rendering fails, or an unsupported input combination is used.
     """
     opts = request.options or {}
+
+    try:
+        validate_format(request.format)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
     try:
         keep_alive_seconds = model_manager.resolve_keep_alive(request.keep_alive)

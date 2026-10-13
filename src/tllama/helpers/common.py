@@ -318,6 +318,15 @@ def estimate_completion_prompt_eval_count(llm, prompt: str) -> int:
     return len(prompt_tokens) + (1 if add_bos else 0) + (1 if add_eos else 0)
 
 
+def validate_format(request_format) -> None:
+    """Accept only an unset format, JSON mode, or a JSON Schema object."""
+    if request_format is None or request_format in ("", "json"):
+        return
+    if isinstance(request_format, dict):
+        return
+    raise ValueError("Invalid format schema: expected 'json' or a JSON Schema object")
+
+
 def build_completion_format_kwargs(request_format):
     """
     Completion path uses grammar, not response_format.
@@ -325,6 +334,7 @@ def build_completion_format_kwargs(request_format):
     - format == "json"
     - format == {...json schema...}
     """
+    validate_format(request_format)
     if request_format == "json":
         return {
             "grammar": LlamaGrammar.from_json_schema(
