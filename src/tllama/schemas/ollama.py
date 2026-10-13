@@ -19,6 +19,7 @@ class Message(BaseModel):
 
 class OllamaChatRequest(BaseModel):
     model: str
+    runner: StrictStr | None = None
     messages: List[Message]
     stream: bool = True
     think: ThinkValue = None
@@ -35,6 +36,7 @@ class OllamaChatRequest(BaseModel):
 
 class OllamaGenerateRequest(BaseModel):
     model: str
+    runner: StrictStr | None = None
     prompt: Optional[str] = ""
     system: Optional[str] = None
     template: Optional[str] = None

@@ -197,6 +197,18 @@ After a successful pull, TLlama creates persistent metadata cache for the downlo
 
 ## Ollama CLI Compatibility
 
+Ollama chat, generate, show and pull requests accept an optional `runner`.
+Omitting it, passing null or an empty string, selecting `llamacpp`, or using
+its `ggml` alias all use the same inference engine. Other strings return
+HTTP 400 unless `TLLAMA_IGNORE_UNSUPPORTED_RUNNER=true`, which silently ignores
+them. Non-string values are rejected in both modes. Runner selection is
+validated before model actions or Hugging Face lookups and downloads.
+
+`/api/tags` and `/api/show` report `details.runner: "llamacpp"`; `/api/ps`
+reports top-level `runner: "llamacpp"` for loaded and loading models.
+CPU, CUDA, ROCm and Vulkan are compute backends, not runner names.
+OpenAI endpoints do not gain a runner field.
+
 The official Ollama CLI can be pointed to TLlama:
 
 ```bash

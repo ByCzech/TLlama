@@ -408,6 +408,7 @@ class BackendConfig:
     kv_cache_type: str | None = None
     k_cache_type: str | None = None
     v_cache_type: str | None = None
+    ignore_unsupported_runner: bool = False
 
 
 @dataclass(frozen=True)
@@ -440,6 +441,7 @@ def load_backend_config_from_env() -> BackendConfig:
         kv_cache_type=_env_cache_type("TLLAMA_KV_CACHE_TYPE"),
         k_cache_type=_env_cache_type("TLLAMA_K_CACHE_TYPE"),
         v_cache_type=_env_cache_type("TLLAMA_V_CACHE_TYPE"),
+        ignore_unsupported_runner=_env_bool("TLLAMA_IGNORE_UNSUPPORTED_RUNNER", False),
     )
 
 

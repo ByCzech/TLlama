@@ -88,6 +88,14 @@ Booleans accept `1`, `true`, `yes`, `on` and `0`, `false`, `no`, `off`, in any c
 
 ## Server options
 
+### `TLLAMA_IGNORE_UNSUPPORTED_RUNNER`
+
+Defaults to `false`. Ollama requests may select `llamacpp` or its `ggml`
+alias; another runner returns HTTP 400 before any model or download action.
+Set this flag to `true` to silently ignore unsupported runner strings from
+clients. Non-string values are still rejected. This never selects a different
+inference engine or GPU backend; reported runner remains `llamacpp`.
+
 ### `TLLAMA_HOST`
 
 Address and port to listen on. Default `127.0.0.1:54800`.

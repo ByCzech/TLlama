@@ -23,6 +23,7 @@ from tllama.lib.llama_wrap import create_chat_completion_ex
 from tllama.errors import ollama_stream_error_line
 from tllama.helpers.model_toml import TomlModelError
 from tllama.version import get_version as get_tllama_version
+from tllama.helpers.runner import RUNNER, validate_runner
 
 from tllama.helpers.common import (
     format_ollama_parameters,
@@ -69,6 +70,12 @@ router = APIRouter(
 _PULL_PROGRESS_INTERVAL_SECONDS = 0.5
 
 
+def _validate_runner(value) -> None:
+    validate_runner(
+        value, ignore_unsupported=model_manager.config.ignore_unsupported_runner
+    )
+
+
 @router.get("/version")
 async def get_version():
     return {"version": get_tllama_version()}
@@ -95,6 +102,7 @@ async def list_models_ollama():
                 "families": [family],
                 "parameter_size": m.get("parameter_size", "unknown"),
                 "quantization_level": m.get("bits", "unknown"),
+                "runner": RUNNER,
             }
         })
 
@@ -104,6 +112,7 @@ async def list_models_ollama():
 @router.post("/chat")
 async def ollama_chat(request: OllamaChatRequest):
     """Handle Ollama-compatible /chat requests via create_chat_completion_ex()."""
+    _validate_runner(request.runner)
     opts = request.options or {}
 
     try:
@@ -434,6 +443,7 @@ async def ollama_generate(request: OllamaGenerateRequest):
             Raised when model loading fails, the format schema is invalid, template
             rendering fails, or an unsupported input combination is used.
     """
+    _validate_runner(request.runner)
     opts = request.options or {}
 
     try:
@@ -710,6 +720,7 @@ async def ollama_generate(request: OllamaGenerateRequest):
 
 @router.post("/show")
 async def show_model_info(request: dict):
+    _validate_runner(request.get("runner"))
     model_name = request.get("name", "") or request.get("model", "")
     if not model_name:
         raise HTTPException(status_code=400, detail="Missing model name")
@@ -772,6 +783,7 @@ async def show_model_info(request: dict):
             "families": [family],
             "parameter_size": metadata_info.get("parameter_size", "unknown"),
             "quantization_level": metadata_info.get("bits", "unknown"),
+            "runner": RUNNER,
         },
         # The official Ollama client's ShowResponse declares this field
         # Optional but without a pydantic default, which in practice makes
@@ -812,6 +824,7 @@ async def list_running_models():
         formatted.append({
             "name": m["model"],
             "model": m["model"],
+            "runner": RUNNER,
             "size": m["size"],
             "digest": digest_info.get("content_sha256", ""),
             "context_length": m["n_ctx"],
@@ -855,6 +868,7 @@ async def list_running_models():
         formatted.append({
             "name": model_name,
             "model": model_name,
+            "runner": RUNNER,
             "size": model_info["size"],
             "digest": digest_info.get("content_sha256", ""),
             "context_length": 0,
@@ -876,6 +890,7 @@ async def list_running_models():
 @router.post("/pull")
 async def pull_model_ollama(request: Request):
     payload = await request.json()
+    _validate_runner(payload.get("runner"))
 
     model_ref = (payload.get("model") or payload.get("name") or "").strip()
     username = (payload.get("username") or "").strip()
