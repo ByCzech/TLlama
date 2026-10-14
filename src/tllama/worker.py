@@ -371,6 +371,18 @@ class NativeWorker:
         async with self._response("/completion", self._body(payload, chat=False, stream=False)) as response:
             return await self._json_body(response)
 
+    async def tokenize(self, content: str, *, add_special: bool = True) -> list[int]:
+        """Use this loaded worker's tokenizer, without evaluating the prompt."""
+        if not isinstance(content, str) or type(add_special) is not bool:
+            raise ValueError("Tokenization needs text and a boolean add_special")
+        async with self._response("/tokenize", {"content": content, "add_special": add_special,
+                                                "parse_special": True}) as response:
+            payload = await self._json_body(response)
+        tokens = payload.get("tokens")
+        if not isinstance(tokens, list) or any(type(token) is not int or token < 0 for token in tokens):
+            raise WorkerProtocolError("Native tokenizer must return nonnegative integer tokens")
+        return tokens
+
     @asynccontextmanager
     async def chat_stream(self, payload: Mapping[str, Any]):
         async with self._response("/v1/chat/completions", self._body(payload, chat=True, stream=True)) as response:

@@ -42,12 +42,14 @@ class ModelDefinition:
     resolved: ResolvedWorkerConfig
     fingerprint: Any = None
     file_info: Mapping = field(default_factory=dict)
+    metadata: Mapping = field(default_factory=dict)
 
     def __post_init__(self):
         if not isinstance(self.name, str) or not self.name:
             raise ValueError("A model definition needs a public model name")
         object.__setattr__(self, "fingerprint", freeze_values(self.fingerprint))
         object.__setattr__(self, "file_info", freeze_values(self.file_info))
+        object.__setattr__(self, "metadata", freeze_values(self.metadata))
 
     def same_version(self, other: ModelDefinition) -> bool:
         return (self.name == other.name and self.resolved == other.resolved

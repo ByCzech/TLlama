@@ -23,6 +23,13 @@ def render_generate_prompt(
     request,
     mode: Literal["prompt", "messages"] = "prompt",
 ):
+    """Temporary legacy caller wrapper; native routes pass token strings directly."""
+    bos_token, eos_token = _get_bos_eos_tokens(llm)
+    return render_generate_text(metadata_info, request, bos_token=bos_token, eos_token=eos_token, mode=mode)
+
+
+def render_generate_text(metadata_info: dict, request, *, bos_token: str, eos_token: str,
+                         mode: Literal["prompt", "messages"] = "prompt"):
     """Render a completion prompt from a model template and request data.
 
     Returns:
@@ -41,8 +48,6 @@ def render_generate_prompt(
             status_code=501,
             detail="Model template is not available; cannot render prompt for this model."
         )
-
-    bos_token, eos_token = _get_bos_eos_tokens(llm)
 
     if mode == "prompt":
         prompt_text = getattr(request, "prompt", None) or ""

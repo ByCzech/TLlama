@@ -569,19 +569,33 @@ class ModelManager:
             if spec is None or spec.llm_model is None:
                 raise FileNotFoundError(f"Model '{model_name}' is not registered/imported in {self.models_dir}")
             model = resolve_repo_relative_path(spec.llm_model, self.models_dir)
+            if not model.is_file():
+                raise FileNotFoundError(f"Model '{model_name}' does not point at an existing GGUF")
             info = self._build_model_file_info_from_path(model)
             if info is None:
                 raise FileNotFoundError(f"Model '{model_name}' does not point at an existing GGUF")
             mmproj = self.resolve_mmproj_path(spec, model_name)
+            file_before = {"model": build_model_file_fingerprint(model),
+                           "projector": build_model_file_fingerprint(mmproj) if mmproj else None}
+            try:
+                metadata = load_metadata_cache(self.metadata_cache_dir, model)
+                if metadata is None:
+                    metadata = self._get_model_metadata_sync(str(model)) or {}
+            except Exception as exc:
+                # The native loader remains authoritative for model validity.
+                # Missing optional header recommendations must not invent defaults.
+                logger.warning("Native metadata scan failed for %s: %s", model_name, exc)
+                metadata = {}
             after = self._toml_fingerprint_for_reference(model_name)
-            if before != after:
+            file_after = {"model": build_model_file_fingerprint(model),
+                          "projector": build_model_file_fingerprint(mmproj) if mmproj else None}
+            if before != after or file_before != file_after:
                 continue
             resolved = resolve_worker_config(self.config, model.resolve(), spec, num_ctx=num_ctx,
                                              mmproj=mmproj.resolve() if mmproj else None,
                                              **self._native_launch_options)
-            fingerprint = {"toml": after, "model": build_model_file_fingerprint(model),
-                           "projector": build_model_file_fingerprint(mmproj) if mmproj else None}
-            return ModelDefinition(model_name, resolved, fingerprint, info)
+            fingerprint = {"toml": after, **file_after}
+            return ModelDefinition(model_name, resolved, fingerprint, info, metadata)
         raise RuntimeError(f"Model definition '{model_name}' kept changing while it was resolved")
 
     @asynccontextmanager

@@ -92,7 +92,19 @@ async def handle(reader, writer):
                 "default_generation_settings": {"n_ctx": 0 if MODE == "bad-context" else 2048},
                 "modalities": {"vision": "--mmproj" in sys.argv},
                 "bos_token": "<bos>", "eos_token": "<eos>",
+                "chat_template": (Path(arg("--chat-template-file")).read_text() if "--chat-template-file" in sys.argv
+                                  else "{% for m in messages %}{{ m.role }}:{{ m.content }}\n{% endfor %}"),
             })
+            return
+        if path == "/tokenize":
+            # Deterministic IDs expose exact render text in the request log.
+            text = body["content"]
+            tokens = [ord(char) + 10 for char in text]
+            if text.startswith("<bos>"):
+                tokens = [1] + [ord(char) + 10 for char in text[5:]]
+            if body.get("add_special"):
+                tokens.insert(0, 1)
+            await json_response(writer, {"tokens": [True] if MODE == 'bad-tokenize' else tokens})
             return
         async with LOCK:
             mode = body.get("stub", "hold" if body.get("ignore_eos") else "normal")
@@ -108,11 +120,13 @@ async def handle(reader, writer):
                 mark("cancelled", "non-stream")
                 return
             if not body["stream"] or mode == "json-stream":
+                constrained = 'response_format' in body or 'json_schema' in body
+                text = '{"answer":42}' if constrained else "Ahoj světe"
                 if chat:
-                    result = {"choices": [{"message": {"content": "Ahoj světe", "reasoning_content": "myšlenka"},
+                    result = {"choices": [{"message": {"content": text, "reasoning_content": "myšlenka"},
                                            "finish_reason": "stop"}], "usage": USAGE, "timings": TIMINGS}
                 else:
-                    result = {"content": "Ahoj světe", "stop": True, "stop_type": "eos", "timings": TIMINGS,
+                    result = {"content": text, "stop": True, "stop_type": "eos", "timings": TIMINGS,
                               "tokens_evaluated": 25, "tokens_predicted": 10, "tokens_cached": 35}
                 await json_response(writer, result)
                 return
@@ -128,6 +142,18 @@ async def handle(reader, writer):
                 await reader.read()
                 mark("cancelled", "stream")
                 return
+            if mode == 'controlled':
+                mark('started', 'controlled')
+                disconnected = asyncio.create_task(reader.read())
+                try:
+                    while not (ROOT / 'release').exists():
+                        if disconnected.done():
+                            mark('cancelled', 'controlled')
+                            return
+                        await asyncio.sleep(0.01)
+                finally:
+                    disconnected.cancel()
+                    await asyncio.gather(disconnected, return_exceptions=True)
             if mode == "bad-json":
                 await stream_bytes(writer, b"data: {broken}\n\n")
                 return
