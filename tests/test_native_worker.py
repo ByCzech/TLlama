@@ -407,10 +407,14 @@ async def test_hardware_smoke_entry_point(factory, case):
     stages = [json.loads(line) for line in stdout.splitlines()]
     assert stages[-1]["stage"] == "closed" and stages[-1]["directory_removed"] is True
     assert stages[-1]["returncode"] is not None
-    assert len(records(root, "launch")) == 1
     if case == "cancel-start":
         assert stages[0]["stage"] == "startup-cancelled"
+        assert stages[0]["pid"] == stages[-1]["pid"] and stages[-1]["pid"] is not None
+        # Cancellation may reap the child before its Python startup writes
+        # the launch marker. The smoke still has to own and reap that PID.
+        assert len(records(root, "launch")) <= 1
     else:
+        assert len(records(root, "launch")) == 1
         assert records(root, "cancelled") == ["stream", "non-stream"]
         assert "after-non-stream-cancel" in [s["stage"] for s in stages]
         if case == "crash":
