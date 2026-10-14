@@ -1,7 +1,7 @@
 # Native residency checkpoint (block 04)
 
-Native worker policy is available through ModelManager's internal native lease
-methods. Public inference routers still select the legacy path until block 05;
+Native worker policy is available through ModelManager's native lease methods.
+The [05b public text routes](native-public-api.md) now use those methods;
 public memory reporting migrates separately. One running ModelManager instance
 cannot mix the two engine modes. This is a temporary migration boundary, not a
 new public backend toggle or a permanent dual-engine commitment.
@@ -92,8 +92,9 @@ Generation numbers remain distinct across full shutdown/start on the same manage
 - `shutdown()` awaits native cleanup, including cancelled loads and active streams;
   even a failed janitor cannot skip this cleanup.
 
-The public routes keep their legacy methods in this block. Native instances
-refuse legacy get_model/slot/unload/reporting operations. After complete shutdown,
+At the original 04 checkpoint public routes still kept legacy methods. They
+now use native leases at 05b. Native instances refuse legacy get_model/slot/
+unload/reporting operations. After complete shutdown,
 start can begin a fresh run with a fresh engine choice. Metadata/storage reads
 remain engine-independent. The backend module still imports the legacy binding;
 removing that application dependency remains the final cleanup milestone.
@@ -122,5 +123,5 @@ lifecycle and native transport, not public API/vision/template parity or memory
 reporting. Multi-model policy is covered by controlled workers and real socket
 subprocess tests without loading several large GGUFs on the test hardware.
 
-The following [05a API adapter checkpoint](native-api-adapter.md) prepares native
-text payloads/results and serializers without switching public routers yet.
+The [05a API adapter checkpoint](native-api-adapter.md) prepared payloads/results
+and serializers ahead of the [05b public switch](native-public-api.md).

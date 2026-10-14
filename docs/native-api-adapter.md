@@ -1,7 +1,8 @@
 # Native text API adapter checkpoint (05a)
 
-This checkpoint adds adapters/tests. Public routers, request schema fields and
-the application engine choice remain unchanged. The protocol remains pinned to
+This document describes the 05a adapter checkpoint. Its following
+[05b public switch](native-public-api.md) now uses the adapters in public text
+routes; request schema fields remain unchanged. The protocol remains pinned to
 b11552-ec2797836f. Public switching belongs to 05b, vision/memory to 06 and final
 binding removal to 07.
 
@@ -124,7 +125,6 @@ order/error envelopes. Real loopback subprocess tests cover both result/stream
 paths, fragmented SSE, crash without replay, early close and cancellation with
 subsequent reuse of the same worker. No model weights are loaded.
 
-No hardware run is needed for 05a. Before 05b, agree generate template/suffix
-policy, deprecated function mapping and the vision/ps boundary. Its real text
-API smoke must test reasoning control, constrained generation and public client
-shapes; the binding/application cleanup is still a separate milestone.
+No hardware run was needed for 05a. The agreed generate/suffix, deprecated
+function and vision/ps boundary, plus the real text API smoke, are documented
+in native-public-api.md. Binding/application cleanup is still separate.
