@@ -11,7 +11,7 @@ from dataclasses import dataclass
 import json
 from typing import Mapping, Literal
 
-from tllama.helpers.chat import build_think_kwargs_ex
+from tllama.helpers.chat import build_think_kwargs_ex, apply_default_system_prompt
 from tllama.helpers.common import validate_format
 from tllama.native_config import ResolvedWorkerConfig, build_native_sampling, _plain
 from tllama.native_params import freeze_values
@@ -98,9 +98,7 @@ def normalize_chat_input(messages):
 def _chat_messages(messages, resolved, normalized_messages=None):
     result = normalize_chat_input(messages) if normalized_messages is None else _json_copy(normalized_messages)
     # Presence, including an explicit empty system message, wins over TOML.
-    if resolved.system_prompt is not None and not any(m["role"] in {"system", "developer"} for m in result):
-        result.insert(0, {"role": "system", "content": resolved.system_prompt})
-    return result
+    return apply_default_system_prompt(result, {"default_system_prompt": resolved.system_prompt})
 
 
 def _think_payload(think):

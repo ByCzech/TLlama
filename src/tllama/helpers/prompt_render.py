@@ -3,29 +3,7 @@ from jinja2.sandbox import ImmutableSandboxedEnvironment
 from fastapi import HTTPException
 from typing import Literal
 
-from tllama.schemas.ollama import OllamaChatRequest, OllamaGenerateRequest
 from tllama.helpers.common import normalize_stop, strftime_now
-
-
-def _get_bos_eos_tokens(llm):
-    bos_id = llm.token_bos()
-    eos_id = llm.token_eos()
-
-    bos_token = llm.detokenize([bos_id]).decode("utf-8", errors="ignore") if bos_id != -1 else ""
-    eos_token = llm.detokenize([eos_id]).decode("utf-8", errors="ignore") if eos_id != -1 else ""
-
-    return bos_token, eos_token
-
-
-def render_generate_prompt(
-    llm,
-    metadata_info: dict,
-    request,
-    mode: Literal["prompt", "messages"] = "prompt",
-):
-    """Temporary legacy caller wrapper; native routes pass token strings directly."""
-    bos_token, eos_token = _get_bos_eos_tokens(llm)
-    return render_generate_text(metadata_info, request, bos_token=bos_token, eos_token=eos_token, mode=mode)
 
 
 def render_generate_text(metadata_info: dict, request, *, bos_token: str, eos_token: str,

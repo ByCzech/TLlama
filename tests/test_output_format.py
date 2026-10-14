@@ -1,11 +1,8 @@
 """Invalid output formats must not silently produce unconstrained text."""
 
-import json
 
 import pytest
 
-from tllama.helpers.chat import build_chat_response_format_kwargs
-from tllama.helpers.common import build_completion_format_kwargs
 
 
 def payload(path, stream=False, empty=False, unload=False):
@@ -55,36 +52,3 @@ def test_invalid_format_does_not_bypass_validation_on_load_only_requests(
     })
 
     assert response.status_code == 400
-
-
-@pytest.mark.parametrize("value", [None, ""])
-def test_unset_format_leaves_both_generation_paths_unconstrained(value):
-    assert build_completion_format_kwargs(value) == {}
-    assert build_chat_response_format_kwargs(value) == {}
-
-
-@pytest.mark.parametrize("value", ["json", {}, {
-    "type": "object",
-    "properties": {"answer": {"type": "integer"}},
-    "required": ["answer"],
-    "additionalProperties": False,
-}])
-def test_json_mode_and_schema_reach_the_backend(value, monkeypatch):
-    schema = {"type": "object"} if value == "json" else value
-    converted = []
-    grammar = object()
-
-    def from_schema(text):
-        converted.append(json.loads(text))
-        return grammar
-
-    monkeypatch.setattr(
-        "llama_cpp.LlamaGrammar.from_json_schema", from_schema
-    )
-
-    assert build_completion_format_kwargs(value) == {"grammar": grammar}
-    assert converted == [schema]
-    response_format = build_chat_response_format_kwargs(value)["response_format"]
-    assert response_format["type"] == "json_object"
-    if value != "json":
-        assert response_format["schema"] == value

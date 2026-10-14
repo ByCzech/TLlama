@@ -1,11 +1,4 @@
-"""TLLAMA_RUNTIME_* reaches Llama(), typed by Llama()'s own signature.
-
-Around three dozen load parameters had no server-wide setting at all: a
-person wanting n_threads on every model had to write it into every .toml.
-The set of names and the type of each is read off the signature rather
-than listed, so these check the reading rather than a list someone typed.
-"""
-
+"""Global runtime strings are typed using TLlama's pinned native contract."""
 
 import pytest
 
@@ -126,22 +119,7 @@ class TestCollectionFromTheEnvironment:
 
 
 class TestLayering:
-    def test_the_override_reaches_the_load_kwargs(self, make_manager):
-        manager = make_manager(runtime_overrides={"n_threads": "8", "use_mlock": "true"})
-        spec = parse_model_toml(llm_toml("Local/m.gguf"))
 
-        kwargs = manager._build_llama_load_kwargs("Local/m.gguf", 8192, spec)
-
-        assert kwargs["n_threads"] == 8
-        assert kwargs["use_mlock"] is True
-
-    def test_a_model_s_runtime_table_wins(self, make_manager):
-        manager = make_manager(runtime_overrides={"n_threads": "8"})
-        spec = parse_model_toml(llm_toml("Local/m.gguf", "\n[runtime]\nn_threads = 2\n"))
-
-        kwargs = manager._build_llama_load_kwargs("Local/m.gguf", 8192, spec)
-
-        assert kwargs["n_threads"] == 2
 
     def test_a_bad_value_stops_the_manager_being_built(self, make_manager):
         # At construction, which for the module-level manager is at

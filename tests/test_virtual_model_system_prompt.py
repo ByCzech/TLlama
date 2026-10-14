@@ -1,18 +1,8 @@
-"""default_system_prompt (a virtual model's [system].prompt) is used only
-when the caller supplied nothing of its own -- for both render functions,
-the same rule regardless of endpoint (confirmed against real Ollama's
-current GenerateHandler/ChatHandler source during the design discussion).
-
-/api/chat's own default-system-prompt behavior is not covered by this file:
-it never went through render_chat_prompt_with_explicit_think() (removed as
-dead code -- superseded by create_chat_completion_ex() back in April, its
-call site gone, the function itself simply never deleted afterward) and its
-real fix belongs to a separate, dedicated patch.
-"""
+"""Native generate rendering preserves system and stop defaults."""
 
 from types import SimpleNamespace
 
-from tllama.helpers.prompt_render import render_generate_prompt
+from tllama.helpers.prompt_render import render_generate_text
 
 
 SIMPLE_TEMPLATE = (
@@ -27,12 +17,6 @@ TEMPLATE_WITH_BAKED_DEFAULT = (
 )
 
 
-class FakeLlm:
-    def token_bos(self):
-        return -1
-
-    def token_eos(self):
-        return -1
 
 
 def make_request(**kwargs):
@@ -52,7 +36,7 @@ class TestGeneratePromptMode:
         request = make_request(system="from request")
         metadata_info = {"template": SIMPLE_TEMPLATE, "default_system_prompt": "from toml"}
 
-        prompt, _ = render_generate_prompt(FakeLlm(), metadata_info, request, mode="prompt")
+        prompt, _ = render_generate_text(metadata_info, request, bos_token="", eos_token="", mode="prompt")
 
         assert "system:from request" in prompt
         assert "from toml" not in prompt
@@ -61,7 +45,7 @@ class TestGeneratePromptMode:
         request = make_request(system=None)
         metadata_info = {"template": SIMPLE_TEMPLATE, "default_system_prompt": "from toml"}
 
-        prompt, _ = render_generate_prompt(FakeLlm(), metadata_info, request, mode="prompt")
+        prompt, _ = render_generate_text(metadata_info, request, bos_token="", eos_token="", mode="prompt")
 
         assert "system:from toml" in prompt
 
@@ -69,7 +53,7 @@ class TestGeneratePromptMode:
         request = make_request(system=None)
         metadata_info = {"template": SIMPLE_TEMPLATE}
 
-        prompt, _ = render_generate_prompt(FakeLlm(), metadata_info, request, mode="prompt")
+        prompt, _ = render_generate_text(metadata_info, request, bos_token="", eos_token="", mode="prompt")
 
         assert "system:" not in prompt
 
@@ -79,7 +63,7 @@ class TestGeneratePromptMode:
         request = make_request(system="")
         metadata_info = {"template": SIMPLE_TEMPLATE, "default_system_prompt": "from toml"}
 
-        prompt, _ = render_generate_prompt(FakeLlm(), metadata_info, request, mode="prompt")
+        prompt, _ = render_generate_text(metadata_info, request, bos_token="", eos_token="", mode="prompt")
 
         assert "system:" in prompt
         assert "from toml" not in prompt
@@ -91,7 +75,7 @@ class TestGeneratePromptMode:
         request = make_request(system="")
         metadata_info = {"template": TEMPLATE_WITH_BAKED_DEFAULT}
 
-        prompt, _ = render_generate_prompt(FakeLlm(), metadata_info, request, mode="prompt")
+        prompt, _ = render_generate_text(metadata_info, request, bos_token="", eos_token="", mode="prompt")
 
         assert "BAKED DEFAULT" not in prompt
 
@@ -99,7 +83,7 @@ class TestGeneratePromptMode:
         request = make_request(system=None)
         metadata_info = {"template": TEMPLATE_WITH_BAKED_DEFAULT, "default_system_prompt": ""}
 
-        prompt, _ = render_generate_prompt(FakeLlm(), metadata_info, request, mode="prompt")
+        prompt, _ = render_generate_text(metadata_info, request, bos_token="", eos_token="", mode="prompt")
 
         assert "BAKED DEFAULT" not in prompt
 
@@ -107,7 +91,7 @@ class TestGeneratePromptMode:
         request = make_request(system=None)
         metadata_info = {"template": TEMPLATE_WITH_BAKED_DEFAULT}
 
-        prompt, _ = render_generate_prompt(FakeLlm(), metadata_info, request, mode="prompt")
+        prompt, _ = render_generate_text(metadata_info, request, bos_token="", eos_token="", mode="prompt")
 
         assert "BAKED DEFAULT" in prompt
 
@@ -123,7 +107,7 @@ class TestGeneratePromptMessagesMode:
         ])
         metadata_info = {"template": SIMPLE_TEMPLATE, "default_system_prompt": "from toml"}
 
-        prompt, _ = render_generate_prompt(FakeLlm(), metadata_info, request, mode="messages")
+        prompt, _ = render_generate_text(metadata_info, request, bos_token="", eos_token="", mode="messages")
 
         assert "system:from messages" in prompt
         assert "from toml" not in prompt
@@ -132,6 +116,6 @@ class TestGeneratePromptMessagesMode:
         request = make_request(messages=[{"role": "user", "content": "hi"}])
         metadata_info = {"template": SIMPLE_TEMPLATE, "default_system_prompt": "from toml"}
 
-        prompt, _ = render_generate_prompt(FakeLlm(), metadata_info, request, mode="messages")
+        prompt, _ = render_generate_text(metadata_info, request, bos_token="", eos_token="", mode="messages")
 
         assert "system:from toml" in prompt

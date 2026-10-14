@@ -1,18 +1,22 @@
-"""Same default-system-prompt rule for /v1/chat/completions.
+"""OpenAI native requests preserve virtual model system defaults."""
 
-This is a separate call site from prompt_render.py's two functions --
-build_openai_chat_messages() feeds llama-cpp-python's own chat completion
-directly, bypassing our Jinja rendering entirely -- so the rule has to be
-implemented here too, not inherited for free.
-"""
+from dataclasses import replace
+from pathlib import Path
 
-from types import SimpleNamespace
+from tllama.config import BackendConfig
+from tllama.native_config import resolve_worker_config
+from tllama.native_requests import prepare_openai_chat
+from tllama.schemas.openai import ChatCompletionRequest
 
-from tllama.helpers.openai_compat import build_openai_chat_messages
+
+def build_messages(request, metadata_info=None):
+    resolved = resolve_worker_config(BackendConfig(runtime_overrides={"device": "none"}), Path("/fake.gguf"))
+    resolved = replace(resolved, system_prompt=(metadata_info or {}).get("default_system_prompt"))
+    return prepare_openai_chat(request, resolved=resolved).body()["messages"]
 
 
 def make_request(messages):
-    return SimpleNamespace(messages=[SimpleNamespace(**m) for m in messages])
+    return ChatCompletionRequest(model="m", messages=messages)
 
 
 class TestBuildOpenaiChatMessages:
@@ -23,7 +27,7 @@ class TestBuildOpenaiChatMessages:
         ])
         metadata_info = {"default_system_prompt": "from toml"}
 
-        messages = build_openai_chat_messages(request, metadata_info)
+        messages = build_messages(request, metadata_info)
 
         assert messages[0] == {"role": "system", "content": "from messages"}
         assert not any(m["content"] == "from toml" for m in messages)
@@ -32,7 +36,7 @@ class TestBuildOpenaiChatMessages:
         request = make_request([{"role": "user", "content": "hi"}])
         metadata_info = {"default_system_prompt": "from toml"}
 
-        messages = build_openai_chat_messages(request, metadata_info)
+        messages = build_messages(request, metadata_info)
 
         assert messages[0] == {"role": "system", "content": "from toml"}
         assert messages[1] == {"role": "user", "content": "hi"}
@@ -44,21 +48,21 @@ class TestBuildOpenaiChatMessages:
         ])
         metadata_info = {"default_system_prompt": "from toml"}
 
-        messages = build_openai_chat_messages(request, metadata_info)
+        messages = build_messages(request, metadata_info)
 
         assert not any(m["content"] == "from toml" for m in messages)
 
     def test_no_metadata_info_leaves_messages_untouched(self):
         request = make_request([{"role": "user", "content": "hi"}])
 
-        messages = build_openai_chat_messages(request)
+        messages = build_messages(request)
 
         assert messages == [{"role": "user", "content": "hi"}]
 
     def test_no_default_in_metadata_info_leaves_messages_untouched(self):
         request = make_request([{"role": "user", "content": "hi"}])
 
-        messages = build_openai_chat_messages(request, {})
+        messages = build_messages(request, {})
 
         assert messages == [{"role": "user", "content": "hi"}]
 
@@ -71,7 +75,7 @@ class TestBuildOpenaiChatMessages:
         request = make_request([{"role": "user", "content": "hi"}])
         metadata_info = {"default_system_prompt": ""}
 
-        messages = build_openai_chat_messages(request, metadata_info)
+        messages = build_messages(request, metadata_info)
 
         assert messages[0] == {"role": "system", "content": ""}
 
@@ -82,7 +86,7 @@ class TestBuildOpenaiChatMessages:
         ])
         metadata_info = {"default_system_prompt": "from toml"}
 
-        messages = build_openai_chat_messages(request, metadata_info)
+        messages = build_messages(request, metadata_info)
 
         assert messages[0] == {"role": "system", "content": ""}
         assert not any(m["content"] == "from toml" for m in messages)

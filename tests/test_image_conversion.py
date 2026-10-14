@@ -15,7 +15,7 @@ import base64
 
 import pytest
 
-from tllama.helpers.chat import normalize_chat_messages
+from tllama.native_requests import normalize_chat_input
 from tllama.helpers.vision import (
     InvalidImageError,
     NO_REMOTE_IMAGES,
@@ -46,6 +46,9 @@ class FakeMessage:
         self.tool_calls = None
         self.tool_name = None
         self.tool_call_id = None
+
+    def model_dump(self, **kwargs):
+        return {key: value for key, value in vars(self).items() if value is not None}
 
 
 class TestTheDataUrlPrefix:
@@ -139,7 +142,7 @@ class TestTheContentParts:
 
 class TestTheMessageAsTheHandlerSeesIt:
     def test_images_become_content_parts(self):
-        [message] = normalize_chat_messages(
+        [message] = normalize_chat_input(
             [FakeMessage(content="co to je", images=[PNG])]
         )
 
@@ -149,14 +152,14 @@ class TestTheMessageAsTheHandlerSeesIt:
     def test_the_images_field_does_not_survive(self):
         # It is represented in content now, and a leftover key would be a
         # second copy of the same picture that nothing renders.
-        [message] = normalize_chat_messages(
+        [message] = normalize_chat_input(
             [FakeMessage(content="co to je", images=[PNG])]
         )
 
         assert "images" not in message
 
     def test_a_message_without_images_still_gets_plain_text(self):
-        [message] = normalize_chat_messages([FakeMessage(content="ahoj")])
+        [message] = normalize_chat_input([FakeMessage(content="ahoj")])
 
         assert message["content"] == "ahoj"
 
@@ -166,14 +169,14 @@ class TestTheMessageAsTheHandlerSeesIt:
             {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{PNG}"}},
         ]
 
-        [message] = normalize_chat_messages([FakeMessage(content=content)])
+        [message] = normalize_chat_input([FakeMessage(content=content)])
 
         assert message["content"] == content
 
     def test_a_plain_text_parts_list_is_still_flattened(self):
         content = [{"type": "text", "text": "a"}, {"type": "text", "text": "b"}]
 
-        [message] = normalize_chat_messages([FakeMessage(content=content)])
+        [message] = normalize_chat_input([FakeMessage(content=content)])
 
         assert message["content"] == "ab"
 

@@ -243,46 +243,6 @@ def build_sampling_kwargs(
     return kwargs
 
 
-def normalize_message_content(content) -> str:
-    if content is None:
-        return ""
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts = []
-        for part in content:
-            if isinstance(part, dict):
-                if part.get("type") == "text":
-                    parts.append(part.get("text", ""))
-                elif "text" in part:
-                    parts.append(part.get("text", ""))
-        return "".join(parts)
-    return str(content)
-
-
-def estimate_completion_prompt_eval_count(llm, prompt: str) -> int:
-    bos_token_id = llm.token_bos()
-    eos_token_id = llm.token_eos()
-
-    try:
-        add_bos = bool(llm._model.add_bos_token()) and bos_token_id != -1
-    except Exception:
-        add_bos = bos_token_id != -1
-
-    try:
-        add_eos = bool(llm._model.add_eos_token()) and eos_token_id != -1
-    except Exception:
-        add_eos = eos_token_id != -1
-
-    prompt_tokens = llm.tokenize(
-        prompt.encode("utf-8"),
-        add_bos=False,
-        special=True,
-    )
-
-    return len(prompt_tokens) + (1 if add_bos else 0) + (1 if add_eos else 0)
-
-
 def validate_format(request_format) -> None:
     """Accept only an unset format, JSON mode, or a JSON Schema object."""
     if request_format is None or request_format in ("", "json"):
@@ -290,33 +250,6 @@ def validate_format(request_format) -> None:
     if isinstance(request_format, dict):
         return
     raise ValueError("Invalid format schema: expected 'json' or a JSON Schema object")
-
-
-def build_completion_format_kwargs(request_format):
-    """
-    Completion path uses grammar, not response_format.
-    Supports:
-    - format == "json"
-    - format == {...json schema...}
-    """
-    from llama_cpp import LlamaGrammar
-
-    validate_format(request_format)
-    if request_format == "json":
-        return {
-            "grammar": LlamaGrammar.from_json_schema(
-                json.dumps({"type": "object"})
-            )
-        }
-
-    if isinstance(request_format, dict):
-        return {
-            "grammar": LlamaGrammar.from_json_schema(
-                json.dumps(request_format)
-            )
-        }
-
-    return {}
 
 
 DEFAULT_KEEP_ALIVE_SECONDS = 300

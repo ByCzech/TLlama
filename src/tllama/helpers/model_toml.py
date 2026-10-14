@@ -16,7 +16,6 @@ __all__ = (
     "VirtualModelSpec",
     "parse_model_toml",
     "render_model_toml",
-    "resolve_kv_cache_types",
     "resolve_repo_relative_path",
     "write_model_toml",
 )
@@ -282,14 +281,12 @@ def _as_mmproj_context(mmproj: Any, source: str) -> Dict[str, Any]:
     """The mtmd context fields an [mmproj] asks to be set.
 
     Kept apart from the two path keys because they go somewhere else
-    entirely: the paths say which files to open, these are written into
-    mtmd_context_params before the context is built.
+    entirely: the paths select files, while these options become native
+    projector arguments before the worker starts.
 
-    Types are checked here rather than at the far end. A ctypes Structure
-    takes a wrong type only as far as the assignment and then raises from
-    inside the library, in the middle of a load, naming a field instead of
-    a file -- and bool is a subclass of int, so an unchecked
-    'image_max_tokens = true' would quietly mean 1.
+    Types are checked here so a failure names the configuration file.
+    Bool is a subclass of int, so an unchecked 'image_max_tokens = true'
+    would quietly mean 1.
     """
     context: Dict[str, Any] = {}
 
@@ -391,24 +388,6 @@ def _reject_unknown_sampling_keys(sampling: Dict[str, Any], source: str) -> None
     for key in sampling:
         if key not in SAMPLING_TYPES:
             raise TomlModelError(f"{source}: [sampling] {sampling_problem(key, sampling[key])}.")
-
-
-def resolve_kv_cache_types(runtime: Dict[str, Any]) -> "tuple[Optional[int], Optional[int]]":
-    """Legacy manager enum view of the supported native KV vocabulary."""
-    type_kv = runtime.get("type_kv")
-    return (_resolve_one_kv_cache_type(runtime.get("type_k", type_kv), field_name="type_k"),
-            _resolve_one_kv_cache_type(runtime.get("type_v", type_kv), field_name="type_v"))
-
-
-def _resolve_one_kv_cache_type(value: Any, *, field_name: str) -> Optional[int]:
-    from tllama.native_params import KV_TYPES, kv_type_name
-
-    if value is None:
-        return None
-    try:
-        return KV_TYPES[kv_type_name(value)]
-    except ValueError as exc:
-        raise TomlModelError(f"'{field_name}': {exc}") from exc
 
 
 def resolve_repo_relative_path(value: str, models_dir: Path) -> Path:
@@ -519,7 +498,7 @@ def render_model_toml(
     if context_length:
         lines += [
             "",
-            "# [runtime] passes through to Llama() by the names it uses.",
+            "# [runtime] uses TLlama's supported native runtime settings.",
             "[runtime]",
             _commented(f"n_ctx = {int(context_length)}    # the model's own trained maximum"),
         ]

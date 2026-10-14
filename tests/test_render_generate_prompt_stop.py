@@ -1,22 +1,13 @@
-"""render_generate_prompt() has its own independent stop-token computation
-(combined with eos_token), separate from build_sampling_kwargs() -- it
-needs its own fallback to a virtual model's [sampling] stop list.
-"""
+"""Native generate rendering preserves system and stop defaults."""
 
 from types import SimpleNamespace
 
-from tllama.helpers.prompt_render import render_generate_prompt
+from tllama.helpers.prompt_render import render_generate_text
 
 
 SIMPLE_TEMPLATE = "{% for m in messages %}{{ m.role }}:{{ m.content }}\n{% endfor %}"
 
 
-class FakeLlm:
-    def token_bos(self):
-        return -1
-
-    def token_eos(self):
-        return -1
 
 
 def make_request(**kwargs):
@@ -30,7 +21,7 @@ class TestStopDefaultsFallback:
         request = make_request(options={"stop": ["CLIENT"]})
         metadata_info = {"template": SIMPLE_TEMPLATE, "stop_defaults": ["TOML"]}
 
-        _, stop = render_generate_prompt(FakeLlm(), metadata_info, request, mode="prompt")
+        _, stop = render_generate_text(metadata_info, request, bos_token="", eos_token="", mode="prompt")
 
         assert "CLIENT" in stop
         assert "TOML" not in stop
@@ -39,7 +30,7 @@ class TestStopDefaultsFallback:
         request = make_request(options=None)
         metadata_info = {"template": SIMPLE_TEMPLATE, "stop_defaults": ["TOML"]}
 
-        _, stop = render_generate_prompt(FakeLlm(), metadata_info, request, mode="prompt")
+        _, stop = render_generate_text(metadata_info, request, bos_token="", eos_token="", mode="prompt")
 
         assert "TOML" in stop
 
@@ -47,6 +38,6 @@ class TestStopDefaultsFallback:
         request = make_request(options=None)
         metadata_info = {"template": SIMPLE_TEMPLATE}
 
-        _, stop = render_generate_prompt(FakeLlm(), metadata_info, request, mode="prompt")
+        _, stop = render_generate_text(metadata_info, request, bos_token="", eos_token="", mode="prompt")
 
         assert stop == []

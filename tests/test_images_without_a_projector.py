@@ -11,9 +11,7 @@ here down to the wording.
 import pytest
 from fastapi.testclient import TestClient
 
-from llama_cpp.llama_chat_format import MTMDChatHandler
 
-from tllama.backend import model_has_projector
 from tllama.helpers.vision import NO_MULTIMODAL_SUPPORT
 from tllama.main import app
 
@@ -24,18 +22,6 @@ ONE_PIXEL = (
 )
 
 
-class FakeLlm:
-    def __init__(self, chat_handler=None):
-        self.chat_handler = chat_handler
-
-
-class FakeProjectorHandler(MTMDChatHandler):
-    def __init__(self):
-        # Deliberately not calling super().__init__: it wants a real file
-        # on disk, and nothing here loads one.
-        self.mtmd_ctx = object()
-
-
 @pytest.fixture
 def client():
     return TestClient(app)
@@ -43,26 +29,14 @@ def client():
 
 @pytest.fixture
 def loaded(native_reply):
-    def factory(chat_handler=None):
-        return native_reply(vision=chat_handler is not None)
+    def factory(vision=False):
+        return native_reply(vision=vision)
     return factory
-
-
-class TestWhatCountsAsAbleToSee:
-    def test_a_projector_handler_counts(self):
-        assert model_has_projector(FakeLlm(chat_handler=FakeProjectorHandler()))
-
-    def test_no_handler_at_all_does_not(self):
-        assert not model_has_projector(FakeLlm(chat_handler=None))
-
-    def test_a_plain_text_handler_does_not(self):
-        # What a [template] override leaves behind: an opaque callable.
-        assert not model_has_projector(FakeLlm(chat_handler=lambda **kw: None))
 
 
 class TestChatRefusesAnImageItCannotUse:
     def test_an_image_to_a_text_model_is_refused(self, client, loaded):
-        loaded(chat_handler=None)
+        loaded(vision=False)
 
         response = client.post("/api/chat", json={
             "model": "m",
@@ -75,7 +49,7 @@ class TestChatRefusesAnImageItCannotUse:
         assert response.status_code == 400
 
     def test_the_refusal_says_why(self, client, loaded):
-        loaded(chat_handler=None)
+        loaded(vision=False)
 
         response = client.post("/api/chat", json={
             "model": "m",
@@ -88,7 +62,7 @@ class TestChatRefusesAnImageItCannotUse:
         assert NO_MULTIMODAL_SUPPORT in response.json()["error"]
 
     def test_an_image_on_a_later_message_is_found_too(self, client, loaded):
-        loaded(chat_handler=None)
+        loaded(vision=False)
 
         response = client.post("/api/chat", json={
             "model": "m",
@@ -103,7 +77,7 @@ class TestChatRefusesAnImageItCannotUse:
         assert response.status_code == 400
 
     def test_an_empty_images_list_is_not_an_image(self, client, loaded):
-        loaded(chat_handler=None)
+        loaded(vision=False)
 
         response = client.post("/api/chat", json={
             "model": "m",
@@ -116,7 +90,7 @@ class TestChatRefusesAnImageItCannotUse:
         assert response.status_code != 400
 
     def test_text_alone_is_untouched(self, client, loaded):
-        loaded(chat_handler=None)
+        loaded(vision=False)
 
         response = client.post("/api/chat", json={
             "model": "m",
@@ -127,7 +101,7 @@ class TestChatRefusesAnImageItCannotUse:
         assert response.status_code != 400
 
     def test_worker_vision_capability_allows_image_inference(self, client, loaded):
-        loaded(chat_handler=FakeProjectorHandler())
+        loaded(vision=True)
 
         response = client.post("/api/chat", json={
             "model": "m",
@@ -142,7 +116,7 @@ class TestChatRefusesAnImageItCannotUse:
 
 class TestGenerateRefusesImagesForNow:
     def test_an_image_is_refused(self, client, loaded):
-        loaded(chat_handler=FakeProjectorHandler())
+        loaded(vision=True)
 
         response = client.post("/api/generate", json={
             "model": "m",
@@ -155,7 +129,7 @@ class TestGenerateRefusesImagesForNow:
         assert "Images in /api/generate" in response.json()["error"]
 
     def test_a_prompt_without_images_is_untouched(self, client, loaded):
-        loaded(chat_handler=None)
+        loaded(vision=False)
 
         response = client.post("/api/generate", json={
             "model": "m",
@@ -168,7 +142,7 @@ class TestGenerateRefusesImagesForNow:
 
 class TestAnUnusableImageIsAClientError:
     def test_url_is_refused_without_fetch_at_native_text_checkpoint(self, client, loaded):
-        loaded(chat_handler=FakeProjectorHandler())
+        loaded(vision=True)
 
         response = client.post("/api/chat", json={
             "model": "m",
@@ -184,7 +158,7 @@ class TestAnUnusableImageIsAClientError:
         assert "Image URLs are not supported" in response.json()["error"]
 
     def test_undecodable_media_is_refused_at_native_text_checkpoint(self, client, loaded):
-        loaded(chat_handler=FakeProjectorHandler())
+        loaded(vision=True)
 
         response = client.post("/api/chat", json={
             "model": "m",
