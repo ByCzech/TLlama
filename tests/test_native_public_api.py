@@ -118,11 +118,11 @@ async def test_checkpoint_limits_are_explicit_before_any_model_load(public, path
 
 
 @pytest.mark.parametrize('path', ['/api/chat', '/v1/chat/completions'])
-async def test_media_is_501_and_not_fetched_or_advertised(public, path):
+async def test_remote_media_is_refused_before_load_and_not_advertised_for_text(public, path):
     manager, client, name, _ = public
     body = request_body(name, path)
     body['messages'][0]['content'] = [{'type': 'image_url', 'image_url': {'url': 'file:///etc/passwd'}}]
-    assert (await client.post(path, json=body)).status_code == 501
+    assert (await client.post(path, json=body)).status_code == 400
     assert not manager.test.ledger
     assert 'vision' not in (await client.post('/api/show', json={'model': name})).json()['capabilities']
 

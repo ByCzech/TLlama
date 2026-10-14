@@ -13,8 +13,9 @@ from tllama.residency import ModelDefinition, ModelLease
 
 
 class ReplyWorker:
-    def __init__(self, metadata, *, content="ok", reasoning="", usage=None, timings=None):
+    def __init__(self, metadata, *, content="ok", reasoning="", usage=None, timings=None, vision=False):
         self.props = {"chat_template": metadata.get("template", "{{ Prompt }}"), "bos_token": "", "eos_token": ""}
+        self.props['modalities'] = {'vision':vision}
         self.content, self.reasoning = content, reasoning
         self.usage = {"prompt_tokens": 15, "completion_tokens": 542, "total_tokens": 557} if usage is None else usage
         self.timings = {"prompt_n": 15, "predicted_n": 542, "prompt_ms": 172.9, "predicted_ms": 5192.2} if timings is None else timings

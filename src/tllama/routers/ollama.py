@@ -105,14 +105,13 @@ async def show_model_info(request: dict):
     # having a thinking format, so a plain non-reasoning model is not
     # claimed to think just because it exists.
     #
-    # Tools capability awaits its model/runtime checkpoint. Vision remains
-    # unavailable on the public native text path until block 06.
+    # Offline vision is a configured capability, not a model-load probe.
+    # Actual inference checks the admitted worker's modalities separately.
     capabilities = ["completion"]
     if detect_reasoning_format(model_name, metadata_info) != "none":
         capabilities.append("thinking")
-    # Vision capability is restored with native media inference in block 06.
-
-
+    if metadata_info.get('vision_configured', metadata_info.get('has_projector')) is True:
+        capabilities.append('vision')
     # Ollama's own `show --modelfile` hands back the definition a model
     # was built from, and the workflow that makes it worth having is
     # fetching it, editing it and putting it back. So this is the .toml

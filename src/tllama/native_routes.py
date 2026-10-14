@@ -15,17 +15,17 @@ from tllama.errors import ollama_stream_error_line, openai_stream_error_frame
 from tllama.helpers.common import get_iso_time, validate_format, validate_sampling_options
 from tllama.helpers.prompt_render import render_generate_text
 from tllama.helpers.reasoning_split import detect_reasoning_format
-from tllama.helpers.vision import messages_carry_images, request_carries_images
+from tllama.helpers.vision import content_carries_images, request_carries_images, NO_MULTIMODAL_SUPPORT
 from tllama.native_api import (NativeAPI, ReplyContext, ollama_response, openai_response,
                               ollama_stream, openai_stream, public_error)
 from tllama.native_config import _plain
 from tllama.native_requests import (NativeRequest, prepare_ollama_chat, prepare_openai_chat,
-                                   prepare_completion, _response_format)
+                                   prepare_completion, _response_format, normalize_chat_input)
 from tllama.residency import _settle_owned
 from tllama.worker import WorkerProtocolError
 
 
-VISION_UNAVAILABLE = "Vision inference is temporarily unavailable during native migration (block 06)"
+VISION_UNAVAILABLE = "Images in /api/generate are not implemented in this native checkpoint"
 
 
 class NativeStreamingResponse(StreamingResponse):
@@ -92,11 +92,10 @@ def _validate(request, api, kind):
         if request.functions is not None or request.function_call is not None:
             raise ValueError("Deprecated functions/function_call is unsupported; use tools/tool_choice")
     if kind == "chat":
-        if messages_carry_images(request.messages):
-            raise HTTPException(501, VISION_UNAVAILABLE)
         if any(getattr(message, "function_call", None) is not None or message.role == "function"
                for message in request.messages):
             raise ValueError("Deprecated function-call history is unsupported; use tool messages")
+        return normalize_chat_input(request.messages)
 
 
 def lease_metadata(lease):
@@ -142,7 +141,7 @@ async def serve_native(manager, request, *, api, kind="chat"):
     stack, transferred = AsyncExitStack(), False
     phase = "prepare"
     try:
-        _validate(request, api, kind)
+        normalized = _validate(request, api, kind)
         keep_alive = request.keep_alive if api == "ollama" else None
         if api == "ollama":
             seconds = manager.resolve_keep_alive(keep_alive)
@@ -167,8 +166,12 @@ async def serve_native(manager, request, *, api, kind="chat"):
         if kind == "completion":
             prepared = await _completion_request(request, lease, metadata)
         else:
+            if any(content_carries_images(message['content']) for message in normalized):
+                modalities = (lease.worker.props or {}).get('modalities')
+                if not isinstance(modalities, dict) or modalities.get('vision') is not True:
+                    raise ValueError(NO_MULTIMODAL_SUPPORT)
             builder = prepare_ollama_chat if api == "ollama" else prepare_openai_chat
-            prepared = builder(request, resolved=lease.resolved, metadata_info=metadata)
+            prepared = builder(request, resolved=lease.resolved, metadata_info=metadata, normalized_messages=normalized)
         native = NativeAPI(lease.worker, prepared)
         phase = "inference"
         if not request.stream:

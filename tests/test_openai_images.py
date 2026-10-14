@@ -63,7 +63,7 @@ def client():
 @pytest.fixture
 def loaded(native_reply):
     def factory(chat_handler=None):
-        return native_reply()
+        return native_reply(vision=chat_handler is not None)
     return factory
 
 
@@ -148,8 +148,8 @@ class TestTheEndpoint:
             ]}],
         })
 
-        assert response.status_code == 501
-        assert "block 06" in response.text
+        assert response.status_code == 400
+        assert "Multimodal data provided" in response.text
 
     def test_remote_url_is_refused_at_native_text_checkpoint(self, client, loaded):
         loaded(chat_handler=FakeProjectorHandler())
@@ -162,10 +162,10 @@ class TestTheEndpoint:
             ]}],
         })
 
-        assert response.status_code == 501
-        assert "block 06" in response.text
+        assert response.status_code == 400
+        assert "Image URLs are not supported" in response.text
 
-    def test_projector_does_not_bypass_native_checkpoint_limit(self, client, loaded):
+    def test_worker_vision_capability_allows_image_inference(self, client, loaded):
         loaded(chat_handler=FakeProjectorHandler())
 
         response = client.post("/v1/chat/completions", json={
@@ -175,7 +175,7 @@ class TestTheEndpoint:
             ]}],
         })
 
-        assert response.status_code == 501
+        assert response.status_code == 200
 
     def test_text_alone_is_untouched(self, client, loaded):
         loaded(chat_handler=None)

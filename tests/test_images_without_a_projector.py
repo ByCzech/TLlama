@@ -44,7 +44,7 @@ def client():
 @pytest.fixture
 def loaded(native_reply):
     def factory(chat_handler=None):
-        return native_reply()
+        return native_reply(vision=chat_handler is not None)
     return factory
 
 
@@ -72,7 +72,7 @@ class TestChatRefusesAnImageItCannotUse:
             ],
         })
 
-        assert response.status_code == 501
+        assert response.status_code == 400
 
     def test_the_refusal_says_why(self, client, loaded):
         loaded(chat_handler=None)
@@ -85,7 +85,7 @@ class TestChatRefusesAnImageItCannotUse:
             ],
         })
 
-        assert "block 06" in response.json()["error"]
+        assert NO_MULTIMODAL_SUPPORT in response.json()["error"]
 
     def test_an_image_on_a_later_message_is_found_too(self, client, loaded):
         loaded(chat_handler=None)
@@ -100,7 +100,7 @@ class TestChatRefusesAnImageItCannotUse:
             ],
         })
 
-        assert response.status_code == 501
+        assert response.status_code == 400
 
     def test_an_empty_images_list_is_not_an_image(self, client, loaded):
         loaded(chat_handler=None)
@@ -126,7 +126,7 @@ class TestChatRefusesAnImageItCannotUse:
 
         assert response.status_code != 400
 
-    def test_projector_does_not_bypass_native_checkpoint_limit(self, client, loaded):
+    def test_worker_vision_capability_allows_image_inference(self, client, loaded):
         loaded(chat_handler=FakeProjectorHandler())
 
         response = client.post("/api/chat", json={
@@ -137,7 +137,7 @@ class TestChatRefusesAnImageItCannotUse:
             ],
         })
 
-        assert response.status_code == 501
+        assert response.status_code == 200
 
 
 class TestGenerateRefusesImagesForNow:
@@ -152,7 +152,7 @@ class TestGenerateRefusesImagesForNow:
         })
 
         assert response.status_code == 501
-        assert "block 06" in response.json()["error"]
+        assert "Images in /api/generate" in response.json()["error"]
 
     def test_a_prompt_without_images_is_untouched(self, client, loaded):
         loaded(chat_handler=None)
@@ -180,8 +180,8 @@ class TestAnUnusableImageIsAClientError:
             }],
         })
 
-        assert response.status_code == 501
-        assert "block 06" in response.json()["error"]
+        assert response.status_code == 400
+        assert "Image URLs are not supported" in response.json()["error"]
 
     def test_undecodable_media_is_refused_at_native_text_checkpoint(self, client, loaded):
         loaded(chat_handler=FakeProjectorHandler())
@@ -196,4 +196,4 @@ class TestAnUnusableImageIsAClientError:
             }],
         })
 
-        assert response.status_code == 501
+        assert response.status_code == 400
