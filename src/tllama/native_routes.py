@@ -9,6 +9,7 @@ import time
 
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
+from starlette.requests import ClientDisconnect
 from tllama.errors import ollama_stream_error_line, openai_stream_error_frame
 
 from tllama.helpers.common import get_iso_time, validate_format, validate_sampling_options
@@ -35,19 +36,39 @@ class NativeStreamingResponse(StreamingResponse):
         super().__init__(content, media_type=media_type)
         self._stack, self._cleanup_task = stack, None
 
-    async def _cleanup(self):
+    async def _cleanup(self, tasks):
         try:
+            # Wait for the producer to stop before closing its generator.
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
             await self.body_iterator.aclose()
         finally:
             await self._stack.aclose()
 
     async def __call__(self, scope, receive, send):
+        tasks = []
         try:
-            await super().__call__(scope, receive, send)
+            # Observe disconnects even under ASGI 2.4: a producer can be
+            # waiting for its next native token without calling send again.
+            stream = asyncio.create_task(self.stream_response(send))
+            disconnected = asyncio.create_task(self.listen_for_disconnect(receive))
+            tasks.extend((stream, disconnected))
+            done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            if stream in done:
+                try:
+                    await stream
+                except OSError as exc:
+                    raise ClientDisconnect() from exc
+            else:
+                await disconnected
         finally:
             if self._cleanup_task is None:
-                self._cleanup_task = asyncio.create_task(self._cleanup())
+                self._cleanup_task = asyncio.create_task(self._cleanup(tasks))
             await _settle_owned(self._cleanup_task)
+        if self.background is not None:
+            await self.background()
 
 
 def _validate(request, api, kind):

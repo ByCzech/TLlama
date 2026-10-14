@@ -5,10 +5,12 @@ from contextlib import aclosing
 import json
 import os
 from pathlib import Path
+import socket
 import sys
 
 import httpx
 import pytest
+import uvicorn
 from starlette.requests import ClientDisconnect
 
 from tllama.main import app
@@ -195,9 +197,9 @@ async def test_send_failure_closes_lease_even_when_body_never_started(public, po
         if message['type'] == ('http.response.start' if point == 'headers' else 'http.response.body'):
             raise OSError('client disconnected')
     async def receive():
-        return {'type': 'http.disconnect'}
+        await asyncio.Event().wait()
     with pytest.raises((OSError, ClientDisconnect)):
-        await response({'type':'http','asgi':{'spec_version':'2.4'}}, receive, send)
+        await asyncio.wait_for(response({'type':'http','asgi':{'spec_version':'2.4'}}, receive, send), timeout=2)
     await wait_until(lambda: not manager.native_snapshot())
 
 
@@ -225,12 +227,12 @@ async def test_public_non_stream_disconnect_cancels_upstream_without_unloading_o
     assert manager.test.ledger[0].process.returncode is None
 
 
-def stream_mode(manager, mode):
+def stream_mode(manager, mode, method='chat_stream'):
     original = manager._native._factory
     def factory(spec):
         worker = original(spec)
-        stream = worker.chat_stream
-        worker.chat_stream = lambda body: stream({**body, 'stub': mode})
+        stream = getattr(worker, method)
+        setattr(worker, method, lambda body: stream({**body, 'stub': mode}))
         return worker
     manager._native._factory = factory
 
@@ -274,6 +276,79 @@ async def test_public_stream_client_cancellation_closes_upstream_response(public
     await wait_until(lambda: (manager.test.roots[0] / 'cancelled').exists())
     assert manager.native_snapshot()[0]['leases'] == 0
     assert manager.test.ledger[0].process.returncode is None
+
+
+@pytest.mark.parametrize('spec_version', ['2.0', '2.3', '2.4'])
+@pytest.mark.parametrize('path', ['/api/chat', '/api/generate', '/v1/chat/completions'])
+async def test_stream_disconnect_interrupts_wait_for_next_native_token(public, spec_version, path):
+    manager, client, name, _ = public
+    stream_mode(manager, 'hold', 'completion_stream' if path == '/api/generate' else 'chat_stream')
+    request = (OllamaGenerateRequest(**request_body(name, path, True)) if path == '/api/generate'
+               else OllamaChatRequest(**request_body(name, path, True)))
+    if path.startswith('/v1/'):
+        from tllama.schemas.openai import ChatCompletionRequest
+        request = ChatCompletionRequest(**request_body(name, path, True))
+    response = await serve_native(manager, request, api='openai' if path.startswith('/v1/') else 'ollama',
+                                  kind='completion' if path == '/api/generate' else 'chat')
+    output = asyncio.Event()
+    sent = []
+    async def send(message):
+        # Some servers silently discard sends after a closed connection.
+        sent.append(message)
+        if message['type'] == 'http.response.body' and message.get('body'):
+            output.set()
+    async def receive():
+        await output.wait()
+        return {'type': 'http.disconnect'}
+    await asyncio.wait_for(response({'type':'http', 'asgi':{'spec_version':spec_version}}, receive, send), timeout=2)
+    await wait_until(lambda: (manager.test.roots[0] / 'cancelled').exists())
+    assert manager.native_snapshot()[0]['leases'] == 0
+    assert not any(b'"done": true' in frame.get('body', b'') or b'[DONE]' in frame.get('body', b'')
+                   for frame in sent)
+    worker = manager.test.ledger[0]
+    assert worker.process.returncode is None
+    followup = await client.post(path, json=request_body(name, path))
+    assert followup.status_code == 200 and len(manager.test.ledger) == 1
+
+
+@pytest.mark.parametrize('spec_version', ['2.3', '2.4'])
+@pytest.mark.parametrize('path', ['/api/chat', '/api/generate', '/v1/chat/completions'])
+async def test_tcp_stream_disconnect_releases_native_slot_before_next_token(public, path, spec_version):
+    manager, _, name, _ = public
+    stream_mode(manager, 'hold', 'completion_stream' if path == '/api/generate' else 'chat_stream')
+    async def public_app(scope, receive, send):
+        # Exercise both Starlette branches regardless of installed Uvicorn.
+        scope = {**scope, 'asgi':{**scope.get('asgi', {}), 'spec_version':spec_version}}
+        await app(scope, receive, send)
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.bind(('127.0.0.1', 0))
+    sock.listen(128)
+    server = uvicorn.Server(uvicorn.Config(public_app, http='h11', loop='asyncio', lifespan='off',
+                                          access_log=False, log_level='warning', timeout_graceful_shutdown=1))
+    task = asyncio.create_task(server.serve(sockets=[sock]))
+    try:
+        await wait_until(lambda: server.started)
+        async with httpx.AsyncClient(base_url=f'http://127.0.0.1:{sock.getsockname()[1]}',
+                                     trust_env=False, timeout=3) as client:
+            async with client.stream('POST', path, json=request_body(name, path, True)) as response:
+                assert response.status_code == 200
+                async for line in response.aiter_lines():
+                    if 'Ahoj světe' in line:
+                        break
+                else:
+                    pytest.fail('Missing first native token')
+            await wait_until(lambda: manager.native_snapshot()[0]['leases'] == 0)
+            await wait_until(lambda: (manager.test.roots[0] / 'cancelled').exists())
+            worker = manager.test.ledger[0]
+            assert worker.process.returncode is None
+            result = await client.post(path, json=request_body(name, path))
+            assert result.status_code == 200 and len(manager.test.ledger) == 1
+    finally:
+        server.should_exit = True
+        try:
+            await asyncio.wait_for(task, timeout=3)
+        finally:
+            sock.close()
 
 
 async def test_cancelled_loading_client_does_not_cancel_other_public_requests(public):
