@@ -38,7 +38,8 @@ dependencies = [
     # TLlama rewrites a file in place (e.g. `from =` -> `model =` after an
     # import). See TLlama_virtual_models_spec.md §2 for why configparser and
     # the other TOML libraries were ruled out.
-    "tomlkit>=0.13.0"
+    "tomlkit>=0.13.0",
+    "httpx>=0.28.0",
 ]
 
 [project.optional-dependencies]
@@ -47,7 +48,6 @@ huggingface = ["huggingface_hub>=0.30.0"]
 test = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
-    "httpx",
 ]
 
 [project.scripts]
