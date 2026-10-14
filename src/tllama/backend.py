@@ -2878,7 +2878,16 @@ class ModelManager:
         }
 
     async def delete_model(self, model_ref: str) -> Dict[str, Any]:
-        return await asyncio.to_thread(self.delete_model_definition, model_ref)
+        async def retire_and_delete():
+            await self._native.unload(model_ref)
+            try:
+                return await asyncio.to_thread(self.delete_model_definition, model_ref)
+            finally:
+                # Cover acquisitions overlapping definition deletion as well.
+                await self._native.unload(model_ref)
+        # Do not let caller cancellation leave a late file deletion with a
+        # freshly selectable native generation after its first retirement.
+        return await _settle_owned(asyncio.create_task(retire_and_delete()))
 
     def _strip_gguf_suffix(self, value: str) -> str:
         return value[:-5] if value.lower().endswith(".gguf") else value

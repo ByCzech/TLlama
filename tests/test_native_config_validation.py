@@ -78,7 +78,7 @@ def test_negative_temperature_is_rejected_before_model_actions(client, monkeypat
         pytest.fail("Invalid sampling reached model unloading")
 
     for module in (ollama, openai):
-        monkeypatch.setattr(module.model_manager, "get_model", forbidden)
+        monkeypatch.setattr(module.model_manager, "acquire_native_model", forbidden)
         monkeypatch.setattr(module.model_manager, "unload_model", forbidden_unload)
     body = {"model": "m", "stream": False, "keep_alive": 0}
     if path == "/api/generate":
@@ -101,7 +101,7 @@ def test_explicit_tail_free_option_is_rejected_even_when_disabled(client, monkey
     async def forbidden(*args, **kwargs):
         pytest.fail("Removed sampler reached loading")
 
-    monkeypatch.setattr(ollama.model_manager, "get_model", forbidden)
+    monkeypatch.setattr(ollama.model_manager, "acquire_native_model", forbidden)
     body = {"model": "m", "stream": False, "options": {"tfs_z": 1.0}}
     body.update({"prompt": "hi"} if path.endswith("generate") else {
         "messages": [{"role": "user", "content": "hi"}],

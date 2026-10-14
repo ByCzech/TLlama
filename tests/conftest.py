@@ -40,6 +40,16 @@ def make_manager(models_root):
 
 
 @pytest.fixture
+def native_reply(manager, monkeypatch):
+    """Install explicit native lease/worker fakes for a public API test."""
+    from native_route_fakes import install_reply
+
+    def factory(**values):
+        return install_reply(monkeypatch, manager, **values)
+    return factory
+
+
+@pytest.fixture
 def gguf_file(models_root):
     """Place a file in the model store and return its path.
 

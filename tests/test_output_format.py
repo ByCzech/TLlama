@@ -29,8 +29,8 @@ def no_model_actions(monkeypatch):
     def forbidden_unload(*args, **kwargs):
         pytest.fail("Invalid format reached model unloading")
 
-    monkeypatch.setattr(router.model_manager, "get_model", forbidden_load)
-    monkeypatch.setattr(router.model_manager, "unload_model", forbidden_unload)
+    monkeypatch.setattr(router.model_manager, "acquire_native_model", forbidden_load)
+    monkeypatch.setattr(router.model_manager, "unload_native_model", forbidden_unload)
 
 
 @pytest.mark.parametrize("path", ["/api/chat", "/api/generate"])

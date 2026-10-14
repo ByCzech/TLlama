@@ -1,49 +1,16 @@
-"""build_sampling_kwargs() must actually be called by all three inference
-handlers, not just imported.
+"""Public routes actually apply the shared native sampling layers."""
 
-This exists because of a real, confirmed miss earlier in this same series:
-render_chat_prompt_with_explicit_think() carried the first version of the
-[system] default-prompt logic, had passing tests for the function itself,
-and was never actually reachable from /api/chat -- superseded by
-create_chat_completion_ex() months earlier, with the dead function and its
-import simply never removed. A source-inspection test like this one would
-have caught that immediately instead of four months later.
-
-/v1/chat/completions is already covered by
-tests/test_openai_sampling_defaults.py; the two Ollama-native handlers are
-covered here.
-"""
-
-import inspect
-
-from tllama.routers import ollama as ollama_router
+from dataclasses import replace
+import pytest
 
 
-def test_generate_handler_calls_build_sampling_kwargs():
-    source = inspect.getsource(ollama_router.ollama_generate)
-
-    assert "build_sampling_kwargs(" in source
-
-
-def test_chat_handler_calls_build_sampling_kwargs():
-    source = inspect.getsource(ollama_router.ollama_chat)
-
-    assert "build_sampling_kwargs(" in source
-
-
-def test_every_handler_passes_the_global_layer_too():
-    """Calling build_sampling_kwargs() is no longer enough: with the third
-    argument omitted, TLLAMA_SAMPLING_* would parse at startup, sit in the
-    manager and change nothing. Each handler has to hand it over."""
-    from tllama.routers import openai as openai_router
-
-    handlers = (
-        ollama_router.ollama_generate,
-        ollama_router.ollama_chat,
-        openai_router.chat_completions,
-    )
-
-    for handler in handlers:
-        source = inspect.getsource(handler)
-        assert "build_sampling_kwargs(" in source, handler.__name__
-        assert "model_manager.sampling_overrides" in source, handler.__name__
+@pytest.mark.parametrize("path", ["/api/chat", "/api/generate", "/v1/chat/completions"])
+def test_every_handler_passes_snapshot_and_global_sampling(client, native_reply, path):
+    state = native_reply(metadata={"sampling_defaults": {"temperature": 0.4}})
+    state.manager.config = replace(state.manager.config, sampling_overrides={"top_p": "0.65", "temperature": "0.7"})
+    payload = {"model": "m", "stream": False, "messages": [{"role": "user", "content": "hi"}]}
+    if path.endswith("generate"):
+        payload.update(prompt="hi", raw=True)
+    assert client.post(path, json=payload).status_code == 200
+    body = state.worker.calls[-1][1]
+    assert body["temperature"] == 0.4 and body["top_p"] == 0.65

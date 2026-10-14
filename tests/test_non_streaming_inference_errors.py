@@ -19,47 +19,10 @@ from tllama.routers import ollama as ollama_router
 from tllama.routers import openai as openai_router
 
 
-class ExplodingLlama:
-    """Stands in for a loaded model whose generation fails.
-
-    Only the surface /api/chat and /api/generate actually touch is
-    implemented; the failure is the point, not the arithmetic.
-    """
-
-    def create_completion(self, *args, **kwargs):
-        raise RuntimeError("llama_decode failed")
-
-    def token_bos(self):
-        return 1
-
-    def token_eos(self):
-        return 2
-
-    def tokenize(self, *args, **kwargs):
-        return [1, 2, 3]
-
-    def n_ctx(self):
-        return 4096
-
-
 @pytest.fixture
-def a_model_that_fails_to_generate(monkeypatch):
-    """A model that loads fine and then blows up during generation."""
-
-    async def fake_get_model(model_name, *args, **kwargs):
-        return ExplodingLlama()
-
-    async def fake_get_model_metadata(model_name, *args, **kwargs):
-        return {}
-
-    def fake_chat_completion(*args, **kwargs):
-        raise RuntimeError("llama_decode failed")
-
-    monkeypatch.setattr(model_manager, "get_model", fake_get_model)
-    monkeypatch.setattr(model_manager, "get_model_metadata", fake_get_model_metadata)
-    monkeypatch.setattr(ollama_router, "create_chat_completion_ex", fake_chat_completion)
-    monkeypatch.setattr(openai_router, "create_chat_completion_ex", fake_chat_completion)
-
+def a_model_that_fails_to_generate(native_reply):
+    state = native_reply()
+    state.worker.error = RuntimeError("llama_decode failed")
     return "exploding"
 
 
@@ -198,7 +161,7 @@ class TestOpenAiSurface:
         assert body["error"]["type"] == "server_error"
 
     def test_a_broken_toml_is_still_reported_as_such(
-        self, client, monkeypatch
+        self, client, native_reply
     ):
         """The new except must not swallow the TomlModelError passthrough
         added alongside it: that one is raised before generation, from
@@ -206,10 +169,8 @@ class TestOpenAiSurface:
         """
         from tllama.helpers.model_toml import TomlModelError
 
-        async def refuse(model_name, *args, **kwargs):
-            raise TomlModelError("Local/x.toml: invalid TOML")
-
-        monkeypatch.setattr(model_manager, "get_model", refuse)
+        state = native_reply()
+        state.load_error = TomlModelError("Local/x.toml: invalid TOML")
 
         response = client.post(
             "/v1/chat/completions",

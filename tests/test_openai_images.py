@@ -61,24 +61,9 @@ def client():
 
 
 @pytest.fixture
-def loaded(monkeypatch):
+def loaded(native_reply):
     def factory(chat_handler=None):
-        from tllama.routers import openai as openai_router
-
-        llm = FakeLlm(chat_handler=chat_handler)
-
-        async def fake_get_model(*args, **kwargs):
-            return llm
-
-        async def fake_metadata(*args, **kwargs):
-            return {}
-
-        monkeypatch.setattr(openai_router.model_manager, "get_model", fake_get_model)
-        monkeypatch.setattr(
-            openai_router.model_manager, "get_model_metadata", fake_metadata
-        )
-        return llm
-
+        return native_reply()
     return factory
 
 
@@ -163,10 +148,10 @@ class TestTheEndpoint:
             ]}],
         })
 
-        assert response.status_code == 400
-        assert NO_MULTIMODAL_SUPPORT in response.text
+        assert response.status_code == 501
+        assert "block 06" in response.text
 
-    def test_a_remote_url_gets_a_400(self, client, loaded):
+    def test_remote_url_is_refused_at_native_text_checkpoint(self, client, loaded):
         loaded(chat_handler=FakeProjectorHandler())
 
         response = client.post("/v1/chat/completions", json={
@@ -177,10 +162,10 @@ class TestTheEndpoint:
             ]}],
         })
 
-        assert response.status_code == 400
-        assert "base64" in response.text
+        assert response.status_code == 501
+        assert "block 06" in response.text
 
-    def test_a_model_with_a_projector_is_not_refused(self, client, loaded):
+    def test_projector_does_not_bypass_native_checkpoint_limit(self, client, loaded):
         loaded(chat_handler=FakeProjectorHandler())
 
         response = client.post("/v1/chat/completions", json={
@@ -190,7 +175,7 @@ class TestTheEndpoint:
             ]}],
         })
 
-        assert response.status_code != 400
+        assert response.status_code == 501
 
     def test_text_alone_is_untouched(self, client, loaded):
         loaded(chat_handler=None)

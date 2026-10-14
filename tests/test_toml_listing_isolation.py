@@ -127,29 +127,14 @@ def resident_model_with_a_broken_toml():
 
 
 class TestPs:
-    def test_ps_still_answers(self, client, resident_model_with_a_broken_toml):
+    def test_ps_explicitly_reports_migration_unavailability(self, client, resident_model_with_a_broken_toml):
         response = client.get("/api/ps")
+        assert response.status_code == 503
+        assert "block 06" in response.json()["error"]
+        assert "models" not in response.json()
 
-        assert response.status_code == 200
-
-    def test_a_resident_model_is_kept_not_dropped(
-        self, client, resident_model_with_a_broken_toml
-    ):
-        """It is still loaded and still holding memory whatever state its
-        .toml is in. Dropping it would describe the machine less accurately
-        than listing it."""
-        response = client.get("/api/ps")
-        names = {m["name"] for m in response.json()["models"]}
-
-        assert resident_model_with_a_broken_toml in names
-
-    def test_its_metadata_degrades_to_unknown(
-        self, client, resident_model_with_a_broken_toml
-    ):
-        response = client.get("/api/ps")
-        entry = next(
-            m for m in response.json()["models"]
-            if m["name"] == resident_model_with_a_broken_toml
-        )
-
-        assert entry["details"]["family"] == "unknown"
+    def test_ps_does_not_read_legacy_registry_or_metadata(self, client, monkeypatch):
+        def forbidden(*args, **kwargs):
+            pytest.fail("Native checkpoint tried to report the legacy registry")
+        monkeypatch.setattr(model_manager, "list_loaded_models", forbidden)
+        assert client.get("/api/ps").status_code == 503

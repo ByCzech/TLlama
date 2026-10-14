@@ -1,0 +1,182 @@
+"""Shared ownership and preparation for the public native text endpoints."""
+
+from __future__ import annotations
+
+import asyncio
+from contextlib import AsyncExitStack, aclosing
+from dataclasses import replace
+import time
+
+from fastapi import HTTPException
+from fastapi.responses import StreamingResponse
+from tllama.errors import ollama_stream_error_line, openai_stream_error_frame
+
+from tllama.helpers.common import get_iso_time, validate_format, validate_sampling_options
+from tllama.helpers.prompt_render import render_generate_text
+from tllama.helpers.reasoning_split import detect_reasoning_format
+from tllama.helpers.vision import messages_carry_images, request_carries_images
+from tllama.native_api import (NativeAPI, ReplyContext, ollama_response, openai_response,
+                              ollama_stream, openai_stream, public_error)
+from tllama.native_config import _plain
+from tllama.native_requests import (NativeRequest, prepare_ollama_chat, prepare_openai_chat,
+                                   prepare_completion, _response_format)
+from tllama.residency import _settle_owned
+from tllama.worker import WorkerProtocolError
+
+
+VISION_UNAVAILABLE = "Vision inference is temporarily unavailable during native migration (block 06)"
+MEMORY_UNAVAILABLE = "Native model memory reporting is temporarily unavailable during migration (block 06)"
+
+
+class NativeStreamingResponse(StreamingResponse):
+    """Own the acquired lease even if the body never starts or send fails."""
+
+    def __init__(self, content, stack, *, media_type):
+        super().__init__(content, media_type=media_type)
+        self._stack, self._cleanup_task = stack, None
+
+    async def _cleanup(self):
+        try:
+            await self.body_iterator.aclose()
+        finally:
+            await self._stack.aclose()
+
+    async def __call__(self, scope, receive, send):
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            if self._cleanup_task is None:
+                self._cleanup_task = asyncio.create_task(self._cleanup())
+            await _settle_owned(self._cleanup_task)
+
+
+def _validate(request, api, kind):
+    if api == "ollama":
+        validate_format(request.format)
+        validate_sampling_options(request.options)
+        if kind == "completion":
+            if request.suffix:
+                raise HTTPException(501, "FIM suffix is not implemented in this native checkpoint")
+            if request.context:
+                raise ValueError("Nonempty generate context is unsupported; supply explicit messages instead")
+            if request.raw and any(value is not None for value in (request.template, request.system, request.context)):
+                raise ValueError("raw mode does not support template, system, or context")
+            if request_carries_images(request.images):
+                raise HTTPException(501, VISION_UNAVAILABLE)
+    else:
+        validate_sampling_options({key: value for key, value in {
+            "temperature": request.temperature, "top_p": request.top_p, "num_predict": request.max_tokens,
+        }.items() if value is not None})
+        if request.response_format is not None:
+            _response_format(request.response_format)
+        if request.functions is not None or request.function_call is not None:
+            raise ValueError("Deprecated functions/function_call is unsupported; use tools/tool_choice")
+    if kind == "chat":
+        if messages_carry_images(request.messages):
+            raise HTTPException(501, VISION_UNAVAILABLE)
+        if any(getattr(message, "function_call", None) is not None or message.role == "function"
+               for message in request.messages):
+            raise ValueError("Deprecated function-call history is unsupported; use tool messages")
+
+
+def lease_metadata(lease):
+    metadata = _plain(lease.definition.metadata)
+    props = lease.worker.props or {}
+    # Worker props reflect the actual selected template. TOML is already part
+    # of the generation; no mutable definition/header lookup occurs here.
+    template = lease.resolved.launch.template
+    if template is None:
+        template = props.get("chat_template", metadata.get("template"))
+    metadata["template"] = template
+    metadata["default_system_prompt"] = lease.resolved.system_prompt
+    if lease.resolved.model_sampling is not None:
+        metadata["sampling_defaults"] = _plain(lease.resolved.model_sampling)
+        metadata["stop_defaults"] = list(lease.resolved.model_stop or ())
+    return metadata
+
+
+async def _completion_request(request, lease, metadata) -> NativeRequest:
+    props = lease.worker.props or {}
+    bos, eos = props.get("bos_token", ""), props.get("eos_token", "")
+    if not isinstance(bos, str) or not isinstance(eos, str):
+        raise WorkerProtocolError("Native BOS/EOS properties must be strings")
+    if request.raw:
+        prompt, stop = request.prompt, None
+    else:
+        prompt, stop = render_generate_text(metadata, request, bos_token=bos, eos_token=eos)
+    prepared = prepare_completion(prompt, request.options, resolved=lease.resolved, metadata_info=metadata,
+                                  format_value=request.format,
+                                  reasoning_format=detect_reasoning_format(request.model, metadata), think=request.think)
+    body = prepared.body()
+    if stop is not None:
+        body["stop"] = stop
+    tokens = await lease.worker.tokenize(prompt, add_special=True)
+    # Preserve the former completion tokenizer's initial duplicate-BOS rule.
+    if bos and prompt.startswith(bos) and len(tokens) > 1 and tokens[0] == tokens[1]:
+        tokens = tokens[1:]
+    body["prompt"] = tokens  # Native mixed token input does not add another BOS.
+    return replace(prepared, payload=body)
+
+
+async def serve_native(manager, request, *, api, kind="chat"):
+    stack, transferred = AsyncExitStack(), False
+    phase = "prepare"
+    try:
+        _validate(request, api, kind)
+        keep_alive = request.keep_alive if api == "ollama" else None
+        if api == "ollama":
+            seconds = manager.resolve_keep_alive(keep_alive)
+            empty = not request.messages if kind == "chat" else not request.prompt
+            if empty:
+                phase = "load"
+                if seconds == 0:
+                    await manager.unload_native_model(request.model)
+                else:
+                    await manager.preload_native_model(request.model, num_ctx=request.options.get("num_ctx"), keep_alive=keep_alive)
+                payload = {"model": request.model, "created_at": get_iso_time(), "done": True,
+                           "done_reason": "unload" if seconds == 0 else "load"}
+                payload.update({"message": {"role": "assistant", "content": ""}} if kind == "chat" else {"response": ""})
+                return payload
+        started = time.monotonic_ns()
+        phase = "load"
+        lease = await stack.enter_async_context(manager.acquire_native_model(
+            request.model, num_ctx=request.options.get("num_ctx") if api == "ollama" else None, keep_alive=keep_alive))
+        context = ReplyContext(request.model, started_ns=started, acquired_ns=time.monotonic_ns())
+        metadata = lease_metadata(lease)
+        phase = "prepare"
+        if kind == "completion":
+            prepared = await _completion_request(request, lease, metadata)
+        else:
+            builder = prepare_ollama_chat if api == "ollama" else prepare_openai_chat
+            prepared = builder(request, resolved=lease.resolved, metadata_info=metadata)
+        native = NativeAPI(lease.worker, prepared)
+        phase = "inference"
+        if not request.stream:
+            result = await native.result()
+            return ollama_response(result, context, kind=kind) if api == "ollama" else openai_response(result, context)
+
+        async def body():
+            try:
+                async with native.stream() as events:
+                    frames = ollama_stream(events, context, kind=kind) if api == "ollama" else openai_stream(events, context)
+                    async with aclosing(frames):
+                        async for frame in frames:
+                            yield frame
+            except Exception as exc:
+                # Opening an upstream response can fail before the serializer
+                # begins, but the public streaming headers are already sent.
+                error = public_error(exc, api=api)
+                yield ollama_stream_error_line(error.message) if api == "ollama" else openai_stream_error_frame(error.message, error.status)
+
+        response = NativeStreamingResponse(body(), stack.pop_all(),
+                                           media_type="application/x-ndjson" if api == "ollama" else "text/event-stream")
+        transferred = True
+        return response
+    except HTTPException:
+        raise
+    except Exception as exc:
+        error = public_error(exc, api=api, phase=phase)
+        raise HTTPException(error.status, error.message) from exc
+    finally:
+        if not transferred:
+            await _settle_owned(asyncio.create_task(stack.aclose()))

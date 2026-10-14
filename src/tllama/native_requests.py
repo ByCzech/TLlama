@@ -1,7 +1,8 @@
 """Prepare text API payloads from a lease's resolved configuration.
 
 No model lookup, transport, prompt rendering or public route selection occurs
-here. Vision and the generate/suffix policy remain separate checkpoints.
+here. Generate rendering lives in native_routes; vision and FIM remain separate
+checkpoints.
 """
 
 from __future__ import annotations

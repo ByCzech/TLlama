@@ -106,44 +106,13 @@ def client():
 
 
 @pytest.fixture
-def answered(monkeypatch):
-    """Answer a request with fixed timings from the context."""
+def answered(native_reply):
     def factory(timings=(172_900_000, 5_192_200_000)):
-        from tllama.routers import ollama as ollama_router
-
-        llm = FakeLlm()
-
-        async def fake_get_model(*args, **kwargs):
-            return llm
-
-        async def fake_metadata(*args, **kwargs):
-            return {"template": SIMPLE_TEMPLATE}
-
-        def fake_completion(*args, **kwargs):
-            return {
-                "choices": [{
-                    "message": {"role": "assistant", "content": "ok"},
-                    "text": "ok",
-                    "finish_reason": "stop",
-                }],
-                "usage": {"prompt_tokens": 15, "completion_tokens": 542},
-            }
-
-        monkeypatch.setattr(ollama_router.model_manager, "get_model", fake_get_model)
-        monkeypatch.setattr(
-            ollama_router.model_manager, "get_model_metadata", fake_metadata
-        )
-        monkeypatch.setattr(ollama_router, "create_chat_completion_ex", fake_completion)
-        monkeypatch.setattr(ollama_router, "reset_eval_counters", lambda llm: True)
-        monkeypatch.setattr(
-            ollama_router, "counted_for_request", lambda was_reset, llm: (15, 542)
-        )
-        monkeypatch.setattr(
-            ollama_router, "timed_for_request", lambda was_reset, llm: timings
-        )
-
-        return llm
-
+        measured = {"prompt_n": 15, "predicted_n": 542}
+        for name, value in zip(("prompt_ms", "predicted_ms"), timings):
+            if value is not None:
+                measured[name] = value / 1_000_000
+        return native_reply(metadata={"template": SIMPLE_TEMPLATE}, timings=measured)
     return factory
 
 
@@ -190,19 +159,8 @@ class TestWhatTheReplyCarries:
         supposed to be part of. The delay here stands in for that load,
         which is otherwise too quick for the difference to show.
         """
-        answered(timings=(1_000, 2_000))
-
-        from tllama.routers import ollama as ollama_router
-        real_get_model = ollama_router.model_manager.get_model
-
-        async def slow_get_model(*args, **kwargs):
-            import asyncio
-            await asyncio.sleep(0.05)
-            return await real_get_model(*args, **kwargs)
-
-        monkeypatch.setattr(
-            ollama_router.model_manager, "get_model", slow_get_model
-        )
+        state = answered(timings=(1_000, 2_000))
+        state.load_delay = 0.05
 
         reply = client.post(path, json=body).json()
 
@@ -218,80 +176,17 @@ class TestWhatTheReplyCarries:
 
         reply = client.post(path, json=body).json()
 
-        assert reply["prompt_eval_duration"] is None
-        assert reply["eval_duration"] is None
+        assert "prompt_eval_duration" not in reply
+        assert "eval_duration" not in reply
 
 
-async def test_waiting_generate_does_not_reset_running_inference(
-    manager, monkeypatch
-):
-    import asyncio
-    import threading
-    from contextlib import asynccontextmanager
-
-    from tllama.routers import ollama as router
+async def test_non_stream_generate_uses_request_local_native_timings(native_reply):
+    from tllama.routers import ollama
     from tllama.schemas.ollama import OllamaGenerateRequest
-
-    started = asyncio.Event()
-    queued = asyncio.Event()
-    release = threading.Event()
-    loop = asyncio.get_running_loop()
-    events = []
-
-    class BlockingLlm(FakeLlm):
-        def create_completion(self, *, prompt, **kwargs):
-            events.append(f"{prompt}:start")
-            if prompt == "first":
-                loop.call_soon_threadsafe(started.set)
-                assert release.wait(timeout=5)
-            events.append(f"{prompt}:end")
-            return super().create_completion()
-
-    llm = BlockingLlm()
-
-    async def get_model(*args, **kwargs):
-        return llm
-
-    async def metadata(*args, **kwargs):
-        return {}
-
-    original_slot = manager.acquire_inference_slot
-
-    @asynccontextmanager
-    async def tracked_slot(name):
-        if started.is_set():
-            queued.set()
-        async with original_slot(name):
-            yield
-
-    def reset(model):
-        events.append("reset")
-        return True
-
-    monkeypatch.setattr(router, "model_manager", manager)
-    monkeypatch.setattr(manager, "get_model", get_model)
-    monkeypatch.setattr(manager, "get_model_metadata", metadata)
-    monkeypatch.setattr(manager, "acquire_inference_slot", tracked_slot)
-    monkeypatch.setattr(router, "reset_eval_counters", reset)
-    monkeypatch.setattr(router, "timed_for_request", lambda *args: (1, 2))
-
-    def request(prompt):
-        return OllamaGenerateRequest(
-            model="m", prompt=prompt, raw=True, stream=False
-        )
-
-    first = asyncio.create_task(router.ollama_generate(request("first")))
-    second = None
-    try:
-        await asyncio.wait_for(started.wait(), timeout=2)
-        second = asyncio.create_task(router.ollama_generate(request("second")))
-        await asyncio.wait_for(queued.wait(), timeout=2)
-        assert events == ["reset", "first:start"]
-    finally:
-        release.set()
-        await asyncio.gather(first, *([second] if second is not None else []))
-
-    assert events == [
-        "reset", "first:start", "first:end",
-        "reset", "second:start", "second:end",
-    ]
+    state = native_reply()
+    first = await ollama.ollama_generate(OllamaGenerateRequest(model="m", prompt="first", raw=True, stream=False))
+    state.worker.timings["prompt_ms"] = 8
+    second = await ollama.ollama_generate(OllamaGenerateRequest(model="m", prompt="second", raw=True, stream=False))
+    assert first["prompt_eval_duration"] == 172_900_000
+    assert second["prompt_eval_duration"] == 8_000_000
+    assert state.refs == 0

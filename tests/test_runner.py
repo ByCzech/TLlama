@@ -32,7 +32,7 @@ def policy(manager, monkeypatch):
         calls.append(("load", name))
         return object()
 
-    def unload(name):
+    async def unload(name):
         calls.append(("unload", name))
 
     async def metadata(name, **kwargs):
@@ -57,8 +57,8 @@ def policy(manager, monkeypatch):
     async def noop(*args, **kwargs):
         return None
 
-    monkeypatch.setattr(manager, "get_model", load)
-    monkeypatch.setattr(manager, "unload_model", unload)
+    monkeypatch.setattr(manager, "preload_native_model", load)
+    monkeypatch.setattr(manager, "unload_native_model", unload)
     monkeypatch.setattr(manager, "get_model_metadata", metadata)
     monkeypatch.setattr(manager, "get_model_metadata_best_effort", metadata)
     monkeypatch.setattr(manager, "read_model_definition", lambda *args: "[llm]\n")
@@ -189,10 +189,9 @@ def test_runner_metadata_covers_loaded_and_loading_models(client, policy, monkey
 
     tags = client.get("/api/tags").json()["models"]
     assert tags[0]["details"]["runner"] == "llamacpp"
-    ps = client.get("/api/ps").json()["models"]
-    assert [entry["model"] for entry in ps] == ["ready", "loading"]
-    assert all(entry["runner"] == "llamacpp" for entry in ps)
-    assert all("runner" not in entry["details"] for entry in ps)
+    ps = client.get("/api/ps")
+    assert ps.status_code == 503
+    assert "block 06" in ps.json()["error"]
 
 
 @pytest.mark.parametrize("value,expected", [("true", True), ("false", False)])

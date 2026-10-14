@@ -42,27 +42,9 @@ def client():
 
 
 @pytest.fixture
-def loaded(monkeypatch):
-    """Put a model behind the endpoints without loading anything."""
+def loaded(native_reply):
     def factory(chat_handler=None):
-        from tllama.routers import ollama as ollama_router
-
-        llm = FakeLlm(chat_handler=chat_handler)
-
-        async def fake_get_model(*args, **kwargs):
-            return llm
-
-        async def fake_metadata(*args, **kwargs):
-            return {}
-
-        monkeypatch.setattr(
-            ollama_router.model_manager, "get_model", fake_get_model
-        )
-        monkeypatch.setattr(
-            ollama_router.model_manager, "get_model_metadata", fake_metadata
-        )
-        return llm
-
+        return native_reply()
     return factory
 
 
@@ -90,7 +72,7 @@ class TestChatRefusesAnImageItCannotUse:
             ],
         })
 
-        assert response.status_code == 400
+        assert response.status_code == 501
 
     def test_the_refusal_says_why(self, client, loaded):
         loaded(chat_handler=None)
@@ -103,7 +85,7 @@ class TestChatRefusesAnImageItCannotUse:
             ],
         })
 
-        assert NO_MULTIMODAL_SUPPORT in response.json()["error"]
+        assert "block 06" in response.json()["error"]
 
     def test_an_image_on_a_later_message_is_found_too(self, client, loaded):
         loaded(chat_handler=None)
@@ -118,7 +100,7 @@ class TestChatRefusesAnImageItCannotUse:
             ],
         })
 
-        assert response.status_code == 400
+        assert response.status_code == 501
 
     def test_an_empty_images_list_is_not_an_image(self, client, loaded):
         loaded(chat_handler=None)
@@ -144,7 +126,7 @@ class TestChatRefusesAnImageItCannotUse:
 
         assert response.status_code != 400
 
-    def test_a_model_with_a_projector_is_not_refused(self, client, loaded):
+    def test_projector_does_not_bypass_native_checkpoint_limit(self, client, loaded):
         loaded(chat_handler=FakeProjectorHandler())
 
         response = client.post("/api/chat", json={
@@ -155,7 +137,7 @@ class TestChatRefusesAnImageItCannotUse:
             ],
         })
 
-        assert response.status_code != 400
+        assert response.status_code == 501
 
 
 class TestGenerateRefusesImagesForNow:
@@ -169,8 +151,8 @@ class TestGenerateRefusesImagesForNow:
             "images": [ONE_PIXEL],
         })
 
-        assert response.status_code == 400
-        assert NO_MULTIMODAL_SUPPORT in response.json()["error"]
+        assert response.status_code == 501
+        assert "block 06" in response.json()["error"]
 
     def test_a_prompt_without_images_is_untouched(self, client, loaded):
         loaded(chat_handler=None)
@@ -185,7 +167,7 @@ class TestGenerateRefusesImagesForNow:
 
 
 class TestAnUnusableImageIsAClientError:
-    def test_a_url_gets_a_400_not_a_fetch(self, client, loaded):
+    def test_url_is_refused_without_fetch_at_native_text_checkpoint(self, client, loaded):
         loaded(chat_handler=FakeProjectorHandler())
 
         response = client.post("/api/chat", json={
@@ -198,10 +180,10 @@ class TestAnUnusableImageIsAClientError:
             }],
         })
 
-        assert response.status_code == 400
-        assert "base64" in response.json()["error"]
+        assert response.status_code == 501
+        assert "block 06" in response.json()["error"]
 
-    def test_undecodable_data_gets_a_400(self, client, loaded):
+    def test_undecodable_media_is_refused_at_native_text_checkpoint(self, client, loaded):
         loaded(chat_handler=FakeProjectorHandler())
 
         response = client.post("/api/chat", json={
@@ -214,4 +196,4 @@ class TestAnUnusableImageIsAClientError:
             }],
         })
 
-        assert response.status_code == 400
+        assert response.status_code == 501

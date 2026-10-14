@@ -29,7 +29,7 @@ def test_invalid_think_is_rejected_before_loading(client, monkeypatch, path, val
     async def forbidden(*args, **kwargs):
         pytest.fail("Invalid think value reached model loading")
 
-    monkeypatch.setattr(router.model_manager, "get_model", forbidden)
+    monkeypatch.setattr(router.model_manager, "acquire_native_model", forbidden)
     response = client.post(path, json={
         "model": "m", "messages": [], "prompt": "hi", "think": value,
     })
@@ -39,52 +39,9 @@ def test_invalid_think_is_rejected_before_loading(client, monkeypatch, path, val
 
 
 @pytest.fixture
-def answered(monkeypatch):
-    from tllama.routers import ollama as router
-
-    calls = {}
-
-    class Llm:
-        chat_handler = None
-
-        def token_bos(self):
-            return -1
-
-        def token_eos(self):
-            return -1
-
-        def tokenize(self, *args, **kwargs):
-            return [1]
-
-        def create_completion(self, *, prompt, stream, **kwargs):
-            calls["prompt"] = prompt
-            choice = {"text": "ok", "finish_reason": "stop"}
-            if stream:
-                return iter([{"choices": [choice]}])
-            return {"choices": [choice], "usage": {"completion_tokens": 1}}
-
-    async def get_model(*args, **kwargs):
-        return Llm()
-
-    async def metadata(*args, **kwargs):
-        return {"template":
-                "{{ ThinkLevel }}|{{ reasoning_effort }}|{{ enable_thinking }}|{{ IsThinkSet }}"}
-
-    def chat(*args, stream, **kwargs):
-        calls["chat"] = kwargs
-        if stream:
-            return iter([{"choices": [{
-                "delta": {"content": "ok"}, "finish_reason": "stop",
-            }]}])
-        return {"choices": [{
-            "message": {"content": "ok"}, "finish_reason": "stop",
-        }], "usage": {"completion_tokens": 1}}
-
-    monkeypatch.setattr(router.model_manager, "get_model", get_model)
-    monkeypatch.setattr(router.model_manager, "get_model_metadata", metadata)
-    monkeypatch.setattr(router, "create_chat_completion_ex", chat)
-    monkeypatch.setattr(router, "reset_eval_counters", lambda *args: False)
-    return calls
+def answered(native_reply):
+    return native_reply(metadata={"template":
+        "{{ ThinkLevel }}|{{ reasoning_effort }}|{{ enable_thinking }}|{{ IsThinkSet }}"})
 
 
 @pytest.mark.parametrize("stream", [False, True])
@@ -104,11 +61,11 @@ def test_custom_level_reaches_chat_and_generate_templates(
     else:
         assert response.json()["done"] is True
     if path == "/api/chat":
-        assert answered["chat"]["ThinkLevel"] == level
-        assert answered["chat"]["reasoning_effort"] == level
-        assert answered["chat"]["enable_thinking"] is True
+        assert answered.worker.calls[-1][1]["chat_template_kwargs"]["ThinkLevel"] == level
+        assert answered.worker.calls[-1][1]["reasoning_effort"] == level
+        assert answered.worker.calls[-1][1]["chat_template_kwargs"]["enable_thinking"] is True
     else:
-        assert answered["prompt"] == f"{level}|{level}|True|True"
+        assert answered.worker.prompts[-1] == f"{level}|{level}|True|True"
 
 
 @pytest.mark.parametrize("value", [False, "none", "false"])
@@ -118,7 +75,7 @@ def test_explicit_disable_stays_consistent_in_generate(client, answered, value):
     })
 
     assert response.status_code == 200
-    assert answered["prompt"] == "none|none|False|True"
+    assert answered.worker.prompts[-1] == "none|none|False|True"
 
 
 @pytest.mark.parametrize("value", [False, "none", "false"])

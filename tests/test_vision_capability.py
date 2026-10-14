@@ -126,8 +126,8 @@ class TestWhatTheEndpointReports:
 
         return factory
 
-    def test_vision_is_listed_for_a_model_with_a_projector(self, show):
-        assert "vision" in show({"has_projector": True})
+    def test_vision_is_unavailable_at_text_checkpoint_even_with_projector(self, show):
+        assert "vision" not in show({"has_projector": True})
 
     def test_vision_is_not_listed_without_one(self, show):
         assert "vision" not in show({"has_projector": False})

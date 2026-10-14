@@ -2,7 +2,7 @@
 
 The caller owns the model lease and keeps it around the complete call/stream.
 This layer owns only its upstream response context, never model residency.
-Public routers do not use it until the next approved checkpoint.
+Public ownership and routing policy is implemented in native_routes.
 """
 
 from __future__ import annotations
