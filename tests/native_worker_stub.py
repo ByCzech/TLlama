@@ -112,7 +112,8 @@ async def handle(reader, writer):
                     result = {"choices": [{"message": {"content": "Ahoj světe", "reasoning_content": "myšlenka"},
                                            "finish_reason": "stop"}], "usage": USAGE, "timings": TIMINGS}
                 else:
-                    result = {"content": "Ahoj světe", "stop": True, "stop_type": "eos", "timings": TIMINGS}
+                    result = {"content": "Ahoj světe", "stop": True, "stop_type": "eos", "timings": TIMINGS,
+                              "tokens_evaluated": 25, "tokens_predicted": 10, "tokens_cached": 35}
                 await json_response(writer, result)
                 return
             writer.write(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\n"
@@ -140,9 +141,12 @@ async def handle(reader, writer):
                                                                "finish_reason": None}]}))
                 await stream_bytes(writer, event({"choices": [{"delta": {}, "finish_reason": "stop"}]}))
                 await stream_bytes(writer, event({"choices": [], "usage": USAGE, "timings": TIMINGS}))
+                if mode == "finish-without-done":
+                    return
                 await stream_bytes(writer, b"data: [DONE]\r\n\r\n")
             else:
-                await stream_bytes(writer, event({"content": "", "stop": True, "stop_type": "eos", "timings": TIMINGS}))
+                await stream_bytes(writer, event({"content": "", "stop": True, "stop_type": "eos", "timings": TIMINGS,
+                                                  "tokens_evaluated": 25, "tokens_predicted": 10, "tokens_cached": 35}))
                 if mode == "hold-after-stop":
                     mark("started", "raw-terminal")
                     await reader.read()

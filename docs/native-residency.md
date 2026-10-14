@@ -121,3 +121,6 @@ pytest summary; attach the native log if a stage fails. This validates managed
 lifecycle and native transport, not public API/vision/template parity or memory
 reporting. Multi-model policy is covered by controlled workers and real socket
 subprocess tests without loading several large GGUFs on the test hardware.
+
+The following [05a API adapter checkpoint](native-api-adapter.md) prepares native
+text payloads/results and serializers without switching public routers yet.
