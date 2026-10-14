@@ -1,10 +1,13 @@
 """Small TCP subprocess implementing the pinned protocol for lifecycle tests."""
 
 import asyncio
+import base64
 import json
 import os
 import signal
 import sys
+import struct
+import zlib
 from pathlib import Path
 
 
@@ -21,6 +24,26 @@ TIMINGS = {"cache_n": 19, "prompt_n": 6, "prompt_ms": 2.5,
            "predicted_n": 10, "predicted_ms": 200.1}
 USAGE = {"prompt_tokens": 25, "completion_tokens": 10, "total_tokens": 35,
          "prompt_tokens_details": {"cached_tokens": 19}}
+
+
+def image_reply(body):
+    parts = [part for message in body.get('messages', []) if isinstance(message.get('content'), list)
+             for part in message['content'] if part.get('type') == 'image_url']
+    if not parts:
+        return None
+    # Decode the test/smoke PNG's actual RGB panels independently of its prompt.
+    data = base64.b64decode(parts[-1]['image_url']['url'].split(',', 1)[1])
+    width = struct.unpack('>I', data[16:20])[0]
+    compressed, offset = b'', 8
+    while offset < len(data):
+        size = struct.unpack('>I', data[offset:offset+4])[0]
+        if data[offset+4:offset+8] == b'IDAT':
+            compressed += data[offset+8:offset+8+size]
+        offset += size + 12
+    row = zlib.decompress(compressed)
+    names = {b'\xff\0\0':'red', b'\0\0\xff':'blue'}
+    return json.dumps({'left':names.get(row[1:4], 'unknown'),
+                       'right':names.get(row[1+width//2*3:4+width//2*3], 'unknown')})
 
 
 def mark(name, value):
@@ -49,7 +72,17 @@ async def stream_bytes(writer, value):
 
 def event(value):
     data = json.dumps(value, ensure_ascii=False)
-    split = data.find(",")
+    split, quoted, escaped = -1, False, False
+    for index, char in enumerate(data):
+        if escaped:
+            escaped = False
+        elif quoted and char == '\\':
+            escaped = True
+        elif char == '"':
+            quoted = not quoted
+        elif char == ',' and not quoted:
+            split = index
+            break
     if split != -1:
         return ("event: message\r\ndata: " + data[:split + 1] +
                 "\r\ndata: " + data[split + 1:] + "\r\n\r\n").encode()
@@ -90,7 +123,7 @@ async def handle(reader, writer):
                 "total_slots": 4 if MODE == "wrong-slots" else 1,
                 "model_path": arg("--model"),
                 "default_generation_settings": {"n_ctx": 0 if MODE == "bad-context" else 2048},
-                "modalities": {"vision": "--mmproj" in sys.argv},
+                "modalities": {"vision": "--mmproj" in sys.argv and MODE != 'no-vision'},
                 "bos_token": "<bos>", "eos_token": "<eos>",
                 "chat_template": (Path(arg("--chat-template-file")).read_text() if "--chat-template-file" in sys.argv
                                   else "{% for m in messages %}{{ m.role }}:{{ m.content }}\n{% endfor %}"),
@@ -117,6 +150,10 @@ async def handle(reader, writer):
                 await json_response(writer, {"error": {"code": 400, "message": "bad request"}}, 400)
                 return
             chat = path == "/v1/chat/completions"
+            if MODE == 'bad-image':
+                await json_response(writer, {'error':{'code':400, 'message':'Image decoder rejected the payload'}}, 400)
+                return
+            vision_text = image_reply(body)
             if mode == "hold" and not body["stream"]:
                 mark("started", "non-stream")
                 await reader.read()
@@ -124,7 +161,7 @@ async def handle(reader, writer):
                 return
             if not body["stream"] or mode == "json-stream":
                 constrained = 'response_format' in body or 'json_schema' in body
-                text = '{"answer":42}' if constrained else "Ahoj světe"
+                text = vision_text or ('{"answer":42}' if constrained else "Ahoj světe")
                 if chat:
                     result = {"choices": [{"message": {"content": text, "reasoning_content": "myšlenka"},
                                            "finish_reason": "stop"}], "usage": USAGE, "timings": TIMINGS}
@@ -137,7 +174,7 @@ async def handle(reader, writer):
                          b"Connection: close\r\n\r\n")
             await writer.drain()
             await stream_bytes(writer, b": ping\r\n\r\n")
-            chunk = {"choices": [{"delta": {"content": "Ahoj světe"}, "finish_reason": None}]} if chat else {
+            chunk = {"choices": [{"delta": {"content": vision_text or "Ahoj světe"}, "finish_reason": None}]} if chat else {
                 "content": "Ahoj světe", "stop": False}
             await stream_bytes(writer, event(chunk))
             if mode == "hold":

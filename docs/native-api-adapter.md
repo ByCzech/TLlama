@@ -41,7 +41,8 @@ not new application tool orchestration.
 
 Media/images and deprecated functions/function_call inputs/history are explicitly
 refused instead of dropped. Neither refusal currently affects a public route.
-Decide deprecated function compatibility before the 05b switch; vision is 06.
+Deprecated function compatibility was decided for 05b; chat vision is restored
+in native-vision.md (06b).
 
 ## Ownership and neutral results
 

@@ -4,8 +4,9 @@ The three existing inference endpoints now use native workers exclusively:
 /api/chat, /api/generate and /v1/chat/completions. There is no public legacy
 fallback or selectable second engine. The backend's remaining binding imports
 and reference tests are removed in block 07. Do not deploy this checkpoint as a
-complete production migration: the agreed vision limitations remain below.
+complete production migration: binding/application cleanup remains block 07.
 Native process reporting is restored in [06a](native-memory.md).
+Chat image inference is restored in [06b](native-vision.md).
 
 ## Ownership and configuration
 
@@ -65,13 +66,14 @@ and reasoning control still require the real-runtime smoke below.
 | Nonempty generate suffix | 501: native FIM is a separately verified feature |
 | Nonempty generate context | 400: token-history input is not silently ignored |
 | Deprecated functions/function_call fields or history | 400: use modern tools/tool_choice/tool messages |
-| Image/media inference | 501: public vision migration is block 06 |
-| /api/show vision capability | Not advertised during this text-only checkpoint |
+| Images in chat | Native vision since 06b; the selected worker must support images |
+| Images in generate | 501: separate extension |
+| /api/show vision capability | Configured vision since 06b, without loading a worker |
 | /api/ps | Native generation reporting since 06a; missing memory totals are null with provenance |
 
-The media refusal precedes model loading and does not fetch URLs. Existing
-image-normalization unit tests remain for 06, while public tests assert this
-checkpoint's refusal. Model listing, definitions, version/runner rules and
+Image validation precedes model loading and does not fetch URLs. Chat image
+mapping and live capability checks are documented in native-vision.md.
+Model listing, definitions, version/runner rules and
 storage/pull remain available. Modern tool wire fields/forced choices are mapped
 as in 05a; full Tools capability is not claimed by /show here.
 
@@ -123,4 +125,5 @@ residency. Send JSON output and pytest summary; attach api-vulkan.log on failure
 
 The new adapters/text routers need no further hardware/backend variants for this
 checkpoint. Native allocation reporting is documented in native-memory.md;
-vision remains block 06b. Physical-residency comparisons are a later test campaign.
+vision is documented in native-vision.md (06b). Physical-residency comparisons
+are a later test campaign.
