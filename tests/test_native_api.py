@@ -1,6 +1,7 @@
 """Measured statistics and public output semantics independent of model/GPU."""
 
 import asyncio
+from contextlib import aclosing
 import json
 
 import pytest
@@ -33,7 +34,9 @@ async def sequence(*values):
 
 
 async def collected(values, request=CHAT):
-    return [event async for event in _read_events(sequence(*values), request)]
+    async with aclosing(sequence(*values)) as upstream:
+        async with aclosing(_read_events(upstream, request)) as events:
+            return [event async for event in events]
 
 
 def context():

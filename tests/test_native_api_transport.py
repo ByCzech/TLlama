@@ -10,7 +10,7 @@ from tllama.config import BackendConfig
 from tllama.native_config import resolve_worker_config
 from tllama.native_requests import NativeRequest, prepare_chat, prepare_completion
 from tllama.native_api import NativeAPI, ReplyContext, ollama_response, openai_response, ollama_stream, openai_stream
-from tllama.worker import WorkerExited, WorkerRequestError
+from tllama.worker import WorkerError, WorkerRequestError
 
 # Reuse the existing socket/process fixture without changing adapter/lifecycle tests.
 from test_native_worker import factory, records, wait_marker
@@ -96,8 +96,9 @@ async def test_pre_header_native_http_error_stays_typed(factory):
 async def test_crash_does_not_restart_or_replay_in_adapter(factory):
     worker, root = factory()
     await worker.start()
-    with pytest.raises(WorkerExited):
+    with pytest.raises(WorkerError):
         await NativeAPI(worker, prepared(stub="crash")).result()
+    assert await asyncio.wait_for(worker.wait_for_exit(), timeout=3) == 71
     requests = [r for r in records(root, "requests") if r["path"] == "/v1/chat/completions"]
     assert len(requests) == 1 and len(records(root, "launch")) == 1
 
