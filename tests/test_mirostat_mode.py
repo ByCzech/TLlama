@@ -90,7 +90,6 @@ class TestNothingElseGainedARange:
     @pytest.mark.parametrize(
         "key,value,expected",
         [
-            ("temperature", "-1", -1.0),
             ("top_k", "0", 0),
             ("top_p", "1.5", 1.5),
             ("min_p", "-0.5", -0.5),
@@ -101,7 +100,7 @@ class TestNothingElseGainedARange:
         assert coerce_sampling_overrides({key: value}) == {key: expected}
 
     @pytest.mark.parametrize(
-        "line", ["temperature = -1.0", "top_k = 0", "top_p = 1.5"]
+        "line", ["top_k = 0", "top_p = 1.5"]
     )
     def test_a_toml_still_takes_them(self, line):
         text = f'[llm]\nmodel = "Local/m.gguf"\n\n[sampling]\n{line}\n'

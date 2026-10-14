@@ -325,31 +325,13 @@ def _as_mmproj_context(mmproj: Any, source: str) -> Dict[str, Any]:
 
 
 def _reject_unknown_runtime_keys(runtime: Dict[str, Any], source: str) -> None:
-    """A [runtime] key that is not a Llama() parameter is a mistake.
+    """Validate the pinned runtime contract without importing inference code."""
+    from tllama.native_params import runtime_problem
 
-    It used to be passed through and swallowed: Llama() takes **kwargs and
-    never looks at what it did not expect, so a misspelt key reached the
-    library, was ignored, and left a setting that appeared to have been
-    applied.
-
-    The valid names are Llama()'s own, read from its signature rather than
-    listed, so this cannot fall behind the library it validates against.
-    """
-    from tllama.helpers.runtime_params import llama_parameters
-
-    valid = set(llama_parameters()) | _RUNTIME_EXTRA_KEYS
-
-    for key in runtime:
-        if key in _RUNTIME_FORBIDDEN_KEYS:
-            raise TomlModelError(
-                f"{source}: [runtime] '{key}' cannot be set here: "
-                f"{_RUNTIME_FORBIDDEN_KEYS[key]}."
-            )
-        if key not in valid:
-            raise TomlModelError(
-                f"{source}: [runtime] '{key}' is not a parameter of Llama() "
-                "in the installed llama-cpp-python."
-            )
+    for key, value in runtime.items():
+        problem = runtime_problem(key, value)
+        if problem:
+            raise TomlModelError(f"{source}: [runtime] {problem}.")
 
 
 def _as_logit_bias(value: Any, source: str) -> Dict[int, float]:
@@ -412,73 +394,30 @@ def _reject_unusable_sampling_values(sampling: Dict[str, Any], source: str) -> N
 
 
 def _reject_unknown_sampling_keys(sampling: Dict[str, Any], source: str) -> None:
-    """A [sampling] key nothing reads is a mistake, not a no-op.
-
-    build_sampling_kwargs consults a fixed set of names; anything else in
-    the table was read from the file, carried through the parse and then
-    dropped without a word.
-
-    The set here is what that function actually consumes. It is still
-    smaller than what llama-cpp-python's completion calls accept --
-    grammar is the notable absentee, because a GBNF string llama.cpp
-    cannot parse kills the process rather than reporting an error -- which
-    is a separate gap, not something this should paper over by accepting
-    names that would still go nowhere.
-    """
-    from tllama.helpers.common import sampling_parameter_names
-
-    valid = sampling_parameter_names()
+    """Reject removed or unknown sampling names before interpreting values."""
+    from tllama.native_params import SAMPLING_TYPES, sampling_problem
 
     for key in sampling:
-        if key not in valid:
-            raise TomlModelError(
-                f"{source}: [sampling] '{key}' is not a sampling parameter "
-                "TLlama applies."
-            )
+        if key not in SAMPLING_TYPES:
+            raise TomlModelError(f"{source}: [sampling] {sampling_problem(key, sampling[key])}.")
 
 
 def resolve_kv_cache_types(runtime: Dict[str, Any]) -> "tuple[Optional[int], Optional[int]]":
-    """Resolve type_k/type_v from a [runtime] table into ggml type ints.
-
-    type_kv sets both; an explicit type_k/type_v takes priority over it for
-    that side only (spec §8). A value can be either a name ("q4_0"),
-    resolved via the same GGML_TYPE_* constants llama_cpp.llama_cpp already
-    defines -- no hand-maintained table, new quant types just work once the
-    vendored llama.cpp gains them -- or a raw int, used as-is.
-
-    llama_cpp is imported lazily, matching the existing pattern elsewhere in
-    this codebase (_ext.py, backend.py's HF pull path), so this module stays
-    importable for standalone parsing/tests without llama_cpp installed.
-    """
+    """Legacy manager enum view of the supported native KV vocabulary."""
     type_kv = runtime.get("type_kv")
-    type_k = runtime.get("type_k", type_kv)
-    type_v = runtime.get("type_v", type_kv)
-
-    return (
-        _resolve_one_kv_cache_type(type_k, field_name="type_k"),
-        _resolve_one_kv_cache_type(type_v, field_name="type_v"),
-    )
+    return (_resolve_one_kv_cache_type(runtime.get("type_k", type_kv), field_name="type_k"),
+            _resolve_one_kv_cache_type(runtime.get("type_v", type_kv), field_name="type_v"))
 
 
 def _resolve_one_kv_cache_type(value: Any, *, field_name: str) -> Optional[int]:
+    from tllama.native_params import KV_TYPES, kv_type_name
+
     if value is None:
         return None
-    if isinstance(value, bool):  # bool is an int subclass; reject before the int check
-        raise TomlModelError(f"'{field_name}' must be a string or int, not a bool.")
-    if isinstance(value, int):
-        return int(value)
-    if isinstance(value, str):
-        from llama_cpp import llama_cpp as llama_cpp_lib
-
-        const_name = f"GGML_TYPE_{value.upper()}"
-        resolved = getattr(llama_cpp_lib, const_name, None)
-        if resolved is None:
-            raise TomlModelError(
-                f"'{field_name}' = \"{value}\" does not match any known ggml "
-                f"type (looked for {const_name} in llama_cpp.llama_cpp)."
-            )
-        return int(resolved)
-    raise TomlModelError(f"'{field_name}' must be a string or int, got {type(value).__name__}.")
+    try:
+        return KV_TYPES[kv_type_name(value)]
+    except ValueError as exc:
+        raise TomlModelError(f"'{field_name}': {exc}") from exc
 
 
 def resolve_repo_relative_path(value: str, models_dir: Path) -> Path:

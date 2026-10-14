@@ -79,7 +79,7 @@ def test_json_mode_and_schema_reach_the_backend(value, monkeypatch):
         return grammar
 
     monkeypatch.setattr(
-        "tllama.helpers.common.LlamaGrammar.from_json_schema", from_schema
+        "llama_cpp.LlamaGrammar.from_json_schema", from_schema
     )
 
     assert build_completion_format_kwargs(value) == {"grammar": grammar}

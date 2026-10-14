@@ -35,6 +35,7 @@ from tllama.helpers.common import (
     build_completion_format_kwargs,
     build_sampling_kwargs,
     validate_format,
+    validate_sampling_options,
 )
 
 from tllama.helpers.prompt_render import (
@@ -117,6 +118,7 @@ async def ollama_chat(request: OllamaChatRequest):
 
     try:
         validate_format(request.format)
+        validate_sampling_options(opts)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -448,6 +450,7 @@ async def ollama_generate(request: OllamaGenerateRequest):
 
     try:
         validate_format(request.format)
+        validate_sampling_options(opts)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 

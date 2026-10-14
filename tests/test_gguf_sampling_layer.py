@@ -75,7 +75,7 @@ class TestAgainstTheReadingSide:
         produced a name the chain never looks at, every test above would
         still pass while nothing happened on a real model."""
         payload = build_model_metadata_payload(
-            {gguf_key: 0.5 for gguf_key in GGUF_SAMPLING_KEYS}
+            {gguf_key: 20 if name == "top_k" else 0.5 for gguf_key, name in GGUF_SAMPLING_KEYS.items()}
         )
 
         recommended = payload["recommended_sampling"]
@@ -83,4 +83,4 @@ class TestAgainstTheReadingSide:
 
         kwargs = build_sampling_kwargs({}, payload)
         for name in recommended:
-            assert kwargs[name] == 0.5, name
+            assert kwargs[name] == recommended[name], name

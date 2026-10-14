@@ -2222,6 +2222,11 @@ class ModelManager:
         requested_n_ctx: int,
         virtual_spec: Optional[VirtualModelSpec] = None,
     ) -> Dict[str, Any]:
+        # This migration checkpoint validates native settings but still has
+        # legacy routes. Refuse device instead of letting Llama's **kwargs
+        # silently discard it. The next manager milestone removes this guard.
+        if "device" in self._runtime_overrides or (virtual_spec is not None and "device" in virtual_spec.runtime):
+            raise ConfigError("runtime.device requires the native ModelManager migration; use the standalone worker meanwhile")
         # A value belongs here only when TLlama has a reason to differ from
         # llama-cpp-python's own default; anything else is left out so that
         # default applies, rather than being restated as a shadow copy that

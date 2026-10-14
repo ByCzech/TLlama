@@ -63,6 +63,12 @@ async def list_models_openai():
 
 @router.post("/chat/completions")
 async def chat_completions(request: ChatCompletionRequest):
+    from tllama.helpers.common import validate_sampling_options
+
+    try:
+        validate_sampling_options({"temperature": request.temperature} if request.temperature is not None else {})
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     try:
         llm = await model_manager.get_model(request.model)
     except FileNotFoundError:
