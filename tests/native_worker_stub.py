@@ -107,7 +107,10 @@ async def handle(reader, writer):
             await json_response(writer, {"tokens": [True] if MODE == 'bad-tokenize' else tokens})
             return
         async with LOCK:
-            mode = body.get("stub", "hold" if body.get("ignore_eos") else "normal")
+            # The public smoke's long stream must still be running when its
+            # client observes /api/ps and closes the connection.
+            held = body.get('ignore_eos') or body.get('stream') and body.get('max_tokens', body.get('n_predict')) == 512
+            mode = body.get("stub", "hold" if held else "normal")
             if mode == "crash":
                 os._exit(71)
             if mode == "error":
@@ -197,7 +200,12 @@ async def main():
         print("device kernel image is invalid", file=sys.stderr, flush=True)
         return 23
     print("E CUDA: no CUDA-capable device", file=sys.stderr, flush=True)
-    print("CPU model buffer size = 10.00 MiB", flush=True)
+    print("load_tensors: CPU model buffer size = 10.00 MiB", flush=True)
+    if MODE != 'memory-missing':
+        print("llama_kv_cache: CPU KV buffer size = 1.00 MiB", flush=True)
+        print("llama_memory_recurrent: CPU RS buffer size = 2.00 MiB", flush=True)
+        print("llama_context: CPU output buffer size = 0.50 MiB", flush=True)
+        print("sched_reserve: CPU compute buffer size = 3.00 MiB", flush=True)
     if MODE in ("flood", "long-log"):
         for channel in (sys.stdout, sys.stderr):
             if MODE == "long-log":
@@ -210,6 +218,7 @@ async def main():
         print("private key " + KEY, flush=True)
     if os.environ.get("STUB_IGNORE_TERM") == "1":
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    print('srv    load_model: initializing, n_slots = 1, n_ctx_slot = 2048', flush=True)
     server = await asyncio.start_server(handle, "127.0.0.1", int(arg("--port")))
     port = server.sockets[0].getsockname()[1]
     if MODE != "hang-load":

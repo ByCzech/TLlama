@@ -19,6 +19,7 @@ from typing import AsyncIterator, Mapping, Any
 import httpx
 
 from tllama.worker_config import WorkerLaunchSpec
+from tllama.native_memory import NativeMemory
 
 
 logger = logging.getLogger(__name__)
@@ -89,6 +90,8 @@ class NativeWorker:
         self._load_lines: list[str] = []
         self._load_bytes = 0
         self._capture_load = True
+        self.memory = NativeMemory(spec.runtime_fingerprint, projector=spec.mmproj is not None)
+        self._memory_parser_failed = False
 
     @property
     def state(self) -> str:
@@ -229,6 +232,14 @@ class NativeWorker:
             line = line.replace(self._api_key, "[redacted]")
         self._tail.append(f"[{channel}] {line[-2048:].rstrip()}")
         logger.debug("worker %s %s: %s", self.pid, channel, line.rstrip())
+        if not self._memory_parser_failed:
+            try:
+                self.memory.observe(line)
+            except Exception:
+                # Diagnostic parsing must never terminate a pipe drainer/inference.
+                self._memory_parser_failed = True
+                self.memory.invalidate('parser_error')
+                logger.exception("Could not parse native memory diagnostics")
         if self._capture_load:
             size = len(line.encode("utf-8"))
             if self._load_bytes + size <= self.spec.log_limit_bytes:
@@ -236,6 +247,7 @@ class NativeWorker:
                 self._load_bytes += size
             else:
                 self.load_log_complete = False
+                self.memory.invalidate('truncated_load_log')
         if self.base_url is None:
             match = _ADDRESS.fullmatch(line.rstrip("\r\n"))
             if match and 1 <= int(match[1]) <= 65535:
@@ -254,6 +266,7 @@ class NativeWorker:
             if len(pending) > _MAX_LINE:
                 self._record_line(pending[-_MAX_LINE:] + "\n", channel)
                 self.load_log_complete = False
+                self.memory.invalidate('truncated_log_line')
                 pending = ""
             if not data:
                 if pending:

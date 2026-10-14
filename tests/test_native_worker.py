@@ -186,6 +186,7 @@ async def test_both_log_pipes_are_drained_and_capture_is_bounded(factory, mode):
         assert worker.load_log_complete is False
         assert len(worker.load_log.encode()) <= 2048
         assert worker.state == "ready"
+        assert worker.memory.snapshot()['allocated_bytes'] is None
 
 
 async def test_private_authentication_key_is_redacted_from_logs(factory):
