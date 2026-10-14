@@ -195,7 +195,7 @@ def _split_host_port(name: str, value: str, raw: str) -> tuple[str, str | None]:
 RUNTIME_ENV_PREFIX = "TLLAMA_RUNTIME_"
 
 # Variables kept from before the generic passthrough existed. Each names a
-# Llama() parameter that TLLAMA_RUNTIME_<NAME> now also reaches; they stay
+# native runtime parameter that TLLAMA_RUNTIME_<NAME> also reaches; they stay
 # so a working configuration keeps working, and because the alias is the
 # spelling Ollama uses.
 _RUNTIME_ALIASES = {
@@ -402,8 +402,8 @@ class BackendConfig:
 
     # kv_cache_type sets both sides; k_cache_type/v_cache_type override it
     # for one side each, mirroring type_kv/type_k/type_v in a .toml
-    # [runtime]. The names are resolved together, by the same function that
-    # resolves the .toml ones, so the precedence cannot drift apart from it.
+    # [runtime]. Each layer expands its shorthand before the next overrides
+    # it; native_config owns the precedence for global and model settings.
     kv_cache_type: str | None = None
     k_cache_type: str | None = None
     v_cache_type: str | None = None

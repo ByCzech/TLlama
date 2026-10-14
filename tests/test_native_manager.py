@@ -274,30 +274,6 @@ async def test_restart_after_full_shutdown_does_not_reuse_generation_ids(native_
     assert manager.native_snapshot()[0]["generation"] == new
 
 
-async def test_native_instance_refuses_legacy_load_slots_and_reporting(native_manager):
-    manager = native_manager()
-    name, _ = manager.test.define()
-    await manager.preload_native_model(name)
-    with pytest.raises(RuntimeError, match="mix legacy"):
-        await manager.get_model(name)
-    with pytest.raises(RuntimeError, match="mix legacy"):
-        async with manager.acquire_inference_slot(name):
-            pass
-    with pytest.raises(RuntimeError, match="native_snapshot"):
-        manager.list_loaded_models()
-    assert len(manager.test.ledger) == 1
-
-
-async def test_legacy_instance_refuses_native_work_without_spawning(native_manager, monkeypatch):
-    manager = native_manager()
-    name, _ = manager.test.define()
-    monkeypatch.setattr(manager, "_load_model_sync", lambda *args: (SimpleNamespace(n_ctx=lambda: 2048), {}, ""))
-    await manager.get_model(name)
-    with pytest.raises(RuntimeError, match="mix legacy"):
-        await manager.preload_native_model(name)
-    assert manager.test.ledger == []
-
-
 async def test_failed_janitor_cannot_skip_native_process_cleanup(native_manager):
     manager = native_manager()
     name, _ = manager.test.define()

@@ -19,7 +19,7 @@ from tllama.config import ConfigError
 
 def _rebuild_repo(args: argparse.Namespace) -> int:
     # Imported here rather than at module scope: `tllama --help` should
-    # not have to load llama_cpp and construct a ModelManager first.
+    # not have to construct the application and ModelManager first.
     from tllama.backend import model_manager
 
     # argparse cannot say "this one depends on that one", and letting it

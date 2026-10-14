@@ -9,8 +9,20 @@ from __future__ import annotations
 from decimal import Decimal, InvalidOperation
 import re
 
-from tllama.helpers.llama_stats import BACKEND_PREFIX, PROJECTOR_BACKEND, PROJECTOR_SIZE
 from tllama.worker_config import RUNTIME_FINGERPRINT
+
+BACKEND_PREFIX = r"[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)*"
+
+PROJECTOR_BACKEND = re.compile(
+    rf"clip_ctx:\s*CLIP using\s+({BACKEND_PREFIX})\s+backend",
+    re.IGNORECASE,
+)
+
+PROJECTOR_SIZE = re.compile(
+    r"load_hparams:\s*model size:\s*([\d.]+)\s*MiB",
+    re.IGNORECASE,
+)
+
 
 
 _BUFFER = re.compile(

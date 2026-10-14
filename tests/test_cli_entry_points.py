@@ -87,12 +87,7 @@ def test_a_bad_environment_variable_stops_the_command_with_a_message(tmp_path):
 
 
 def test_a_kv_cache_type_no_ggml_type_matches_stops_the_command(tmp_path):
-    """This one is resolved against llama_cpp rather than parsed, so it
-    reaches the same refusal by a different route.
-
-    It used to survive startup and surface as an HTTP 400 on the first
-    request that needed a model, reported as that model failing to load.
-    """
+    """The native KV contract is checked before a command starts work."""
     result = run_module(
         "tllama",
         "rebuildrepo",

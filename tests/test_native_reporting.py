@@ -76,8 +76,8 @@ async def test_toml_and_weight_changes_cannot_rewrite_live_reporting_snapshot(pu
     weights.write_bytes(b'new different weights')
     def forbidden(*args, **kwargs):
         pytest.fail('Reporting reread mutable model definitions or hashed changed weights')
-    for method in ('get_model_metadata', 'get_model_metadata_best_effort', 'get_model_digest',
-                   '_build_model_file_info', '_resolve_virtual_model_spec', 'list_loaded_models'):
+    for method in ('get_model_metadata', 'get_model_digest',
+                   '_build_model_file_info', '_resolve_virtual_model_spec', 'list_local_models'):
         monkeypatch.setattr(manager, method, forbidden)
     [after] = await ps(client)
     assert after['details'] == before['details'] and after['digest'] == digest

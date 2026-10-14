@@ -16,14 +16,6 @@ from tllama.helpers.sampling_params import coerce_sampling_overrides
 LLM = '[llm]\nmodel = "Local/m.gguf"\n'
 
 
-@pytest.mark.parametrize("global_device", [False, True])
-def test_legacy_manager_cannot_silently_discard_native_device(make_manager, global_device):
-    manager = make_manager(runtime_overrides={"device": "Vulkan0"} if global_device else {})
-    model = parse_model_toml(LLM + ("" if global_device else '[runtime]\ndevice="Vulkan0"'))
-    with pytest.raises(ConfigError, match="native ModelManager"):
-        manager._build_llama_load_kwargs("Local/m.gguf", 2048, model)
-
-
 def test_configuration_import_and_parse_do_not_load_python_binding():
     program = '''import sys
 from tllama.helpers.model_toml import parse_model_toml
@@ -74,12 +66,12 @@ def test_negative_temperature_is_rejected_before_model_actions(client, monkeypat
     async def forbidden(*args, **kwargs):
         pytest.fail("Invalid sampling reached model loading")
 
-    def forbidden_unload(*args, **kwargs):
+    async def forbidden_unload(*args, **kwargs):
         pytest.fail("Invalid sampling reached model unloading")
 
     for module in (ollama, openai):
         monkeypatch.setattr(module.model_manager, "acquire_native_model", forbidden)
-        monkeypatch.setattr(module.model_manager, "unload_model", forbidden_unload)
+        monkeypatch.setattr(module.model_manager, "unload_native_model", forbidden_unload)
     body = {"model": "m", "stream": False, "keep_alive": 0}
     if path == "/api/generate":
         body["prompt"] = "" if empty else "hi"
