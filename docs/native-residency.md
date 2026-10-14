@@ -2,7 +2,8 @@
 
 Native worker policy is available through ModelManager's native lease methods.
 The [05b public text routes](native-public-api.md) now use those methods;
-public memory reporting migrates separately. One running ModelManager instance
+[06a memory reporting](native-memory.md) observes native generations without
+acquiring leases or extending TTL. One running ModelManager instance
 cannot mix the two engine modes. This is a temporary migration boundary, not a
 new public backend toggle or a permanent dual-engine commitment.
 

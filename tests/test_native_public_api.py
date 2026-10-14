@@ -127,12 +127,12 @@ async def test_media_is_501_and_not_fetched_or_advertised(public, path):
     assert 'vision' not in (await client.post('/api/show', json={'model': name})).json()['capabilities']
 
 
-async def test_ps_is_explicit_503_and_listing_does_not_spawn_worker(public):
+async def test_ps_is_empty_and_listing_does_not_spawn_worker(public):
     manager, client, name, _ = public
     for path in ['/api/tags', '/v1/models']:
         assert (await client.get(path)).status_code == 200
     response = await client.get('/api/ps')
-    assert response.status_code == 503 and 'models' not in response.json()
+    assert response.status_code == 200 and response.json() == {'models': []}
     assert not manager.test.ledger
 
 
@@ -418,6 +418,12 @@ async def test_public_hardware_smoke_entry_point(public, valid):
     if valid:
         assert len(records(root, 'launch')) == 1
         assert any(stage['stage'] == 'after-stream-cancel' for stage in stages)
+        reports = {stage['stage']:stage['models'] for stage in stages if stage['stage'].startswith('ps-')}
+        assert set(reports) == {'ps-ready', 'ps-during-stream', 'ps-after-stream-cancel', 'ps-draining', 'ps-empty'}
+        assert reports['ps-ready'][0]['size'] == int(16.5 * 1024**2)
+        assert reports['ps-during-stream'][0]['leases'] == 1
+        assert reports['ps-draining'][0]['state'] == 'draining' and reports['ps-empty'] == []
+        assert (root / 'cancelled').exists()
         closed = next(stage for stage in stages if stage['stage'] == 'worker-closed')
         assert closed['directory_removed'] and not closed['residency']
     else:

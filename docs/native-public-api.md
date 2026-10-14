@@ -4,7 +4,8 @@ The three existing inference endpoints now use native workers exclusively:
 /api/chat, /api/generate and /v1/chat/completions. There is no public legacy
 fallback or selectable second engine. The backend's remaining binding imports
 and reference tests are removed in block 07. Do not deploy this checkpoint as a
-complete production migration: the agreed vision/ps limitations remain below.
+complete production migration: the agreed vision limitations remain below.
+Native process reporting is restored in [06a](native-memory.md).
 
 ## Ownership and configuration
 
@@ -66,7 +67,7 @@ and reasoning control still require the real-runtime smoke below.
 | Deprecated functions/function_call fields or history | 400: use modern tools/tool_choice/tool messages |
 | Image/media inference | 501: public vision migration is block 06 |
 | /api/show vision capability | Not advertised during this text-only checkpoint |
-| /api/ps | Explicit 503 until native memory reporting in 06; no false zero/empty legacy registry |
+| /api/ps | Native generation reporting since 06a; missing memory totals are null with provenance |
 
 The media refusal precedes model loading and does not fetch URLs. Existing
 image-normalization unit tests remain for 06, while public tests assert this
@@ -121,4 +122,5 @@ worker-closed must have a reaped return code, directory_removed=true and empty
 residency. Send JSON output and pytest summary; attach api-vulkan.log on failure.
 
 The new adapters/text routers need no further hardware/backend variants for this
-checkpoint. Vision and measured memory reporting remain the next approved block.
+checkpoint. Native allocation reporting is documented in native-memory.md;
+vision remains block 06b. Physical-residency comparisons are a later test campaign.

@@ -63,7 +63,8 @@ async def exercise(args):
                 return response
 
             # No model loads for the agreed checkpoint limitations.
-            require((await client.get('/api/ps')).status_code == 503, 'Expected explicit /api/ps checkpoint 503')
+            empty_ps = await client.get('/api/ps')
+            require(empty_ps.status_code == 200 and empty_ps.json() == {'models':[]}, 'Expected an empty native /api/ps')
             require((await client.post('/api/generate', json={'model': args.model, 'prompt':'x', 'suffix':'x'})).status_code == 501,
                     'Expected explicit suffix checkpoint 501')
             require(not manager.native_snapshot(), 'Validation unexpectedly loaded a model')
@@ -83,6 +84,27 @@ async def exercise(args):
                 current = manager.native_snapshot()
                 require(len(current) == 1 and current[0]['generation'] == generation,
                         'Public endpoint reloaded a different configuration')
+
+            async def ps(stage, *, state='ready', leases=None):
+                response = await client.get('/api/ps')
+                require(response.status_code == 200, 'Native /api/ps failed')
+                models = response.json()['models']
+                require(len(models) == 1, 'Expected one owned native generation in /api/ps')
+                model = models[0]
+                require(model['generation'] == generation and model['pid'] == worker.pid and model['model'] == args.model,
+                        '/api/ps reported a different generation')
+                require(model['state'] == state and (leases is None or model['leases'] == leases), '/api/ps state/leases disagree')
+                memory = model['memory']
+                require(memory['status'] == 'known', f'Incomplete text-model memory report: {memory}')
+                require(model['size'] == memory['allocated_bytes'] and model['size_vram'] == memory['device_bytes'],
+                        '/api/ps summary differs from its allocation report')
+                require(memory['host_bytes'] + memory['device_bytes'] == model['size'], 'Allocation split disagrees')
+                require(memory['physical_residency_bytes'] is None, 'Load logs were reported as physical residency')
+                require(model['context_length'] == worker.props['default_generation_settings']['n_ctx'], 'Effective context disagrees')
+                report(stage, models=models)
+
+            await wait_until(lambda: worker.memory.snapshot()['reason'] != 'load_log_pending')
+            await ps('ps-ready', leases=0)
 
             messages = [{'role':'user', 'content':'Napiš krátký pozdrav česky.'}]
             chat = {'model': args.model, 'messages': messages, 'stream': False, 'think': False,
@@ -171,6 +193,7 @@ async def exercise(args):
                         require('error' not in value, f'Cancellation stream failed: {value}')
                         if value.get('message', {}).get('content') or value.get('message', {}).get('thinking'):
                             report('stream-cancel', first=value)
+                            await ps('ps-during-stream', leases=1)
                             break
                 else:
                     raise WorkerError('Cancellation stream produced no actual output')
@@ -179,13 +202,21 @@ async def exercise(args):
             require(body['done'], 'Request after stream cancellation failed')
             report('after-stream-cancel', response=body)
             same_generation()
+            await ps('ps-after-stream-cancel', leases=0)
 
-            unloaded = (await post('/api/generate', {'model':args.model,'prompt':'','keep_alive':0})).json()
-            require(unloaded['done_reason'] == 'unload', 'Unload did not return unload')
+            # Hold an admission lease so retirement is observable even on a
+            # fast device; /api/ps itself must not acquire or extend a lease.
+            async with manager.acquire_native_model(args.model, keep_alive=-1):
+                unloaded = (await post('/api/generate', {'model':args.model,'prompt':'','keep_alive':0})).json()
+                require(unloaded['done_reason'] == 'unload', 'Unload did not return unload')
+                await ps('ps-draining', state='draining', leases=1)
+                require(worker.process.returncode is None, 'Retired worker exited with a protected lease')
             await asyncio.wait_for(manager.wait_native_closed(generation), timeout=30)
             require(worker.process.returncode is not None and not worker.runtime_directory.exists(), 'Native process/directory survived unload')
             report('worker-closed', pid=worker.pid, returncode=worker.process.returncode,
                    directory_removed=True, residency=manager.native_snapshot())
+            require((await client.get('/api/ps')).json() == {'models':[]}, 'Closed generation survived in /api/ps')
+            report('ps-empty', models=[])
     finally:
         server.should_exit = True
         try:

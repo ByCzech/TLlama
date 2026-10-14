@@ -126,5 +126,6 @@ paths, fragmented SSE, crash without replay, early close and cancellation with
 subsequent reuse of the same worker. No model weights are loaded.
 
 No hardware run was needed for 05a. The agreed generate/suffix, deprecated
-function and vision/ps boundary, plus the real text API smoke, are documented
-in native-public-api.md. Binding/application cleanup is still separate.
+function and vision boundary, plus the real text API smoke, are documented
+in native-public-api.md. Process reporting is restored in native-memory.md (06a).
+Binding/application cleanup is still separate.
