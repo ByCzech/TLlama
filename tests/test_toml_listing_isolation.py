@@ -95,8 +95,9 @@ class TestTags:
 def resident_model_with_a_broken_toml():
     """A model already loaded when its .toml turned unparseable.
 
-    Registered directly rather than loaded for real: /api/ps reports from
-    active_models, and no inference is involved in what is being tested.
+    Registered in the legacy reference registry rather than loaded for real.
+    Native /api/ps must ignore this registry; native snapshot isolation is
+    covered separately with real subprocesses in test_native_reporting.py.
     """
     gguf, toml = _place_model("resident")
     toml.write_text(BROKEN_TOML, encoding="utf-8")
@@ -127,14 +128,12 @@ def resident_model_with_a_broken_toml():
 
 
 class TestPs:
-    def test_ps_explicitly_reports_migration_unavailability(self, client, resident_model_with_a_broken_toml):
+    def test_ps_does_not_report_legacy_entries(self, client, resident_model_with_a_broken_toml):
         response = client.get("/api/ps")
-        assert response.status_code == 503
-        assert "block 06" in response.json()["error"]
-        assert "models" not in response.json()
+        assert response.status_code == 200 and response.json() == {'models': []}
 
     def test_ps_does_not_read_legacy_registry_or_metadata(self, client, monkeypatch):
         def forbidden(*args, **kwargs):
             pytest.fail("Native checkpoint tried to report the legacy registry")
         monkeypatch.setattr(model_manager, "list_loaded_models", forbidden)
-        assert client.get("/api/ps").status_code == 503
+        assert client.get("/api/ps").json() == {'models': []}

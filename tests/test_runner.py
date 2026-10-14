@@ -190,8 +190,7 @@ def test_runner_metadata_covers_loaded_and_loading_models(client, policy, monkey
     tags = client.get("/api/tags").json()["models"]
     assert tags[0]["details"]["runner"] == "llamacpp"
     ps = client.get("/api/ps")
-    assert ps.status_code == 503
-    assert "block 06" in ps.json()["error"]
+    assert ps.status_code == 200 and ps.json() == {'models': []}
 
 
 @pytest.mark.parametrize("value,expected", [("true", True), ("false", False)])

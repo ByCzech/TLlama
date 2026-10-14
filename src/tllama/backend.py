@@ -571,12 +571,15 @@ class ModelManager:
             model = resolve_repo_relative_path(spec.llm_model, self.models_dir)
             if not model.is_file():
                 raise FileNotFoundError(f"Model '{model_name}' does not point at an existing GGUF")
-            info = self._build_model_file_info_from_path(model)
-            if info is None:
-                raise FileNotFoundError(f"Model '{model_name}' does not point at an existing GGUF")
             mmproj = self.resolve_mmproj_path(spec, model_name)
             file_before = {"model": build_model_file_fingerprint(model),
                            "projector": build_model_file_fingerprint(mmproj) if mmproj else None}
+            info = self._build_model_file_info_from_path(model)
+            if info is None:
+                raise FileNotFoundError(f"Model '{model_name}' does not point at an existing GGUF")
+            # Listing does not hash a potentially changed GGUF behind a live
+            # generation. Retain only a content digest already cached for it.
+            info['content_sha256'] = (load_digest_cache(self.metadata_cache_dir, model) or {}).get('content_sha256', '')
             try:
                 metadata = load_metadata_cache(self.metadata_cache_dir, model)
                 if metadata is None:
@@ -625,6 +628,10 @@ class ModelManager:
     def native_snapshot(self):
         """Internal lifecycle diagnostics; not the public /api/ps memory shape."""
         return self._native.snapshot()
+
+    def native_reporting_snapshot(self):
+        """Public reporting reads native ownership without touching inference."""
+        return self._native.reporting_snapshot()
 
     def _require_legacy_view(self):
         if self._inference_mode == "native":

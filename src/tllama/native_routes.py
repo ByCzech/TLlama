@@ -26,7 +26,6 @@ from tllama.worker import WorkerProtocolError
 
 
 VISION_UNAVAILABLE = "Vision inference is temporarily unavailable during native migration (block 06)"
-MEMORY_UNAVAILABLE = "Native model memory reporting is temporarily unavailable during migration (block 06)"
 
 
 class NativeStreamingResponse(StreamingResponse):

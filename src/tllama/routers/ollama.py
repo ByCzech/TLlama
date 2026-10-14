@@ -11,7 +11,8 @@ from tllama.version import get_version as get_tllama_version
 from tllama.helpers.runner import RUNNER, validate_runner
 from tllama.helpers.common import format_ollama_parameters
 from tllama.helpers.reasoning_split import detect_reasoning_format
-from tllama.native_routes import serve_native, MEMORY_UNAVAILABLE
+from tllama.native_routes import serve_native
+from tllama.native_reporting import ollama_processes
 from tllama.errors import ollama_stream_error_line
 
 router = APIRouter(
@@ -154,7 +155,7 @@ async def show_model_info(request: dict):
 
 @router.get("/ps")
 async def list_running_models():
-    raise HTTPException(status_code=503, detail=MEMORY_UNAVAILABLE)
+    return ollama_processes(model_manager.native_reporting_snapshot())
 
 
 @router.post("/pull")

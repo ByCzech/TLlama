@@ -10,9 +10,11 @@ import itertools
 import logging
 import math
 import time
+from datetime import datetime, timezone, timedelta
 from typing import Any, Mapping, Callable, Awaitable
 
-from tllama.native_config import ResolvedWorkerConfig
+from tllama.native_config import ResolvedWorkerConfig, _plain
+from tllama.helpers.common import never_expires_at, NEVER_EXPIRES_SECONDS
 from tllama.native_params import freeze_values
 from tllama.worker import NativeWorker, WorkerError, WorkerExited
 
@@ -443,6 +445,39 @@ class NativeResidency:
                  "requested_context": e.definition.resolved.launch.n_ctx,
                  "effective_context": (e.worker.props or {}).get("default_generation_settings", {}).get("n_ctx") if e.loaded else None,
                  "error": str(e.error) if e.error is not None else None} for e in self._entries.values()]
+
+    def reporting_snapshot(self) -> list[dict]:
+        """Copy owned generations without a lease, I/O, or changes to TTL.
+
+        Metadata belongs to the admitted definition even when files change or
+        disappear. Closing/draining generations remain visible until reaped.
+        """
+        now = self._clock()
+        wall = datetime.now(timezone.utc)
+        result = []
+        for entry in self._entries.values():
+            worker = entry.worker
+            process = worker.process
+            # A dead child has no buffers, even before the exit observer runs.
+            if process is not None and process.returncode is not None:
+                continue
+            if entry.retired:
+                expires = wall.isoformat()
+            elif entry.expires_at is not None:
+                expires = (wall + timedelta(seconds=min(NEVER_EXPIRES_SECONDS, max(0, entry.expires_at - now)))).isoformat()
+            elif entry.keep_alive is None:
+                expires = never_expires_at()
+            else:
+                expires = (wall + timedelta(seconds=min(NEVER_EXPIRES_SECONDS, entry.keep_alive))).isoformat()
+            result.append({
+                'generation':entry.number, 'model':entry.definition.name, 'state':entry.state,
+                'pid':worker.pid, 'leases':entry.refs, 'expires_at':expires,
+                'retirement_reason':entry.reason, 'file_info':_plain(entry.definition.file_info),
+                'metadata':_plain(entry.definition.metadata),
+                'context_length':(worker.props or {}).get('default_generation_settings', {}).get('n_ctx') if entry.loaded else None,
+                'memory':worker.memory.snapshot(),
+            })
+        return result
 
     async def shutdown(self):
         self._closing = True
