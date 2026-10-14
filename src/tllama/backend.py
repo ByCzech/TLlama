@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 import gc
 import ctypes
 import shutil
+import itertools
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,7 +15,7 @@ from hashlib import sha256
 
 from llama_cpp import Llama
 from llama_cpp.llama_chat_format import Jinja2ChatFormatter, MTMDChatHandler
-from typing import Dict, Optional, Any, List
+from typing import Dict, Optional, Any, List, Mapping
 from datetime import datetime, timezone, timedelta
 
 from tllama._ext import device_memory_totals
@@ -33,6 +34,10 @@ from tllama.helpers.model_toml import (
 )
 from tllama.helpers.runtime_params import coerce_runtime_overrides
 from tllama.helpers.sampling_params import coerce_sampling_overrides
+from tllama.native_config import resolve_worker_config
+from tllama.native_params import freeze_values
+from tllama.residency import NativeResidency, ModelDefinition, ResidencyClosed, _settle_owned
+from tllama.worker import NativeWorker
 from tllama.helpers.metadata_cache import (
     build_model_file_fingerprint,
     load_metadata_cache,
@@ -458,7 +463,8 @@ def _device_residency(stats: Dict[str, Any]) -> Dict[str, Any]:
 
 
 class ModelManager:
-    def __init__(self, config: BackendConfig | None = None):
+    def __init__(self, config: BackendConfig | None = None, *, native_worker_factory=NativeWorker,
+                 native_launch_options: Mapping[str, Any] | None = None):
         self.config = config or load_backend_config_from_env()
 
         self.models: Dict[str, Llama] = {}
@@ -503,16 +509,15 @@ class ModelManager:
         # to load that model rather than as the misconfiguration it was.
         self._type_k, self._type_v = self._resolve_global_kv_cache_types()
 
-        # Converted here rather than in config.py, which cannot see
-        # Llama()'s signature, and here rather than at load time so an
+        # Converted using the native contract here rather than in the raw
+        # environment collector, and before load time so an
         # unknown parameter or an unusable value stops the server instead
         # of surfacing on the first request that needs a model.
         self._runtime_overrides = coerce_runtime_overrides(
             self.config.runtime_overrides
         )
 
-        # Same reasoning for the sampling layer, read off the completion
-        # signatures instead of Llama()'s. Public because the routers
+        # Same reasoning for the typed sampling layer. Public because routers
         # hand it to build_sampling_kwargs() on every request: a global
         # value is server configuration, not model metadata, so it does
         # not belong in the metadata dict the other layers travel in.
@@ -523,6 +528,93 @@ class ModelManager:
         self.hf_models_dir = self.models_dir / "HuggingFace"
         self.local_models_dir = self.models_dir / "Local"
         self.tllama_models_dir = self.models_dir / "TLlama"
+
+        # Temporary migration seam: one engine mode per running instance.
+        # Public routers choose legacy until block 05; native callers use leases.
+        self._inference_mode: str | None = None
+        self._stopping = False
+        self._shutdown_task: asyncio.Task | None = None
+        self._native_factory = native_worker_factory
+        options = dict(native_launch_options or {})
+        unknown = set(options) - {"environment", "executable", "load_timeout", "request_timeout"}
+        if unknown:
+            raise ConfigError(f"Unknown native supervisor options: {', '.join(sorted(unknown))}")
+        self._native_launch_options = freeze_values(options)
+        self._native_generation_numbers = itertools.count(1)
+        self._native = self._new_native_residency()
+
+    def _new_native_residency(self):
+        return NativeResidency(self._resolve_native_definition,
+                               max_loaded_models=self.config.max_loaded_models,
+                               worker_factory=self._native_factory,
+                               generation_numbers=self._native_generation_numbers)
+
+    def _select_inference_mode(self, mode):
+        if self._stopping:
+            raise ResidencyClosed("ModelManager is shutting down")
+        if self._inference_mode is not None and self._inference_mode != mode:
+            raise RuntimeError("Cannot mix legacy inference and native leases in one ModelManager instance")
+        if mode == "native" and (self.models or self._loading):
+            raise RuntimeError("Cannot acquire native leases while legacy models occupy the manager")
+        self._inference_mode = mode
+
+    async def _resolve_native_definition(self, model_name, num_ctx):
+        # Definition/path/header work is independent of the residency lock.
+        return await asyncio.to_thread(self._resolve_native_definition_sync, model_name, num_ctx)
+
+    def _resolve_native_definition_sync(self, model_name, num_ctx):
+        for _ in range(3):
+            before = self._toml_fingerprint_for_reference(model_name)
+            spec = self._resolve_virtual_model_spec(model_name)
+            if spec is None or spec.llm_model is None:
+                raise FileNotFoundError(f"Model '{model_name}' is not registered/imported in {self.models_dir}")
+            model = resolve_repo_relative_path(spec.llm_model, self.models_dir)
+            info = self._build_model_file_info_from_path(model)
+            if info is None:
+                raise FileNotFoundError(f"Model '{model_name}' does not point at an existing GGUF")
+            mmproj = self.resolve_mmproj_path(spec, model_name)
+            after = self._toml_fingerprint_for_reference(model_name)
+            if before != after:
+                continue
+            resolved = resolve_worker_config(self.config, model.resolve(), spec, num_ctx=num_ctx,
+                                             mmproj=mmproj.resolve() if mmproj else None,
+                                             **self._native_launch_options)
+            fingerprint = {"toml": after, "model": build_model_file_fingerprint(model),
+                           "projector": build_model_file_fingerprint(mmproj) if mmproj else None}
+            return ModelDefinition(model_name, resolved, fingerprint, info)
+        raise RuntimeError(f"Model definition '{model_name}' kept changing while it was resolved")
+
+    @asynccontextmanager
+    async def acquire_native_model(self, model_name: str, num_ctx: int | None = None,
+                                   keep_alive: str | int | float | None = None):
+        """Hold one resolved worker generation through slot wait and inference."""
+        self._select_inference_mode("native")
+        self._ensure_janitor_running()
+        seconds = self.resolve_keep_alive(keep_alive)
+        async with self._native.lease(model_name, num_ctx=num_ctx, keep_alive_seconds=seconds) as lease:
+            yield lease
+
+    async def preload_native_model(self, model_name: str, num_ctx: int | None = None,
+                                   keep_alive: str | int | float | None = None):
+        self._select_inference_mode("native")
+        self._ensure_janitor_running()
+        return await self._native.preload(model_name, num_ctx=num_ctx,
+                                          keep_alive_seconds=self.resolve_keep_alive(keep_alive))
+
+    async def unload_native_model(self, model_name: str):
+        self._select_inference_mode("native")
+        return await self._native.unload(model_name)
+
+    async def wait_native_closed(self, generation: int):
+        await self._native.wait_closed(generation)
+
+    def native_snapshot(self):
+        """Internal lifecycle diagnostics; not the public /api/ps memory shape."""
+        return self._native.snapshot()
+
+    def _require_legacy_view(self):
+        if self._inference_mode == "native":
+            raise RuntimeError("Native migration callers must use native_snapshot; public reporting migrates separately")
 
     def ensure_storage(self) -> None:
         """Create the model store layout.
@@ -589,6 +681,10 @@ class ModelManager:
         return (llm is not None) or removed
 
     def unload_all_models(self):
+        self._select_inference_mode("legacy")
+        self._unload_all_models_internal()
+
+    def _unload_all_models_internal(self):
         for model_name in list(self.models.keys()):
             self._unload_model_internal(model_name)
         self.active_models.clear()
@@ -1075,6 +1171,7 @@ class ModelManager:
         and must not assume anything about ordering between models: slots are
         per model, so different models run concurrently.
         """
+        self._select_inference_mode("legacy")
         async with self._slots_lock:
             slots = self._inference_slots.get(model_name)
             if slots is None:
@@ -1204,6 +1301,7 @@ class ModelManager:
         room for it means waiting for the load in progress to finish, which
         is the serialising behaviour a single-model limit implies.
         """
+        self._select_inference_mode("legacy")
         while True:
             async with self._models_lock:
                 self._ensure_janitor_running()
@@ -1377,18 +1475,22 @@ class ModelManager:
         self.unload_model(model_name)
 
     def unload_model(self, model_name: str):
+        self._select_inference_mode("legacy")
         self._unload_model_internal(model_name)
 
     def is_model_loaded(self, model_name: str) -> bool:
+        self._require_legacy_view()
         return model_name in self.models
 
     def get_loaded_model_info(self, model_name: str) -> Optional[Dict[str, Any]]:
+        self._require_legacy_view()
         model_info = self.active_models.get(model_name)
         if model_info is None:
             return None
         return self._with_runtime_totals(model_info)
 
     def list_loaded_models(self) -> List[Dict[str, Any]]:
+        self._require_legacy_view()
         return [self._with_runtime_totals(model_info) for model_info in self.active_models.values()]
 
     def list_loading_models(self) -> List[str]:
@@ -1400,6 +1502,7 @@ class ModelManager:
         split, context size actually applied) is not known until the load
         finishes and `_register_loaded_model` runs.
         """
+        self._require_legacy_view()
         return list(self._loading.keys())
 
     def _compute_content_sha256(self, file_path: str | Path) -> str:
@@ -2332,6 +2435,13 @@ class ModelManager:
         return handler
 
     async def start(self):
+        if self._shutdown_task is not None:
+            await _settle_owned(self._shutdown_task)
+            self._shutdown_task = None
+        if self._native.closed:
+            self._native = self._new_native_residency()
+            self._inference_mode = None
+        self._stopping = False
         self.ensure_storage()
 
         async with self._models_lock:
@@ -2342,6 +2452,12 @@ class ModelManager:
                 )
 
     async def shutdown(self):
+        self._stopping = True
+        if self._shutdown_task is None:
+            self._shutdown_task = asyncio.create_task(self._shutdown_impl())
+        await _settle_owned(self._shutdown_task)
+
+    async def _shutdown_impl(self):
         janitor_task = None
 
         async with self._models_lock:
@@ -2349,15 +2465,17 @@ class ModelManager:
                 janitor_task = self._janitor_task
                 self._janitor_task = None
 
-        if janitor_task is not None:
-            janitor_task.cancel()
-            try:
-                await janitor_task
-            except asyncio.CancelledError:
-                pass
-
-        async with self._models_lock:
-            self.unload_all_models()
+        try:
+            if janitor_task is not None:
+                janitor_task.cancel()
+                try:
+                    await janitor_task
+                except asyncio.CancelledError:
+                    pass
+            async with self._models_lock:
+                self._unload_all_models_internal()
+        finally:
+            await self._native.shutdown()
 
     async def _janitor_loop(self):
         try:
@@ -2374,6 +2492,7 @@ class ModelManager:
                     for model_name in expired_model_names:
                         logger.debug("Auto-unloading expired model %s", model_name)
                         self._unload_model_internal(model_name)
+                await self._native.expire()
         except asyncio.CancelledError:
             raise
 

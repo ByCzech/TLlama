@@ -137,3 +137,7 @@ Sources: pinned `common/arg.cpp` (flags/CSV/KV types), `include/llama.h` and
 `ggml/include/ggml.h` (enums), `tools/server/server-common.cpp` and
 `tools/server/server-task.cpp` (request/response protocol). Compatibility stays
 tied to fingerprint b11552-ec2797836f.
+
+ModelManager now resolves these settings for owned worker generations; see
+[native-residency.md](native-residency.md) for leases, capacity, TTL and the
+managed hardware check. Public API translation remains the next milestone.

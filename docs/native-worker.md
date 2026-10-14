@@ -97,3 +97,7 @@ needed. A successful run ends with `stage=closed`, a reaped return code and
 `request_timeout` is an HTTP inactivity timeout, distinct from the whole startup
 deadline and external cancellation. Model-specific template/vision/API parity,
 multi-model management and memory accounting are not asserted by this smoke test.
+
+The managed lifecycle checkpoint and its single-load hardware check are in
+[native-residency.md](native-residency.md). Public inference migration and
+allocation reporting remain separate milestones.
