@@ -207,8 +207,8 @@ def _collect_runtime_overrides() -> dict[str, str]:
     """Gather the raw strings; nothing is converted or checked here.
 
     Deliberately no llama_cpp: the entry point reads configuration before
-    the library is loaded, and what a value has to become is decided from
-    Llama()'s own signature, in a place that can see it.
+    any inference code is loaded. native_params defines the types used by
+    the runtime coercion helper.
 
     An explicit TLLAMA_RUNTIME_* wins over an alias for the same
     parameter, so the specific spelling beats the general one.
@@ -237,8 +237,8 @@ def _collect_sampling_overrides() -> dict[str, str]:
     """Gather the raw strings; nothing is converted or checked here.
 
     Same division of labour as _collect_runtime_overrides: what a value
-    has to become is decided from a signature, in a module that can see
-    one, and this file deliberately cannot import llama_cpp.
+    has to become is defined by native_params and applied by the sampling
+    coercion helper; collection stays independent of inference.
 
     No aliases. TLLAMA_SAMPLING_* is new, so there is no older spelling
     of it for anything to keep working.
@@ -390,9 +390,8 @@ class BackendConfig:
     max_loaded_models: int = 1
     janitor_interval_seconds: float = 10.0
     metadata_cache_ttl_seconds: float = 300.0
-    # Llama() keyword arguments set server-wide, still as strings: what
-    # each has to become is read off Llama()'s signature, which this
-    # module deliberately cannot see. A model's [runtime] overrides these.
+    # Runtime values stay strings here; native_params defines their types.
+    # A model's [runtime] overrides these globals.
     runtime_overrides: Mapping[str, str] = field(default_factory=dict)
 
     # Sampling values set server-wide, still as strings. Empty by default

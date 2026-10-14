@@ -51,7 +51,7 @@ Not every setting exists at every layer. A request cannot change how a model was
 | Setting | Precedence, strongest first |
 |---|---|
 | Context length | request `num_ctx` → `.toml` `[runtime] n_ctx` → `TLLAMA_CONTEXT_LENGTH` → `0`, meaning the model's trained maximum |
-| Load parameters | `.toml` `[runtime]` → `TLLAMA_RUNTIME_*` → `Llama()` default |
+| Load parameters | `.toml` `[runtime]` → `TLLAMA_RUNTIME_*` → TLlama/native defaults |
 | K/V cache type | `.toml` `[runtime]` `type_k`/`type_v`/`type_kv` → `TLLAMA_K_CACHE_TYPE`/`TLLAMA_V_CACHE_TYPE`/`TLLAMA_KV_CACHE_TYPE` → unset |
 | Sampling | request `options` → `.toml` `[sampling]` → `TLLAMA_SAMPLING_*` → GGUF `general.sampling.*` → TLlama's baseline |
 | Stop strings | request `stop` → `.toml` `[sampling] stop` → none (no environment layer: a list is not a string) |
@@ -76,7 +76,7 @@ An unset or empty variable is not an error. `TLLAMA_CONTEXT_LENGTH=` in a unit f
 
 Whether a value converts and whether it means anything are separate questions, and TLlama's own numeric settings are checked for both. `TLLAMA_JANITOR_INTERVAL=0` converts to a number and then asks for a wait that does not wait; `TLLAMA_MAX_LOADED_MODELS=0` converts and then behaves as `1`. Each section below states the accepted range.
 
-Sampling values are almost never range-checked, whether they come from `TLLAMA_SAMPLING_*` or from a model's `.toml`. Values that look out of range there are defined by llama.cpp rather than meaningless: `top_k` at or below zero disables top-k sampling, `top_p` at or above `1.0` disables top-p, and a negative `temperature` selects a different sampler chain. A bound would close off configurations the library supports.
+Sampling values are typed and must be finite. Disable modes such as `top_k <= 0` and `top_p >= 1` remain accepted. Negative `temperature` is refused: the native runtime would turn it into greedy sampling instead of reproducing the former binding chain.
 
 The exception is `mirostat_mode`, which is a choice rather than a range: `0`, `1` or `2`. Any other number is not clamped and does not fail — it falls through to the ordinary sampler chain, so mirostat ends up off without a word. Both layers refuse it.
 
@@ -213,79 +213,20 @@ How often expired models are collected, in seconds. Default `10.0`. Must be grea
 
 ## Load parameters: `TLLAMA_RUNTIME_*`
 
-Sets any load parameter of `llama-cpp-python`'s `Llama()` for every model. The variable is the parameter name with a `TLLAMA_RUNTIME_` prefix:
+Uses TLlama's pinned native runtime vocabulary, independent of the installed Python binding. A variable is the parameter name with the `TLLAMA_RUNTIME_` prefix:
 
 ```bash
+export TLLAMA_RUNTIME_DEVICE=Vulkan0
 export TLLAMA_RUNTIME_N_THREADS=8
 export TLLAMA_RUNTIME_USE_MLOCK=true
-export TLLAMA_RUNTIME_MAIN_GPU=1
 export TLLAMA_RUNTIME_TENSOR_SPLIT=0.6,0.4
 ```
 
-Which names exist, and what each takes, is read from `Llama()`'s signature in the installed build. No list in TLlama can disagree with it, and a parameter a future `llama-cpp-python` adds becomes settable without a TLlama change. A name that is not a parameter, or a value of the wrong shape, stops the server at startup.
+Native configuration and its defaults, CLI mapping and removal matrix are documented in [native-config.md](native-config.md). Only listed parameters are accepted. Unknown names, removed settings, invalid types and unrepresentable enums produce a configuration error.
 
-Values are converted according to the declared type: whole numbers for `int`, `1/true/yes/on` and `0/false/no/off` for `bool`, comma-separated numbers for `tensor_split`, and either a word or a number for `numa`.
+Whole numbers, finite floats, boolean words (`1/true/yes/on`, `0/false/no/off`) and comma-separated tensor proportions are supported. `numa` accepts disabled/strategy numbers or a boolean. `kv_overrides` is TOML-only. The model path comes from `[llm]`; context and K/V types have dedicated environment variables rather than duplicate `TLLAMA_RUNTIME_*` spellings.
 
-The table is that signature as of `llama-cpp-python` 0.3.35. Descriptions are TLlama's summary; `llama.cpp` is the authority on what each does.
-
-`n_gpu_layers` is worth knowing about before you need it. TLlama passes `-1`, so every layer goes to the device and the KV cache follows it there. llama.cpp has no view on whether that fits: it asks for the memory and finds out. Where the driver refuses outright the load is refused too, because a model whose buffers failed to reserve crashes on first use. Lowering `n_gpu_layers` computes some layers on the CPU instead, which is slower but loads -- it is the same trade Ollama makes for you by estimating the fit and reducing the offload on its own. Nothing in TLlama does that yet.
-
-| Parameter | Type | `Llama()` default | Notes |
-|---|---|---:|---|
-| `n_gpu_layers` | int | `0` | Layers offloaded to GPU, `-1` for all. **TLlama passes `-1`** unless overridden |
-| `split_mode` | int | `1` | `0` none, `1` by layer, `2` by row |
-| `main_gpu` | int | `0` | Index into the device list after llama.cpp merges duplicates |
-| `tensor_split` | list of float | unset | Proportion per device, comma-separated |
-| `vocab_only` | bool | `False` | Vocabulary only, no weights |
-| `use_mmap` | bool | `True` | Map the file rather than read it |
-| `use_mlock` | bool | `False` | Keep the model resident in RAM |
-| `kv_overrides` | dict | unset | Not settable from the environment |
-| `seed` | int | `4294967295` | Load-time seed |
-| `n_ctx` | int | `512` | Set by `TLLAMA_CONTEXT_LENGTH`, not settable here |
-| `n_batch` | int | `512` | Logical batch size |
-| `n_ubatch` | int | `512` | Physical batch size |
-| `n_threads` | int | unset | Generation threads |
-| `n_threads_batch` | int | unset | Prompt-processing threads |
-| `rope_scaling_type` | int | `-1` | `-1` unspecified |
-| `pooling_type` | int | `-1` | For embedding models |
-| `attention_type` | int | `-1` | `-1` unspecified |
-| `rope_freq_base` | float | `0.0` | `0.0` takes the model's own |
-| `rope_freq_scale` | float | `0.0` | `0.0` takes the model's own |
-| `yarn_ext_factor` | float | `-1.0` | YaRN context extension |
-| `yarn_attn_factor` | float | `1.0` | |
-| `yarn_beta_fast` | float | `32.0` | |
-| `yarn_beta_slow` | float | `1.0` | |
-| `yarn_orig_ctx` | int | `0` | `0` takes the model's trained context |
-| `logits_all` | bool | `False` | Logits for every token |
-| `embedding` | bool | `False` | Embedding mode |
-| `offload_kqv` | bool | `True` | KQV computation on GPU |
-| `flash_attn` | bool | `False` | Also reachable as `TLLAMA_FLASH_ATTENTION` |
-| `op_offload` | bool | unset | |
-| `swa_full` | bool | unset | Full sliding-window attention cache |
-| `no_perf` | bool | `False` | Skip performance counters |
-| `last_n_tokens_size` | int | `64` | Window the repeat penalty looks back over |
-| `lora_base` | str | unset | |
-| `lora_scale` | float | `1.0` | |
-| `lora_path` | str | unset | Turns `use_mmap` off by itself |
-| `numa` | bool or int | `False` | A word for the bool, digits for a strategy number |
-| `chat_format` | str | unset | Named prompt format; `[template]` is usually the better tool |
-| `chat_handler` | object | unset | Not settable from the environment; comes from `[mmproj]` |
-| `draft_model` | object | unset | Not settable from the environment |
-| `tokenizer` | object | unset | Not settable from the environment |
-| `type_k` | int | unset | Set by `TLLAMA_K_CACHE_TYPE`, not settable here |
-| `type_v` | int | unset | Set by `TLLAMA_V_CACHE_TYPE`, not settable here |
-| `spm_infill` | bool | `False` | SentencePiece infill |
-| `verbose` | bool | `True` | **TLlama requires this on**: `/api/ps` takes every number it reports from the load log |
-| `model_path` | str | required | Comes from `[llm]`, never settable |
-
-`chat_handler`, `draft_model`, `tokenizer` and `kv_overrides` take values no string can express. Four more are refused with a message saying where they are set instead:
-
-| Parameter | Set by |
-|---|---|
-| `model_path` | `[llm]` in a model's `.toml` |
-| `n_ctx` | `TLLAMA_CONTEXT_LENGTH` |
-| `type_k` | `TLLAMA_K_CACHE_TYPE` or `TLLAMA_KV_CACHE_TYPE` |
-| `type_v` | `TLLAMA_V_CACHE_TYPE` or `TLLAMA_KV_CACHE_TYPE` |
+**Migration checkpoint:** public routes still use the legacy manager. A native `device` selector works in the standalone resolver/preview; the legacy manager explicitly refuses it until block 04 replaces that manager. Device selection is required by the native resolver before load, and model TOML overrides the global selector. It is not a stable physical GPU ID.
 
 ### `TLLAMA_FLASH_ATTENTION`
 
@@ -308,7 +249,7 @@ export TLLAMA_KV_CACHE_TYPE=q8_0
 export TLLAMA_V_CACHE_TYPE=q4_0     # a smaller V than K
 ```
 
-A value is a ggml type name resolved against the `GGML_TYPE_*` constants the installed build defines — `f16`, `q8_0`, `q4_0` and the rest. It is not checked against a fixed list, so a type a future `llama.cpp` adds works without a TLlama change. A name matching no constant stops the server at startup.
+Supported native KV names are `f32`, `f16`, `bf16`, `q8_0`, `q4_0`, `q4_1`, `iq4_nl`, `q5_0`, `q5_1`. TOML also accepts the corresponding pinned GGML enum integers. Other weight quantization types are not KV types and are refused. The native resolver explicitly defaults both sides to `f16`.
 
 Resolving is not the same as being usable: `llama.cpp` supports only some ggml types as a KV cache, and one it does not support is refused when a model loads, which startup cannot check.
 
@@ -327,9 +268,7 @@ export TLLAMA_SAMPLING_TOP_K=20
 
 **Everything here is unset by default, and that matters.** A global sampling value overrules what a model's own definition recommends, for every model at once. Shipping numbers in this layer would silence those recommendations on a server nobody configured, so an unset variable stays genuinely unset and TLlama's baseline applies as before.
 
-Which names exist is read off `create_completion()` and `create_chat_completion()` in the installed `llama-cpp-python`, narrowed to what TLlama actually applies — the same set a `.toml` `[sampling]` may use, listed under [`[sampling]`](#sampling) below. A name outside it stops the server at startup, and says which of the two reasons applies: TLlama does not apply this parameter, or the library has no such parameter at all.
-
-The type each value has to become is read off the same signatures. `logit_bias` and `stop` are therefore refused here — a table and a list are not things an environment variable can hold — with a message pointing at the `.toml`, where they can be set.
+Names and types come from TLlama's own sampling contract, also used for TOML and request validation. They do not change when a Python binding adds parameters. `logit_bias` and `stop` remain TOML-only because their structured values cannot be expressed through this environment interface.
 
 A value that will not convert stops the server at startup rather than failing on the first request that generates anything.
 
@@ -384,7 +323,9 @@ A path escaping the repository root is refused. An `[mmproj]` is checked to be a
 
 #### Projector context
 
-`_init_mtmd_context` in llama-cpp-python sets four fields of `mtmd_context_params` — `use_gpu`, `print_timings`, `n_threads` and `flash_attn_type` — and leaves the rest at their defaults. Those four are not settable here: they are written after these are, so a value would be overwritten. The rest are.
+The native resolver maps these fields to CLI parameters. `warmup` now affects the whole worker, including the text model; it cannot be limited to the projector. The legacy implementation described below remains the public route behavior until the vision migration.
+
+The legacy `_init_mtmd_context` in llama-cpp-python sets four fields of `mtmd_context_params` — `use_gpu`, `print_timings`, `n_threads` and `flash_attn_type` — and leaves the rest at their defaults. Those four are not settable here: they are written after these are, so a value would be overwritten. The rest are.
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
@@ -409,7 +350,7 @@ Several models may point at one physical file; the weights are not copied.
 
 ### `[runtime]`
 
-Any `Llama()` parameter from the table above, plus `type_kv`. Overrides `TLLAMA_RUNTIME_*` for this model.
+The supported parameters in [native-config.md](native-config.md), including `type_kv`. Overrides `TLLAMA_RUNTIME_*` for this model.
 
 `model_path` is refused: the path comes from `[llm]`, and naming it here would mean the file defines one model and loads another.
 
@@ -433,7 +374,6 @@ The baselines below apply only where nothing else does. On a model whose GGUF re
 | `presence_penalty` | `0.0` | |
 | `frequency_penalty` | `0.0` | |
 | `repeat_penalty` | `1.0` | `1.0` disables |
-| `tfs_z` | `1.0` | `1.0` disables |
 | `mirostat_mode` | `0` | `0`, `1` or `2`; anything else is refused. Ollama's client options spell this `mirostat` |
 | `mirostat_tau` | `5.0` | |
 | `mirostat_eta` | `0.1` | |
@@ -442,7 +382,7 @@ The baselines below apply only where nothing else does. On a model whose GGUF re
 | `max_tokens` | unset | Ollama's client options spell this `num_predict` |
 | `stop` | none | Array of strings |
 
-This set is still narrower than what `llama-cpp-python`'s completion calls accept. `grammar` is the notable absentee, and deliberately so: GBNF that llama.cpp cannot parse takes the server process down with `SIGSEGV` rather than returning an error, and nothing in the installed library parses it early enough to catch that first. A name that is real to the library but unapplied here is refused rather than accepted and dropped.
+`tfs_z` has been removed. Explicit use in TOML, environment or Ollama options is refused even for `1.0`. This set is deliberately narrower than every feature exposed by the native runtime. `grammar` is the notable absentee, and deliberately so: GBNF that llama.cpp cannot parse takes the server process down with `SIGSEGV` rather than returning an error, and nothing in the installed library parses it early enough to catch that first. A name that is real to the library but unapplied here is refused rather than accepted and dropped.
 
 Applied identically by `/api/generate`, `/api/chat` and `/v1/chat/completions`, so a model behaves the same whichever endpoint a client uses.
 

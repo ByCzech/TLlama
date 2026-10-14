@@ -77,6 +77,19 @@ async def test_503_loading_is_retried(factory):
         assert len([r for r in records(root, "requests") if r["path"] == "/health"]) == 4
 
 
+async def test_custom_template_is_an_owned_private_file_and_is_cleaned_up(factory):
+    template = "{{ bos_token }}{% for m in messages %}{{ m.content }}{% endfor %}ě\n"
+    worker, root = factory(template=template, runtime_options={"n_threads": 2})
+    async with worker:
+        args = records(root, "launch")[0]["argv"]
+        path = Path(args[args.index("--chat-template-file") + 1])
+        assert path.parent == worker.runtime_directory
+        assert path.read_text() == template and path.stat().st_mode & 0o777 == 0o600
+        assert args[args.index("--threads") + 1] == "2" and "--jinja" in args
+        assert (await worker.chat({}))["choices"]
+    assert not path.exists()
+
+
 @pytest.mark.parametrize("mode", ["wrong-build", "wrong-alias", "wrong-slots", "bad-context", "bad-health"])
 async def test_readiness_checks_actual_runtime_and_model(factory, mode):
     worker, _ = factory(mode)

@@ -1,0 +1,9 @@
+[llm]
+model = "HuggingFace/unsloth/Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-IQ3_S.gguf"
+
+[runtime]
+flash_attn = true
+type_kv = "q4_0"
+n_ctx = 4096
+
+#[sampling]

@@ -7,7 +7,7 @@ replace ModelManager or route public inference requests yet.
 importing llama-cpp-python. The caller supplies absolute model/projector paths,
 a native device selector, load parameters and optional child environment values.
 CPU, CUDA, ROCm, Vulkan and other server device names use the same contract.
-Mapping public TOML/environment/CLI configuration is a later milestone.
+TOML/environment resolution is available through `native_config.resolve_worker_config`; see [native-config.md](native-config.md). ModelManager/public-route integration is the next milestone.
 
 The initial contract uses one slot, explicit context size, fit disabled and
 context shifting disabled. Its default 2048 context is for standalone testing,

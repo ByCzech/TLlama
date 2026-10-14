@@ -13,7 +13,7 @@ ENV_PREFIX = "TLLAMA_RUNTIME_"
 
 # Not settable from the environment, each for its own reason.
 #
-# model_path is the only real prohibition: it comes from [llm] in a .toml,
+# model_path comes from [llm] in a .toml,
 # and pointing it elsewhere would mean the model is not the model its
 # definition names.
 #

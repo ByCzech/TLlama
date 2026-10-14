@@ -227,8 +227,8 @@ def _reject_unknown_keys(
 ) -> None:
     """The same refusal the other sections make, for a fixed vocabulary.
 
-    Unlike [runtime], whose valid names are read off Llama()'s signature,
-    these three are TLlama's own and short enough to name outright.
+    Each section uses TLlama's own vocabulary; these sections have no
+    load/sampling-specific value interpretation.
     """
     for key in table:
         if key not in allowed:
@@ -237,15 +237,6 @@ def _reject_unknown_keys(
                 f"The section takes {', '.join(sorted(allowed))}."
             )
 
-
-# type_kv is TLlama's shorthand for setting type_k and type_v together; it
-# is not a Llama() parameter and so has to be named here.
-_RUNTIME_EXTRA_KEYS = {"type_kv"}
-
-# model_path is a Llama() parameter, but the path comes from [llm]. A
-# [runtime] naming it would point somewhere else and the model would stop
-# being the one the file defines, so it is refused rather than ignored.
-_RUNTIME_FORBIDDEN_KEYS = {"model_path": "the model path comes from [llm]"}
 
 # The whole vocabulary of [mmproj], which parse_model_toml reads by name.
 _MMPROJ_PATH_KEYS = frozenset({"model", "from"})
@@ -337,7 +328,7 @@ def _reject_unknown_runtime_keys(runtime: Dict[str, Any], source: str) -> None:
 def _as_logit_bias(value: Any, source: str) -> Dict[int, float]:
     """Turn a [sampling] logit_bias table into what create_completion wants.
 
-    The signature says Dict[int, float], but a TOML table's keys are always
+    Native token IDs are integers, but a TOML table's keys are always
     strings, so the token ids arrive as text and have to be converted here
     rather than at the call. Doing it at parse time also means a typo names
     the file it is in, which is not true of anything discovered later.

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import math
 from typing import Any, Mapping
+from types import MappingProxyType
 
 
 RUNTIME_TYPES = {
@@ -54,6 +55,15 @@ KV_TYPES = {"f32": 0, "f16": 1, "bf16": 30, "q8_0": 8, "q4_0": 2,
 SPLIT_MODES = {0: "none", 1: "layer", 2: "row"}
 ROPE_MODES = {-1: None, 0: "none", 1: "linear", 2: "yarn"}
 NUMA_MODES = {0: None, 1: "distribute", 2: "isolate", 3: "numactl"}
+
+
+def freeze_values(value):
+    """Copy nested configuration so frozen launch contracts cannot be mutated."""
+    if isinstance(value, Mapping):
+        return MappingProxyType({key: freeze_values(item) for key, item in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(freeze_values(item) for item in value)
+    return value
 
 
 def kv_type_name(value: Any) -> str:

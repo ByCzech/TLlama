@@ -6,7 +6,10 @@ import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
-from typing import Mapping
+from typing import Mapping, Any
+
+from tllama.native_cli import runtime_cli_args, mmproj_cli_args
+from tllama.native_params import freeze_values, kv_type_name
 
 
 RUNTIME_FINGERPRINT = "b11552-ec2797836f"
@@ -20,7 +23,7 @@ def _owned_environment(name: str) -> bool:
 
 @dataclass(frozen=True)
 class WorkerLaunchSpec:
-    """Resolved configuration for one worker; public TOML mapping comes later."""
+    """Resolved load configuration for one private native process."""
 
     model: Path
     device: str
@@ -34,6 +37,9 @@ class WorkerLaunchSpec:
     flash_attn: bool | None = None
     port: int = 0
     environment: Mapping[str, str] = field(default_factory=dict, repr=False)
+    runtime_options: Mapping[str, Any] = field(default_factory=dict)
+    mmproj_options: Mapping[str, Any] = field(default_factory=dict)
+    template: str | None = None
     runtime_fingerprint: str = RUNTIME_FINGERPRINT
     load_timeout: float = 600.0
     request_timeout: float | None = None
@@ -79,6 +85,18 @@ class WorkerLaunchSpec:
             value = getattr(self, name)
             if value is not None and (not isinstance(value, str) or not value or "\0" in value):
                 raise ValueError(f"{name} must be a KV cache type name or unset")
+            if value is not None:
+                object.__setattr__(self, name, kv_type_name(value))
+        runtime_cli_args(self.runtime_options)
+        mmproj_cli_args(self.mmproj_options)
+        if self.mmproj_options and self.mmproj is None:
+            raise ValueError("Projector options require a resolved mmproj path")
+        if self.device == "none" and any(self.runtime_options.get(key) is True for key in ("op_offload", "offload_kqv")):
+            raise ValueError("CPU placement conflicts with explicitly enabled offload")
+        if self.template is not None and (not isinstance(self.template, str) or "\0" in self.template):
+            raise ValueError("template must be a Jinja string without NUL or unset")
+        object.__setattr__(self, "runtime_options", freeze_values(self.runtime_options))
+        object.__setattr__(self, "mmproj_options", freeze_values(self.mmproj_options))
         for name in ("load_timeout", "request_timeout", "terminate_timeout", "kill_timeout"):
             value = getattr(self, name)
             if value is None and name == "request_timeout":
@@ -102,7 +120,7 @@ class WorkerLaunchSpec:
         env.update(self.environment)
         return env
 
-    def command(self, api_key_file: Path) -> tuple[str, ...]:
+    def command(self, api_key_file: Path, template_file: Path | None = None) -> tuple[str, ...]:
         if not api_key_file.is_absolute():
             raise ValueError("api_key_file must be an absolute path")
         layers = 0 if self.device == "none" else self.n_gpu_layers
@@ -114,7 +132,7 @@ class WorkerLaunchSpec:
                 "--api-key-file", str(api_key_file), "--offline", "--no-context-shift",
                 "--log-colors", "off", "--no-log-prefix", "--no-log-timestamps",
                 "--log-verbosity", "5"]
-        if self.device == "none":
+        if self.device == "none" and "op_offload" not in self.runtime_options:
             args.append("--no-op-offload")
         if self.mmproj is not None:
             args += ["--mmproj", str(self.mmproj)]
@@ -126,4 +144,10 @@ class WorkerLaunchSpec:
             value = getattr(self, name)
             if value is not None:
                 args += [flag, value]
+        args += runtime_cli_args(self.runtime_options)
+        args += mmproj_cli_args(self.mmproj_options)
+        if self.template is not None:
+            if template_file is None or not template_file.is_absolute():
+                raise ValueError("A private absolute template_file is required for a template override")
+            args += ["--jinja", "--chat-template-file", str(template_file)]
         return tuple(args)

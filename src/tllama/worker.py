@@ -152,7 +152,13 @@ class NativeWorker:
         fd = os.open(key_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, "w") as file:
             file.write(self._api_key + "\n")
-        self.command = self.spec.command(key_file)
+        template_file = None
+        if self.spec.template is not None:
+            template_file = self.runtime_directory / "chat-template.jinja"
+            fd = os.open(template_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "w") as file:
+                file.write(self.spec.template)
+        self.command = self.spec.command(key_file, template_file)
         env = self.spec.child_environment(os.environ)
         # Shield creation so cancellation cannot abandon a child before its handle arrives.
         self._spawn_task = asyncio.create_task(self._spawn(env))
