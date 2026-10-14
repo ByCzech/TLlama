@@ -167,7 +167,7 @@ def test_ollama_tool_history_gains_required_native_type_without_losing_arguments
     {"role": "user", "content": [{"type": "image_url", "image_url": {"url": "file:///etc/passwd"}}]},
     {"role": "assistant", "function_call": {"name": "f"}}, {"role": "function", "content": "x"}])
 def test_unmapped_inputs_are_refused_instead_of_lost(resolved, message):
-    with pytest.raises(UnsupportedNativeInput):
+    with pytest.raises(ValueError):
         prepare_chat([message], {}, resolved=resolved)
 
 

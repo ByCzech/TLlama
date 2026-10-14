@@ -80,6 +80,18 @@ class TestTheDataUrlPrefix:
 
 
 class TestWhatIsRefused:
+    @pytest.mark.parametrize('url', [
+        'data:image/png;base64,nonsense!!', 'data:image/png;base64,',
+        'data:text/plain;base64,' + PNG, 'data:image/png,' + PNG,
+        'data:image/png;base64,' + base64.b64encode(b'not an image').decode(),
+    ])
+    def test_data_urls_are_checked_like_bare_base64(self, url):
+        with pytest.raises(InvalidImageError):
+            to_image_data_url(url)
+
+    def test_actual_bytes_override_an_incorrect_image_mime_label(self):
+        assert to_image_data_url('data:image/jpeg;base64,' + PNG) == 'data:image/png;base64,' + PNG
+
     @pytest.mark.parametrize("url", [
         "http://example.com/cat.png",
         "https://example.com/cat.png",

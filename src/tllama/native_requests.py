@@ -1,8 +1,8 @@
-"""Prepare text API payloads from a lease's resolved configuration.
+"""Prepare text/image chat payloads from a lease's resolved configuration.
 
 No model lookup, transport, prompt rendering or public route selection occurs
-here. Generate rendering lives in native_routes; vision and FIM remain separate
-checkpoints.
+here. Generate rendering and live vision capability checks live in native_routes;
+generate images and FIM remain separate checkpoints.
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ from tllama.helpers.chat import build_think_kwargs_ex
 from tllama.helpers.common import validate_format
 from tllama.native_config import ResolvedWorkerConfig, build_native_sampling, _plain
 from tllama.native_params import freeze_values
+from tllama.helpers.vision import normalize_image_content_parts, to_image_data_url
 
 
 class UnsupportedNativeInput(ValueError):
@@ -50,25 +51,32 @@ class NativeRequest:
         return _plain(self.payload)
 
 
-def _text_messages(messages, resolved):
+def normalize_chat_input(messages):
+    """Validate text/image inputs before admission, preserving all media order."""
     result = []
     for message in messages:
         value = message.model_dump(exclude_none=True) if hasattr(message, "model_dump") else dict(message)
-        if value.get("images"):
-            raise UnsupportedNativeInput("Native text adapter does not map images; vision migrates separately")
         if value.get("function_call") is not None or value.get("role") == "function":
             raise UnsupportedNativeInput("Deprecated function-call history needs an explicit native mapping")
         content = value.get("content")
         if isinstance(content, list):
-            if any(not isinstance(part, dict) or part.get("type") != "text" for part in content):
-                raise UnsupportedNativeInput("Native text adapter accepts only text content parts")
-            if any(not isinstance(part.get("text"), str) for part in content):
+            if any(not isinstance(part, dict) or part.get("type") not in {'text', 'image_url'} for part in content):
+                raise UnsupportedNativeInput("Native chat adapter accepts only text and image_url content parts")
+            if any(part['type'] == 'text' and not isinstance(part.get("text"), str) for part in content):
                 raise ValueError("Text content parts need string text")
-            content = "".join(part["text"] for part in content)
+            content = normalize_image_content_parts(content)
         elif content is None:
             content = ""
-        if not isinstance(content, str) or not isinstance(value.get("role"), str):
-            raise ValueError("Chat messages need a string role and text content")
+        if not isinstance(content, (str, list)) or not isinstance(value.get("role"), str):
+            raise ValueError("Chat messages need a string role and text/image content")
+        images = value.get('images') or []
+        if not isinstance(images, list) or any(not isinstance(image, str) for image in images):
+            raise ValueError('Message images must be an array of base64 strings')
+        if images:
+            content = [{'type':'text', 'text':content}] if isinstance(content, str) else content
+            content = content + [{'type':'image_url', 'image_url':{'url':to_image_data_url(image)}} for image in images]
+        elif isinstance(content, list) and all(part['type'] == 'text' for part in content):
+            content = ''.join(part['text'] for part in content)
         normalized = {"role": value["role"], "content": content}
         for key in ("name", "tool_call_id", "tool_calls", "reasoning_content"):
             if key in value:
@@ -84,6 +92,11 @@ def _text_messages(messages, resolved):
         if value.get("thinking") is not None:
             normalized["reasoning_content"] = value["thinking"]
         result.append(normalized)
+    return result
+
+
+def _chat_messages(messages, resolved, normalized_messages=None):
+    result = normalize_chat_input(messages) if normalized_messages is None else _json_copy(normalized_messages)
     # Presence, including an explicit empty system message, wins over TOML.
     if resolved.system_prompt is not None and not any(m["role"] in {"system", "developer"} for m in result):
         result.insert(0, {"role": "system", "content": resolved.system_prompt})
@@ -118,9 +131,9 @@ def _response_format(value):
 
 def prepare_chat(messages, opts, *, resolved: ResolvedWorkerConfig, metadata_info=None,
                  think=None, response_format=None, tools=None, tool_choice=None,
-                 parallel_tool_calls=None) -> NativeRequest:
+                 parallel_tool_calls=None, normalized_messages=None) -> NativeRequest:
     body = build_native_sampling(opts or {}, metadata_info, resolved=resolved)
-    body.update({"messages": _text_messages(messages, resolved),
+    body.update({"messages": _chat_messages(messages, resolved, normalized_messages),
                  "reasoning_format": "deepseek"})  # Structured fields, never legacy reasoning-in-content.
     body.update(_think_payload(think))
     if response_format is not None:
@@ -145,7 +158,7 @@ def prepare_chat(messages, opts, *, resolved: ResolvedWorkerConfig, metadata_inf
     return NativeRequest("chat", body)
 
 
-def prepare_ollama_chat(request, *, resolved: ResolvedWorkerConfig, metadata_info=None):
+def prepare_ollama_chat(request, *, resolved: ResolvedWorkerConfig, metadata_info=None, normalized_messages=None):
     validate_format(request.format)
     response_format = None
     if request.format == "json":
@@ -153,10 +166,11 @@ def prepare_ollama_chat(request, *, resolved: ResolvedWorkerConfig, metadata_inf
     elif isinstance(request.format, dict):
         response_format = {"type": "json_object", "schema": request.format}
     return prepare_chat(request.messages, request.options, resolved=resolved, metadata_info=metadata_info,
-                        think=request.think, response_format=response_format, tools=request.tools)
+                        think=request.think, response_format=response_format, tools=request.tools,
+                        normalized_messages=normalized_messages)
 
 
-def prepare_openai_chat(request, *, resolved: ResolvedWorkerConfig, metadata_info=None):
+def prepare_openai_chat(request, *, resolved: ResolvedWorkerConfig, metadata_info=None, normalized_messages=None):
     # Do not silently send names which the pinned native parser ignores.
     if request.functions is not None or request.function_call is not None:
         raise UnsupportedNativeInput("Deprecated functions/function_call needs an explicit native mapping; use tools/tool_choice")
@@ -171,7 +185,8 @@ def prepare_openai_chat(request, *, resolved: ResolvedWorkerConfig, metadata_inf
         raise ValueError("reasoning effort must be a string")
     return prepare_chat(request.messages, opts, resolved=resolved, metadata_info=metadata_info,
                         think=effort, response_format=request.response_format, tools=request.tools,
-                        tool_choice=request.tool_choice, parallel_tool_calls=request.parallel_tool_calls)
+                        tool_choice=request.tool_choice, parallel_tool_calls=request.parallel_tool_calls,
+                        normalized_messages=normalized_messages)
 
 
 def prepare_completion(prompt: str, opts, *, resolved: ResolvedWorkerConfig, metadata_info=None,
