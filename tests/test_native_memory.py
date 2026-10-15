@@ -128,3 +128,28 @@ def test_structured_observations_are_bounded():
 def test_unknown_native_state_buffer_cannot_be_silently_dropped_from_total():
     report = observe(VULKAN + '\nllama_kv_cache_dsv4: Vulkan0 DSV4 sliding state buffer size = 5 MiB').snapshot()
     assert report['allocated_bytes'] is None and report['reason'] == 'unrecognized_buffer_report'
+
+
+@pytest.mark.parametrize('counts,expected', [('41/41', (41, 41)), ('20/41', (20, 41)), ('0/41', (0, 41))])
+def test_actual_layer_offload_is_observed_independently_of_buffer_totals(counts, expected):
+    report = observe(VULKAN + f'\nload_tensors: offloaded {counts} layers to GPU').snapshot()
+    assert report['layer_offload'] == dict(zip(('offloaded_layers', 'total_layers'), expected))
+    assert report['allocated_bytes'] == observe().snapshot()['allocated_bytes']
+
+
+@pytest.mark.parametrize('summaries', [[], ['42/41'], ['0/0'], ['-1/41'], ['bad'],
+    ['99999999999999999999/99999999999999999999'], ['41/41', '20/41'], ['20/41', '41/41'], ['41/41', '41/41']])
+def test_missing_invalid_or_multiple_offload_summaries_cannot_prove_full_offload(summaries):
+    log = VULKAN + ''.join(f'\nload_tensors: offloaded {counts} layers to GPU' for counts in summaries)
+    report = observe(log).snapshot()
+    assert report['layer_offload'] is None
+    assert report['status'] == 'known'
+    assert report['allocated_bytes'] == observe().snapshot()['allocated_bytes']
+
+
+def test_layer_offload_is_an_owned_snapshot_frozen_at_the_load_boundary():
+    parser = observe(VULKAN + '\nload_tensors: offloaded 41/41 layers to GPU')
+    report = parser.snapshot()
+    report['layer_offload']['offloaded_layers'] = 0
+    parser.observe('load_tensors: offloaded 0/41 layers to GPU')
+    assert parser.snapshot()['layer_offload'] == {'offloaded_layers':41, 'total_layers':41}

@@ -237,8 +237,18 @@ async def main():
         print("device kernel image is invalid", file=sys.stderr, flush=True)
         return 23
     print("E CUDA: no CUDA-capable device", file=sys.stderr, flush=True)
-    print("load_tensors: CPU model buffer size = 10.00 MiB", flush=True)
-    if MODE != 'memory-missing':
+    if MODE == 'memory-full-offload':
+        print('load_tensors: offloaded 41/41 layers to GPU', flush=True)
+        print('load_tensors: CPU_Mapped model buffer size = 2.00 MiB', flush=True)
+        print('load_tensors: Vulkan0 model buffer size = 10.00 MiB', flush=True)
+        print('llama_kv_cache: Vulkan0 KV buffer size = 1.00 MiB', flush=True)
+        print('llama_memory_recurrent: Vulkan0 RS buffer size = 2.00 MiB', flush=True)
+        print('llama_context: Vulkan_Host output buffer size = 0.50 MiB', flush=True)
+        print('sched_reserve: Vulkan0 compute buffer size = 3.00 MiB', flush=True)
+        print('sched_reserve: Vulkan_Host compute buffer size = 1.00 MiB', flush=True)
+    else:
+        print("load_tensors: CPU model buffer size = 10.00 MiB", flush=True)
+    if MODE not in {'memory-missing', 'memory-full-offload'}:
         print("llama_kv_cache: CPU KV buffer size = 1.00 MiB", flush=True)
         print("llama_memory_recurrent: CPU RS buffer size = 2.00 MiB", flush=True)
         print("llama_context: CPU output buffer size = 0.50 MiB", flush=True)

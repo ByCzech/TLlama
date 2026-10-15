@@ -8,6 +8,8 @@ import signal
 import pytest
 
 from tllama.helpers.metadata_cache import save_digest_cache
+from tllama.native_reporting import ollama_memory_sizes
+from test_native_memory import VULKAN, observe
 from test_native_public_api import public, request_body, stream_mode
 from test_native_manager import native_manager, records, wait_until
 
@@ -175,3 +177,64 @@ async def test_memory_parser_failure_cannot_break_startup_or_inference(public, m
     assert (await client.post('/api/chat', json=request_body(name, '/api/chat'))).status_code == 200
     [model] = await ps(client)
     assert model['size'] is None and model['memory']['reason'] == 'parser_error'
+
+
+@pytest.mark.parametrize('device', ['Vulkan0', 'CUDA0', 'ROCm0', 'SYCL0'])
+@pytest.mark.parametrize('input_buffer', ['CPU_Mapped', 'CPU', 'device_Host'])
+def test_full_offload_ps_excludes_input_and_helpers_without_rewriting_allocations(device, input_buffer):
+    log = VULKAN.replace('Vulkan0', device).replace('Vulkan_Host', device.rstrip('0') + '_Host')
+    log = log.replace('CPU_Mapped', input_buffer.replace('device', device.rstrip('0')))
+    parser = observe(log + '\nload_tensors: offloaded 41/41 layers to GPU')
+    memory = parser.snapshot()
+    assert ollama_memory_sizes(memory) == (memory['device_bytes'], memory['device_bytes'])
+    assert memory['host_bytes'] == sum(round(size * MIB) for size in (397.85, 0.95, 20.30))
+    assert memory == parser.snapshot()
+
+
+@pytest.mark.parametrize('summary', ['', '20/41', '0/41', '42/41', '0/0'])
+def test_ps_keeps_host_weights_without_proven_full_offload(summary):
+    log = VULKAN + (f'\nload_tensors: offloaded {summary} layers to GPU' if summary else '')
+    memory = observe(log).snapshot()
+    assert ollama_memory_sizes(memory) == (memory['allocated_bytes'], memory['device_bytes'])
+    assert memory['allocated_bytes'] > memory['device_bytes']
+
+
+@pytest.mark.parametrize('origin,backend,kind', [('llama_kv_cache', 'CPU', 'KV'),
+    ('llama_memory_recurrent', 'CPU', 'RS'), ('sched_reserve', 'CPU', 'compute'),
+    ('llama_kv_cache', 'Vulkan_Host', 'KV'), ('llama_memory_recurrent', 'Vulkan_Host', 'RS')])
+def test_full_layer_offload_cannot_hide_cpu_state_or_cpu_computation(origin, backend, kind):
+    log = VULKAN + f'\n{origin}: {backend} {kind} buffer size = 50 MiB\nload_tensors: offloaded 41/41 layers to GPU'
+    memory = observe(log).snapshot()
+    assert ollama_memory_sizes(memory) == (memory['device_bytes'] + 50 * MIB, memory['device_bytes'])
+
+
+def test_full_offload_cpu_output_is_a_result_buffer_not_cpu_layer_execution():
+    memory = observe(VULKAN.replace('Vulkan_Host output', 'CPU output')
+                     + '\nload_tensors: offloaded 41/41 layers to GPU').snapshot()
+    assert ollama_memory_sizes(memory) == (memory['device_bytes'], memory['device_bytes'])
+
+
+@pytest.mark.parametrize('options', [{'end':False}, {'runtime_fingerprint':'new-runtime'}, {'projector':True}])
+def test_full_offload_cannot_turn_incomplete_allocations_into_a_known_ps_total(options):
+    memory = observe(VULKAN + '\nload_tensors: offloaded 41/41 layers to GPU', **options).snapshot()
+    assert ollama_memory_sizes(memory) == (None, None)
+
+
+def test_full_offload_summary_without_device_weights_cannot_hide_cpu_allocations():
+    memory = observe(VULKAN.replace('Vulkan0 model', 'CPU model')
+                     + '\nload_tensors: offloaded 41/41 layers to GPU').snapshot()
+    assert ollama_memory_sizes(memory) == (memory['allocated_bytes'], memory['device_bytes'])
+
+
+async def test_public_ps_restores_full_gpu_placement_from_actual_worker_log(public):
+    manager, client, name, _ = public
+    # The fixture requests device=none; placement must come from the actual
+    # load report, not from requested device/layer settings.
+    manager.test.options['mode'] = 'memory-full-offload'
+    await manager.preload_native_model(name, keep_alive=-1)
+    [model] = await ps(client)
+    assert model['size'] == model['size_vram'] == 16 * MIB
+    memory = model['memory']
+    assert memory['allocated_bytes'] == int(19.5 * MIB)
+    assert memory['host_bytes'] == int(3.5 * MIB)
+    assert memory['layer_offload'] == {'offloaded_layers':41, 'total_layers':41}

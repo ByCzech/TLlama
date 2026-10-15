@@ -29,6 +29,8 @@ _BUFFER = re.compile(
     rf"^(load_tensors|llama_kv_cache|llama_memory_recurrent|llama_context|sched_reserve|reserve_compute_meta):"
     rf"\s+({BACKEND_PREFIX})\s+(model|KV|RS|output|compute) buffer size\s*=\s*(\S+)\s+MiB\s*$")
 _END = re.compile(r"^srv\s+load_model:\s+initializing, n_slots\s*=\s*\d+")
+_OFFLOAD = re.compile(r"^load_tensors:\s+offloaded ([0-9]{1,10})/([0-9]{1,10}) layers to GPU$")
+_OFFLOAD_START = re.compile(r"^load_tensors:\s+offloaded\b")
 _DEVICE = re.compile(r"^(CUDA|ROCm|HIP|Vulkan|SYCL|Metal|CANN|MUSA|OpenCL|WebGPU)\d*$", re.I)
 _KINDS = {'load_tensors':'model', 'llama_kv_cache':'kv', 'llama_memory_recurrent':'rs',
           'llama_context':'output', 'sched_reserve':'compute', 'reserve_compute_meta':'compute'}
@@ -67,6 +69,8 @@ class NativeMemory:
         self._projector_contexts = 0
         self._projector_weights = {}
         self._seen = set()
+        self._layer_offload = None
+        self._offload_seen = False
 
     def invalidate(self, reason):
         if not self._ended:
@@ -78,6 +82,16 @@ class NativeMemory:
         line = line.strip()
         if _END.match(line):
             self._ended = True
+            return
+        if _OFFLOAD_START.match(line):
+            match = _OFFLOAD.fullmatch(line)
+            # A second summary could belong to another model/context. Keep
+            # allocations usable, but do not infer placement from ambiguous logs.
+            if match and not self._offload_seen and 0 <= int(match[1]) <= int(match[2]) and int(match[2]) > 0:
+                self._layer_offload = {'offloaded_layers':int(match[1]), 'total_layers':int(match[2])}
+            else:
+                self._layer_offload = None
+            self._offload_seen = True
             return
         backend = PROJECTOR_BACKEND.fullmatch(line)
         if backend:
@@ -156,5 +170,6 @@ class NativeMemory:
                 'status':'known' if reason is None else 'partial' if buffers else 'unavailable',
                 'reason':reason, 'buffers':buffers, 'allocated_bytes':allocated,
                 'device_bytes':device, 'host_bytes':host, 'physical_residency_bytes':None,
+                'layer_offload':dict(self._layer_offload) if self._layer_offload is not None else None,
                 'projector_weights':dict(self._projector_weights),
                 'projector_weights_source':'native_model_size_summary' if self._projector_weights else None}

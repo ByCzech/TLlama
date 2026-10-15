@@ -14,6 +14,7 @@ import uvicorn
 
 from tllama.backend import ModelManager
 from tllama.config import load_backend_config_from_env
+from tllama.native_memory import buffer_location
 from tllama.worker import WorkerError
 from tllama.worker_config import DEFAULT_EXECUTABLE
 
@@ -96,9 +97,23 @@ async def exercise(args):
                 require(model['state'] == state and (leases is None or model['leases'] == leases), '/api/ps state/leases disagree')
                 memory = model['memory']
                 require(memory['status'] == 'known', f'Incomplete text-model memory report: {memory}')
-                require(model['size'] == memory['allocated_bytes'] and model['size_vram'] == memory['device_bytes'],
-                        '/api/ps summary differs from its allocation report')
-                require(memory['host_bytes'] + memory['device_bytes'] == model['size'], 'Allocation split disagrees')
+                require(model['size_vram'] == memory['device_bytes']
+                        and model['size_vram'] <= model['size'] <= memory['allocated_bytes'],
+                        '/api/ps processor summary exceeds its allocation report')
+                require(memory['host_bytes'] + memory['device_bytes'] == memory['allocated_bytes'], 'Allocation split disagrees')
+                offload = memory['layer_offload']
+                full = offload is not None and offload['offloaded_layers'] == offload['total_layers']
+                if not full:
+                    require(model['size'] == memory['allocated_bytes'], 'CPU/partial offload lost host allocations')
+                else:
+                    # A full device load with only input/staging buffers on
+                    # the host must not look like partial CPU execution.
+                    host_work = sum(size for backend, kinds in memory['buffers'].items()
+                                    for kind, size in kinds.items() if buffer_location(backend) == 'host'
+                                    and kind not in {'model', 'output'}
+                                    and not (backend.upper().endswith('_HOST') and kind == 'compute'))
+                    if not host_work:
+                        require(model['size'] == model['size_vram'], 'Full offload is not reported as 100% GPU')
                 require(memory['physical_residency_bytes'] is None, 'Load logs were reported as physical residency')
                 require(model['context_length'] == worker.props['default_generation_settings']['n_ctx'], 'Effective context disagrees')
                 report(stage, models=models)
