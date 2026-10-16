@@ -99,7 +99,7 @@ FIM_TOKENS = {"[PRE]": 1100001, "[SUF]": 1100002, "[MID]": 1100003,
 
 def fim_selected():
     mode = os.environ.get('STUB_FIM')
-    pieces = (('<|fim_prefix|>', '<|fim_suffix|>', '<|fim_middle|>') if mode == 'codegemma' else
+    pieces = (('<|fim_prefix|>', '<|fim_suffix|>', '<|fim_middle|>') if mode in {'codegemma', 'qwen'} else
               ('<fim_prefix>', '<fim_suffix>', '<fim_middle>') if mode == 'starcoder' else
               ('[PRE]', '[SUF]', '[MID]'))
     return dict(zip(('PRE', 'SUF', 'MID'), pieces))
@@ -125,7 +125,13 @@ async def fim_request(reader, writer, path, body):
     mode = os.environ['STUB_FIM']
     if path == '/tokenize':
         tokens = fim_tokenize(body['content'], body.get('parse_special', True))
-        await json_response(writer, {'tokens': ([7] if body.get('add_special') else []) + tokens})
+        if mode == 'codegemma' and body['content'] == '<|file_separator|>':
+            tokens = [1032] + tokens
+        tokens = ([7] if body.get('add_special') else []) + tokens
+        if body.get('with_pieces'):
+            reverse = {value: key for key, value in FIM_TOKENS.items()}
+            tokens = [{'id': token, 'piece': reverse[token] if token in reverse else chr(token - 1000)} for token in tokens]
+        await json_response(writer, {'tokens': tokens})
         return
     if path == '/infill' and mode in {'negative', 'missing-route', 'codestral'}:
         message = ('Infill is not supported by this model: prefix token is missing. suffix token is missing. middle token is missing.'
@@ -140,7 +146,7 @@ async def fim_request(reader, writer, path, body):
             selected = fim_selected()
             pre, suf = [FIM_TOKENS[selected['PRE']]] + pre[-3 * (batch // 4):], [FIM_TOKENS[selected['SUF']]] + suf[:batch // 4 - 2]
             tokens = [7] + (suf + pre if '--spm-infill' in sys.argv else pre + suf) + [FIM_TOKENS[selected['MID']]]
-            if mode == 'repo':
+            if mode in {'repo', 'qwen'}:
                 tokens = [1100004] + fim_tokenize('myproject\n') + [1100005] + fim_tokenize('filename\n') + tokens
         else:
             tokens = body['prompt'] if isinstance(body['prompt'], list) else fim_tokenize(body['prompt'])
@@ -163,7 +169,7 @@ async def fim_request(reader, writer, path, body):
             else:
                 content = piece + 'unstopped'
         elif mode in {'codegemma', 'starcoder'}:
-            piece = '<|file_separator|>' if mode == 'codegemma' else '<file_sep>'
+            piece = '<|file_separator|>' if mode in {'codegemma', 'qwen'} else '<file_sep>'
             generated.append(FIM_TOKENS[piece])
             if piece in body.get('stop', []) and piece in body.get('preserved_tokens', []):
                 stopping_word = piece
@@ -371,7 +377,7 @@ async def main():
     if os.environ.get('STUB_FIM') not in (None, 'negative', 'missing-route', 'codestral'):
         for kind, piece in fim_selected().items():
             print(f"llama_vocab: FIM {kind} token = {FIM_TOKENS[piece]} '{piece}'", flush=True)
-        if os.environ['STUB_FIM'] == 'repo':
+        if os.environ['STUB_FIM'] in {'repo', 'qwen'}:
             for kind, piece in [('REP', '[REP]'), ('SEP', '[SEP]')]:
                 print(f"llama_vocab: FIM {kind} token = {FIM_TOKENS[piece]} '{piece}'", flush=True)
     if MODE not in {'memory-missing', 'memory-full-offload'}:

@@ -20,7 +20,7 @@ one worker; no concurrent model loads):
 | Registered model | Role |
 | --- | --- |
 | `codegemma-2b-Q8_0` | FIM candidate |
-| `starcoder2-3b-Q8_0` | FIM candidate |
+| `starcoder2-7b_Q4_K_M` | FIM candidate |
 | `qwen2.5-coder-7b.Q4_K_M` | jsdevtom TypeScript FIM autocomplete fine-tune |
 | `DeepSeek-Coder-V2-Lite-Instruct-Q4_K_L` | Instruct candidate; measure FIM rather than assume support |
 | `Codestral-22B-v0.1-Q4_K_M` | Separate official Mistral FIM reference |
@@ -177,3 +177,34 @@ Sources for the diagnostic recipes (checked 2026-10-16):
 - Native `d1570abd3d`: `server-schema.cpp` accepts token strings in
   `preserved_tokens`; `server-context.cpp` renders those tokens before matching
   native text stop conditions. The forced-stop probes verify this live.
+
+
+## Delimiter resolution correction (0038)
+
+The v2b hardware run exposed two diagnostic bugs, not model transport failures:
+CodeGemma and Qwen use the same PRE/SUF/MID spellings, and a delimiter's input
+encoding need not be exactly one token. The revised policy prefers a declared
+SEP and does not add CodeGemma's `<|file_separator|>` to Qwen.
+
+For a multi-token input encoding, the diagnostic requests native `/tokenize`
+`with_pieces`. It accepts one exact delimiter piece with only whitespace framing
+around it, verifies every returned ID against the original encoding, and records
+the full encoding/pieces. It never guesses that the final ID is the delimiter.
+Anything else fails with the actual token/piece evidence. Native forced-output
+stop checks remain mandatory: an accepted encoding is not proof that the engine
+renders or stops on that delimiter correctly. No content is stripped afterward.
+
+The evidence now starts with `diagnostic-version: 3`. The default matrix selects
+`starcoder2-7b_Q4_K_M`, the user's replacement; its tested conversion still warns
+about a missing pre-tokenizer. Further model replacement is not required for
+these two corrected profiles. Repeat only their measurements in a new directory:
+
+```bash
+TLLAMA_RUNTIME_DEVICE=Vulkan0 PYTHONPATH=src python scripts/fim-smoke.py \
+  --model codegemma-2b-Q8_0 \
+  --model qwen2.5-coder-7b.Q4_K_M \
+  --output /tmp/tllama-fim-reference-v3
+```
+
+Keep the v2b evidence for StarCoder2, DeepSeek, Codestral and the negative model;
+those completed measurements do not need repeating for this diagnostic fix.

@@ -22,7 +22,7 @@ spec.loader.exec_module(smoke)
     ('negative', True, True), ('missing-route', True, False), ('bad-terminal', False, False),
     ('normal', True, False), ('negative', False, False),
     ('codegemma', False, True), ('starcoder', False, True), ('ignored-stops', False, False),
-    ('codestral', False, True),
+    ('codestral', False, True), ('qwen', False, True),
 ])
 def test_cli_reference_comparison_negative_errors_and_cleanup(tmp_path, mode, negative, ok):
     root = tmp_path / 'stub'
@@ -76,13 +76,22 @@ def test_cli_reference_comparison_negative_errors_and_cleanup(tmp_path, mode, ne
         results = [r for r in records if r['stage'] == 'completion']
         assert all(r['semantic_match'] is (mode != 'semantic-bad') for r in results)
         assert all(r['full_counts']['extra'] == 0 for r in prompts)
-        assert all((r['native_equivalent_counts']['extra'] > 0) is (mode == 'repo') for r in prompts)
+        assert all((r['native_equivalent_counts']['extra'] > 0) is (mode in {'repo', 'qwen'}) for r in prompts)
         checks = [r for r in records if r['stage'] == 'stop-check']
         assert len(checks) == (8 if mode in {'codegemma', 'starcoder'} else 4)
         assert all(r['verified'] and r['content'] == '' for r in checks)
         training = [r for r in records if r['stage'] == 'training-spm-prompt']
         assert len(training) == 6
         assert all(r['order'] == 'spm' for r in training)
+        policies = [r['tokens'] for r in records if r['stage'] == 'stop-policy']
+        if mode == 'codegemma':
+            assert all(p['FILE0']['id'] == 1100014 and p['FILE0']['encoding'] == [1032, 1100014]
+                       for p in policies)
+        if mode == 'qwen':
+            assert all('SEP' in p and 'FILE0' not in p for p in policies)
+            requests = [json.loads(line) for line in (root / 'requests').read_text().splitlines()]
+            assert not any(r['path'] == '/tokenize' and r['body']['content'] == '<|file_separator|>'
+                           for r in requests)
         if mode in {'codegemma', 'starcoder'}:
             baselines = [r for r in records if r['stage'] == 'unstopped-baseline']
             assert all('unwanted continuation' in r['content'] for r in baselines)
@@ -133,3 +142,20 @@ def test_independent_fim_layouts_do_not_conflate_native_and_training_spm():
     assert smoke.layout_tokens(inventory, [10, 11], [20, 21], 'psm') == [1, 10, 11, 2, 20, 21, 3]
     assert smoke.layout_tokens(inventory, [10, 11], [20, 21], 'spm') == [2, 20, 21, 1, 10, 11, 3]
     assert smoke.layout_tokens(inventory, [10, 11], [20, 21], 'training-spm') == [1, 2, 20, 21, 3, 10, 11]
+
+
+@pytest.mark.parametrize('entries', [
+    [{'id': 8, 'piece': ' '}, {'id': 9, 'piece': '<file>'}],
+    [{'id': 8, 'piece': 'x'}, {'id': 9, 'piece': '<file>'}],
+    [{'id': 8, 'piece': '<fi'}, {'id': 9, 'piece': 'le>'}],
+    [{'id': 8, 'piece': '<file>'}, {'id': 9, 'piece': '<file>'}],
+    [{'id': 8, 'piece': ' '}, {'id': 77, 'piece': '<file>'}],
+    [{'id': 8, 'piece': ''}, {'id': 9, 'piece': '<file>'}],
+    [8, 9],
+])
+def test_delimiter_resolution_requires_exact_piece_and_only_whitespace_framing(entries):
+    if entries == [{'id': 8, 'piece': ' '}, {'id': 9, 'piece': '<file>'}]:
+        assert smoke.delimiter_id('<file>', [8, 9], entries) == 9
+    else:
+        with pytest.raises(smoke.WorkerError, match='Cannot resolve delimiter'):
+            smoke.delimiter_id('<file>', [8, 9], entries)

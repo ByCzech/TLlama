@@ -22,7 +22,7 @@ from tllama.config import load_backend_config_from_env
 from tllama.worker import NativeWorker, WorkerError, WorkerRequestError
 
 
-MODELS = ("codegemma-2b-Q8_0", "starcoder2-3b-Q8_0", "qwen2.5-coder-7b.Q4_K_M",
+MODELS = ("codegemma-2b-Q8_0", "starcoder2-7b_Q4_K_M", "qwen2.5-coder-7b.Q4_K_M",
           "DeepSeek-Coder-V2-Lite-Instruct-Q4_K_L", "Codestral-22B-v0.1-Q4_K_M")
 NEGATIVE = "unsloth/Llama-3.2-3B-Instruct-GGUF/Llama-3.2-3B-Instruct-Q8_0"
 PREFIX = "def combine(a, b):\n    return "
@@ -151,16 +151,38 @@ def layout_tokens(inventory, prefix, suffix, order):
 
 async def verified_piece(worker, piece):
     ids = await worker.tokenize(piece, add_special=False)
-    require(len(ids) == 1, f"Expected one live token for the documented delimiter: {piece}")
-    return {"id": ids[0], "piece": piece}
+    if len(ids) == 1:
+        return {"id": ids[0], "piece": piece, "encoding": ids}
+    # SentencePiece may add a separate leading-space token to an ordinary
+    # vocabulary delimiter. Inspect pieces rather than guessing the last ID.
+    response = await post(worker, "/tokenize", {"content": piece, "add_special": False,
+                                                "parse_special": True, "with_pieces": True})
+    entries = response.get("tokens")
+    token_id = delimiter_id(piece, ids, entries)
+    return {"id": token_id, "piece": piece, "encoding": ids, "token_pieces": entries}
+
+
+def delimiter_id(piece, ids, entries):
+    message = f"Cannot resolve delimiter {piece!r}: ids={ids!r}, pieces={entries!r}"
+    require(isinstance(entries, list) and len(entries) == len(ids), message)
+    require(all(isinstance(entry, dict) and type(entry.get("id")) is int
+                and entry["id"] == token and isinstance(entry.get("piece"), str)
+                for token, entry in zip(ids, entries)), message)
+    matches = [entry["id"] for entry in entries if entry["piece"] == piece]
+    require(len(matches) == 1 and all(entry["piece"] == piece
+            or entry["piece"] and entry["piece"].isspace() for entry in entries), message)
+    return matches[0]
 
 
 async def stop_policy(worker, inventory):
     # Explicit diagnostic candidates, not a production capability detector.
     stops = dict(inventory)
     pre = inventory["PRE"]["piece"]
-    extra = {"<|fim_prefix|>": ("<|file_separator|>",),
-             "<fim_prefix>": ("<file_sep>",)}.get(pre, ())
+    # Qwen and CodeGemma share PRE/SUF/MID spellings. A declared SEP takes
+    # precedence; it must not trigger CodeGemma's different file delimiter.
+    extra = (() if "SEP" in inventory else
+             {"<|fim_prefix|>": ("<|file_separator|>",),
+              "<fim_prefix>": ("<file_sep>",)}.get(pre, ()))
     for index, piece in enumerate(extra):
         stops[f"FILE{index}"] = await verified_piece(worker, piece)
     pieces = list(dict.fromkeys(value["piece"] for value in stops.values()))
@@ -377,7 +399,7 @@ async def exercise(args, emit):
     if not selected:
         selected = [(name, False) for name in MODELS] + [(NEGATIVE, True)]
     orders = ("psm", "spm") if args.order == "both" else (args.order,)
-    emit("diagnostic-version", version=2, probes=list(PROBES),
+    emit("diagnostic-version", version=3, probes=list(PROBES),
          native_formatter="b11552 hypothesis", stopping="live-verified delimiters with preserved_tokens")
     all_ok = True
     semantic_matches, semantic_total, review_profiles = 0, 0, 0
