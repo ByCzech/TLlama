@@ -49,6 +49,20 @@ async def test_memory_api_runtime_is_supported_in_strict_mode(factory):
     async with worker:
         assert worker.runtime_fingerprint == "b11552-d1570abd3d"
         assert worker.memory.snapshot()["runtime_fingerprint"] == worker.runtime_fingerprint
+        assert worker.memory.snapshot()["status"] == "known"
+        assert worker.memory.snapshot()["runtime_verified"] is True
+
+
+async def test_v1_runtime_log_fallback_completes_when_endpoint_is_missing(factory):
+    worker, root = factory(environment={"STUB_BUILD": "b11552-d1570abd3d"})
+    async with worker:
+        await settle(worker)
+        snapshot = worker.memory_snapshot()
+        assert snapshot["source"] == "native_load_log"
+        assert snapshot["fallback_reason"] == "endpoint_not_supported"
+        assert snapshot["measurement"]["report"]["status"] == "known"
+        assert snapshot["measurement"]["report"]["allocated_bytes"] == int(16.5 * 1024**2)
+        assert (await worker.chat({}))["choices"]
 
 
 async def test_compatible_experimental_build_can_use_native_memory(factory, payload):

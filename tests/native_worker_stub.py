@@ -284,7 +284,8 @@ async def main():
         print("private key " + KEY, flush=True)
     if os.environ.get("STUB_IGNORE_TERM") == "1":
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
-    print('srv    load_model: initializing, n_slots = 1, n_ctx_slot = 2048', flush=True)
+    loader = 'load_model_impl' if os.environ.get('STUB_BUILD') == 'b11552-d1570abd3d' else 'load_model'
+    print(f"srv  {loader[:12]:>12}: initializing, n_slots = 1, n_ctx_slot = 2048, kv_unified = 'true'", flush=True)
     server = await asyncio.start_server(handle, "127.0.0.1", int(arg("--port")))
     port = server.sockets[0].getsockname()[1]
     if MODE != "hang-load":

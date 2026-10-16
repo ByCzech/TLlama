@@ -11,6 +11,10 @@ import re
 
 from tllama.worker_config import RUNTIME_FINGERPRINT
 
+# Log grammar and the input/staging-buffer placement rule are verified
+# independently of the worker's broader runtime compatibility policy.
+_LOG_RUNTIME_FINGERPRINTS = frozenset({RUNTIME_FINGERPRINT, "b11552-d1570abd3d"})
+
 BACKEND_PREFIX = r"[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)*"
 
 PROJECTOR_BACKEND = re.compile(
@@ -28,7 +32,8 @@ PROJECTOR_SIZE = re.compile(
 _BUFFER = re.compile(
     rf"^(load_tensors|llama_kv_cache|llama_memory_recurrent|llama_context|sched_reserve|reserve_compute_meta):"
     rf"\s+({BACKEND_PREFIX})\s+(model|KV|RS|output|compute) buffer size\s*=\s*(\S+)\s+MiB\s*$")
-_END = re.compile(r"^srv\s+load_model:\s+initializing, n_slots\s*=\s*\d+")
+# SRV_INF prints at most 12 characters of __func__: load_model_impl -> load_model_i.
+_END = re.compile(r"^srv\s+load_model(?:_i)?:\s+initializing, n_slots\s*=\s*\d+")
 _OFFLOAD = re.compile(r"^load_tensors:\s+offloaded ([0-9]{1,10})/([0-9]{1,10}) layers to GPU$")
 _OFFLOAD_START = re.compile(r"^load_tensors:\s+offloaded\b")
 _DEVICE = re.compile(r"^(CUDA|ROCm|HIP|Vulkan|SYCL|Metal|CANN|MUSA|OpenCL|WebGPU)\d*$", re.I)
@@ -57,7 +62,7 @@ def _bytes(value: str) -> int:
 
 
 class NativeMemory:
-    """Observe one load, close it on the pinned end marker, and never recount it."""
+    """Observe one initial load, close it on a known marker, and never recount it."""
 
     def __init__(self, runtime_fingerprint=RUNTIME_FINGERPRINT, *, projector=False):
         self.runtime_fingerprint = runtime_fingerprint
@@ -170,7 +175,7 @@ class NativeMemory:
         if reason is None and not classified:
             reason = 'unknown_buffer_location'
         return {'source':'native_load_log', 'runtime_fingerprint':self.runtime_fingerprint,
-                'runtime_verified':self.runtime_fingerprint == RUNTIME_FINGERPRINT,
+                'runtime_verified':self.runtime_fingerprint in _LOG_RUNTIME_FINGERPRINTS,
                 'scope':'initial_load_allocations', 'precision':'rounded_mib', 'units':'bytes',
                 'status':'known' if reason is None else 'partial' if buffers else 'unavailable',
                 'reason':reason, 'buffers':buffers, 'allocated_bytes':allocated,

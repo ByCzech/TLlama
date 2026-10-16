@@ -107,6 +107,26 @@ def test_pending_log_and_unverified_runtime_are_explicit():
     assert observe().snapshot()['runtime_verified'] is True
 
 
+@pytest.mark.parametrize('loader,fingerprint', [
+    ('load_model', 'b11552-ec2797836f'), ('load_model_impl', 'b11552-d1570abd3d'),
+])
+def test_verified_load_markers_close_the_log_and_ignore_later_allocations(loader, fingerprint):
+    # server-common.h: SRV_INF prints __func__ using "%12.*s", 12.
+    marker = f"srv  {loader[:12]:>12}: initializing, n_slots = 1, n_ctx_slot = 4096, kv_unified = 'true'"
+    parser = observe(VULKAN + '\n' + marker, end=False, runtime_fingerprint=fingerprint)
+    before = parser.snapshot()
+    assert before['status'] == 'known' and before['runtime_verified'] is True
+    assert before['allocated_bytes'] == 13861660919
+    parser.observe('load_tensors: Vulkan0 model buffer size = 999.00 MiB')
+    assert parser.snapshot() == before
+
+
+@pytest.mark.parametrize('loader', ['load_model_extra', 'unload_model', 'handle_task'])
+def test_other_function_names_cannot_close_the_load_inventory(loader):
+    parser = observe(VULKAN + f'\nsrv  {loader[:12]:>12}: initializing, n_slots = 1', end=False)
+    assert parser.snapshot()['reason'] == 'load_log_pending'
+
+
 def test_projector_weight_summary_is_not_misreported_as_allocated_buffer():
     log = VULKAN + '\nclip_ctx: CLIP using Vulkan0 backend\nload_hparams: model size: 613.14 MiB\nreserve_compute_meta: Vulkan0 compute buffer size = 100 MiB'
     report = observe(log, projector=True).snapshot()

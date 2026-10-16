@@ -227,6 +227,14 @@ def test_unverified_build_does_not_apply_the_pinned_host_buffer_exclusion():
     assert ollama_memory_sizes(memory) == (memory['allocated_bytes'], memory['device_bytes'])
 
 
+def test_verified_v1_log_retains_full_offload_processor_reporting():
+    log = VULKAN + "\nload_tensors: offloaded 41/41 layers to GPU\n" + (
+        "srv  load_model_i: initializing, n_slots = 1, n_ctx_slot = 4096, kv_unified = 'true'")
+    memory = observe(log, end=False, runtime_fingerprint='b11552-d1570abd3d').snapshot()
+    assert memory['status'] == 'known' and memory['runtime_verified'] is True
+    assert ollama_memory_sizes(memory) == (memory['device_bytes'], memory['device_bytes'])
+
+
 def test_full_offload_summary_without_device_weights_cannot_hide_cpu_allocations():
     memory = observe(VULKAN.replace('Vulkan0 model', 'CPU model')
                      + '\nload_tensors: offloaded 41/41 layers to GPU').snapshot()
