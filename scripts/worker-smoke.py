@@ -11,7 +11,8 @@ import time
 from pathlib import Path
 
 from tllama.worker import NativeWorker, WorkerError, WorkerExited
-from tllama.worker_config import DEFAULT_EXECUTABLE, WorkerLaunchSpec
+from tllama.worker_config import WorkerLaunchSpec
+from tllama.config import load_backend_config_from_env
 
 
 def report(stage, **values):
@@ -19,6 +20,7 @@ def report(stage, **values):
 
 
 async def exercise(args):
+    config = load_backend_config_from_env()
     environment = {}
     for entry in args.env:
         name, separator, value = entry.partition("=")
@@ -27,7 +29,9 @@ async def exercise(args):
         environment[name] = value
     spec = WorkerLaunchSpec(
         model=args.model.expanduser().resolve(), device=args.device,
-        executable=args.executable.expanduser().resolve(),
+        executable=args.executable.expanduser().resolve() if args.executable else config.runtime_executable,
+        version_policy=config.runtime_version_policy,
+        memory_source=config.memory_source, memory_compare=config.memory_compare,
         mmproj=args.mmproj.expanduser().resolve() if args.mmproj else None,
         n_ctx=args.ctx, n_gpu_layers=args.gpu_layers, type_k=args.type_k, type_v=args.type_v,
         flash_attn=None if args.flash_attn is None else args.flash_attn == "on",
@@ -131,7 +135,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument("--device", default="none", help="Native selector, e.g. none, Vulkan0, ROCm0, CUDA0")
-    parser.add_argument("--executable", type=Path, default=DEFAULT_EXECUTABLE)
+    parser.add_argument("--executable", type=Path)
     parser.add_argument("--mmproj", type=Path)
     parser.add_argument("--ctx", type=int, default=2048)
     parser.add_argument("--gpu-layers", type=int)

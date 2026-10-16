@@ -8,7 +8,8 @@ def ollama_memory_sizes(memory):
     """Keep ps processor placement separate from the complete buffer footprint."""
     total, device = memory['allocated_bytes'], memory['device_bytes']
     offload = memory.get('layer_offload')
-    if (memory['status'] != 'known' or total is None or device is None or not offload
+    if (memory.get('runtime_verified') is False or memory['status'] != 'known'
+            or total is None or device is None or not offload
             or offload['offloaded_layers'] != offload['total_layers']):
         return total, device
     buffers = memory['buffers']

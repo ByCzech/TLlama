@@ -2,8 +2,11 @@ import os
 import re
 
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from typing import Mapping
+
+from tllama.worker_config import DEFAULT_EXECUTABLE
 
 DEFAULT_MODELS_DIR = "/var/lib/tllama/models"
 
@@ -193,6 +196,7 @@ def _split_host_port(name: str, value: str, raw: str) -> tuple[str, str | None]:
 
 
 RUNTIME_ENV_PREFIX = "TLLAMA_RUNTIME_"
+_RUNTIME_GLOBALS = {"TLLAMA_RUNTIME_EXECUTABLE", "TLLAMA_RUNTIME_VERSION_POLICY"}
 
 # Variables kept from before the generic passthrough existed. Each names a
 # native runtime parameter that TLLAMA_RUNTIME_<NAME> also reaches; they stay
@@ -221,6 +225,8 @@ def _collect_runtime_overrides() -> dict[str, str]:
             collected[parameter] = value
 
     for variable, value in os.environ.items():
+        if variable in _RUNTIME_GLOBALS:
+            continue
         if not variable.startswith(RUNTIME_ENV_PREFIX):
             continue
         if value.strip() == "":
@@ -408,6 +414,22 @@ class BackendConfig:
     k_cache_type: str | None = None
     v_cache_type: str | None = None
     ignore_unsupported_runner: bool = False
+    runtime_executable: Path = DEFAULT_EXECUTABLE
+    runtime_version_policy: str = "warn"
+    memory_source: str = "auto"
+    memory_compare: bool = False
+
+    def __post_init__(self):
+        path = Path(self.runtime_executable)
+        if not path.is_absolute() or "\0" in str(path):
+            raise ConfigError("TLLAMA_RUNTIME_EXECUTABLE must be an absolute path")
+        object.__setattr__(self, "runtime_executable", path)
+        if self.runtime_version_policy not in ("warn", "strict"):
+            raise ConfigError("TLLAMA_RUNTIME_VERSION_POLICY must be warn or strict")
+        if self.memory_source not in ("auto", "native", "log"):
+            raise ConfigError("TLLAMA_MEMORY_SOURCE must be auto, native or log")
+        if type(self.memory_compare) is not bool:
+            raise ConfigError("TLLAMA_MEMORY_COMPARE must be a boolean")
 
 
 @dataclass(frozen=True)
@@ -441,6 +463,10 @@ def load_backend_config_from_env() -> BackendConfig:
         k_cache_type=_env_cache_type("TLLAMA_K_CACHE_TYPE"),
         v_cache_type=_env_cache_type("TLLAMA_V_CACHE_TYPE"),
         ignore_unsupported_runner=_env_bool("TLLAMA_IGNORE_UNSUPPORTED_RUNNER", False),
+        runtime_executable=_env_str("TLLAMA_RUNTIME_EXECUTABLE", str(DEFAULT_EXECUTABLE)),
+        runtime_version_policy=_env_str("TLLAMA_RUNTIME_VERSION_POLICY", "warn").strip().lower(),
+        memory_source=_env_str("TLLAMA_MEMORY_SOURCE", "auto").strip().lower(),
+        memory_compare=_env_bool("TLLAMA_MEMORY_COMPARE", False),
     )
 
 

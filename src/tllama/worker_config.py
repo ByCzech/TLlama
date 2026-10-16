@@ -13,6 +13,7 @@ from tllama.native_params import freeze_values, kv_type_name
 
 
 RUNTIME_FINGERPRINT = "b11552-ec2797836f"
+SUPPORTED_RUNTIME_FINGERPRINTS = frozenset({RUNTIME_FINGERPRINT, "b11552-d1570abd3d"})
 DEFAULT_EXECUTABLE = Path("/usr/lib/tllama/server/tllama-server")
 _OWNED_ENV = {"GGML_BACKEND_PATH", "MTMD_BACKEND_DEVICE", "LLAMA_API_KEY"}
 
@@ -41,6 +42,9 @@ class WorkerLaunchSpec:
     mmproj_options: Mapping[str, Any] = field(default_factory=dict)
     template: str | None = None
     runtime_fingerprint: str = RUNTIME_FINGERPRINT
+    version_policy: str = "warn"
+    memory_source: str = "auto"
+    memory_compare: bool = False
     load_timeout: float = 600.0
     request_timeout: float | None = None
     terminate_timeout: float = 5.0
@@ -48,6 +52,12 @@ class WorkerLaunchSpec:
     log_limit_bytes: int = 4 * 1024 * 1024
 
     def __post_init__(self):
+        if self.version_policy not in ("warn", "strict"):
+            raise ValueError("version_policy must be warn or strict")
+        if self.memory_source not in ("auto", "native", "log"):
+            raise ValueError("memory_source must be auto, native or log")
+        if type(self.memory_compare) is not bool:
+            raise ValueError("memory_compare must be a boolean")
         for name in ("model", "executable", "mmproj"):
             value = getattr(self, name)
             if value is None and name == "mmproj":

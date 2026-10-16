@@ -18,7 +18,6 @@ import uvicorn
 from tllama.backend import ModelManager
 from tllama.config import load_backend_config_from_env
 from tllama.worker import WorkerError
-from tllama.worker_config import DEFAULT_EXECUTABLE
 
 
 SCHEMA = {'type':'object', 'properties':{'left':{'type':'string'}, 'right':{'type':'string'}},
@@ -86,7 +85,7 @@ async def exercise(args):
     config = load_backend_config_from_env()
     if args.models_dir:
         config = replace(config, models_dir=str(args.models_dir.expanduser().resolve()))
-    manager = ModelManager(config, native_launch_options={'executable':args.executable.expanduser().resolve(),
+    manager = ModelManager(config, native_launch_options={'executable':args.executable.expanduser().resolve() if args.executable else None,
         'load_timeout':args.load_timeout, 'request_timeout':args.request_timeout})
     main.model_manager = ollama.model_manager = openai.model_manager = manager
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -226,7 +225,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--model', required=True, help='Registered vision reference; context comes from TOML/global configuration')
     parser.add_argument('--models-dir', type=Path)
-    parser.add_argument('--executable', type=Path, default=DEFAULT_EXECUTABLE)
+    parser.add_argument('--executable', type=Path)
     parser.add_argument('--load-timeout', type=float, default=600)
     parser.add_argument('--request-timeout', type=float, default=600)
     parser.add_argument('--log', type=Path)

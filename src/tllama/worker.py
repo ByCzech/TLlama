@@ -18,8 +18,10 @@ from typing import AsyncIterator, Mapping, Any
 
 import httpx
 
-from tllama.worker_config import WorkerLaunchSpec
+from tllama.worker_config import RUNTIME_FINGERPRINT, SUPPORTED_RUNTIME_FINGERPRINTS, WorkerLaunchSpec
 from tllama.native_memory import NativeMemory
+from tllama.native_memory_api import MemoryReportError, NativeMemoryReport, UnsupportedMemorySchema
+from tllama.native_telemetry import MemoryTelemetry
 
 
 logger = logging.getLogger(__name__)
@@ -27,6 +29,8 @@ _ADDRESS = re.compile(r"^srv\s+\w+:\s+listening on http://127\.0\.0\.1:(\d+)\s*$
 _MAX_LINE = 64 * 1024
 _MAX_RESPONSE = 16 * 1024 * 1024
 _MAX_EVENT = 4 * 1024 * 1024
+_MEMORY_TIMEOUT = 1.0
+_MEMORY_INTERVAL = 1.0
 
 
 class WorkerError(RuntimeError):
@@ -90,7 +94,13 @@ class NativeWorker:
         self._load_lines: list[str] = []
         self._load_bytes = 0
         self._capture_load = True
-        self.memory = NativeMemory(spec.runtime_fingerprint, projector=spec.mmproj is not None)
+        self.runtime_fingerprint: str | None = None
+        self.memory = NativeMemory(None, projector=spec.mmproj is not None)
+        self.telemetry = MemoryTelemetry(self.memory, mode=spec.memory_source, compare=spec.memory_compare)
+        self._memory_client: httpx.AsyncClient | None = None
+        self._memory_task: asyncio.Task | None = None
+        self._memory_lock = asyncio.Lock()
+        self._memory_failure = None
         self._memory_parser_failed = False
 
     @property
@@ -202,8 +212,16 @@ class NativeWorker:
             props = response.json()
             if not isinstance(props, dict):
                 raise WorkerProtocolError("Native props must be an object")
-            if props.get("build_info") != self.spec.runtime_fingerprint:
-                raise WorkerProtocolError(f"Unexpected runtime fingerprint: {props.get('build_info')!r}")
+            observed = props.get("build_info")
+            self.runtime_fingerprint = observed if isinstance(observed, str) and observed else None
+            self.memory.identify_runtime(self.runtime_fingerprint)
+            supported = ({self.spec.runtime_fingerprint} if self.spec.runtime_fingerprint != RUNTIME_FINGERPRINT
+                         else SUPPORTED_RUNTIME_FINGERPRINTS)
+            if self.runtime_fingerprint not in supported:
+                if self.spec.version_policy == "strict":
+                    raise WorkerProtocolError(f"Unsupported runtime fingerprint: {self.runtime_fingerprint!r}")
+                logger.warning("Unverified native runtime fingerprint %r; continuing with version policy warn",
+                               self.runtime_fingerprint)
             if (props.get("model_alias") != self.spec.alias
                     or type(props.get("total_slots")) is not int or props["total_slots"] != 1):
                 raise WorkerProtocolError("Native alias/slot configuration differs from the launch")
@@ -216,7 +234,67 @@ class NativeWorker:
             self.props = props
             self._capture_load = False
             self._state = "ready"
+            if self.telemetry.needs_native:
+                try:
+                    self._memory_client = httpx.AsyncClient(
+                        base_url=self.base_url, headers={"Authorization": f"Bearer {self._api_key}"},
+                        trust_env=False, follow_redirects=False, timeout=_MEMORY_TIMEOUT,
+                        limits=httpx.Limits(max_connections=1, max_keepalive_connections=1),
+                    )
+                    self._memory_task = asyncio.create_task(self._poll_memory())
+                except Exception:
+                    self.telemetry.fail("collection_failed")
+                    logger.warning("Could not initialize native memory HTTP client")
             return
+
+    def memory_snapshot(self) -> dict:
+        """Selected internal telemetry; public reporting is integrated separately."""
+        return self.telemetry.snapshot()
+
+    async def _fetch_memory(self):
+        async with self._memory_client.stream("GET", "/tllama/memory") as response:
+            if response.status_code != 200:
+                reason = {401: "authentication_failed", 404: "endpoint_not_supported",
+                          503: "not_ready"}.get(response.status_code, "http_error")
+                self.telemetry.fail(reason, http_status=response.status_code)
+                return
+            report = NativeMemoryReport(await self._json_body(response))
+            fingerprint = report.snapshot()["runtime_fingerprint"]
+            if self.runtime_fingerprint is not None and fingerprint != self.runtime_fingerprint:
+                self.telemetry.fail("runtime_fingerprint_mismatch", http_status=200)
+                return
+            self.telemetry.accept(report)
+
+    async def refresh_memory(self):
+        """Bounded diagnostic read; never acquire the inference slot or a lease."""
+        async with self._memory_lock:
+            if self._closing or self._state != "ready" or not self.telemetry.needs_native:
+                return
+            try:
+                await asyncio.wait_for(self._fetch_memory(), timeout=_MEMORY_TIMEOUT)
+            except UnsupportedMemorySchema:
+                self.telemetry.fail("unsupported_schema", http_status=200)
+            except MemoryReportError:
+                self.telemetry.fail("invalid_report", http_status=200)
+            except asyncio.TimeoutError:
+                self.telemetry.fail("timeout")
+            except httpx.HTTPError:
+                self.telemetry.fail("transport_error")
+            except WorkerError:
+                self.telemetry.fail("invalid_response", http_status=200)
+            except Exception:
+                # Telemetry is optional even when its collector fails unexpectedly.
+                self.telemetry.fail("collection_failed")
+            reason = self.telemetry.failure_reason
+            if reason is not None and reason != self._memory_failure:
+                logger.warning("Native worker %s memory telemetry: %s (mode=%s)",
+                               self.pid, reason, self.spec.memory_source)
+            self._memory_failure = reason
+
+    async def _poll_memory(self):
+        while not self._closing and self.process.returncode is None and self.telemetry.needs_native:
+            await self.refresh_memory()
+            await asyncio.sleep(_MEMORY_INTERVAL)
 
     def _check_alive(self):
         if self.process is not None and self.process.returncode is not None:
@@ -306,6 +384,14 @@ class NativeWorker:
         try:
             if self._spawn_task is not None:
                 await asyncio.gather(self._spawn_task, return_exceptions=True)
+            if self._memory_task is not None:
+                self._memory_task.cancel()
+                await asyncio.gather(self._memory_task, return_exceptions=True)
+            if self._memory_client is not None:
+                try:
+                    await asyncio.wait_for(self._memory_client.aclose(), self.spec.kill_timeout)
+                except Exception:
+                    logger.exception("Could not close native memory HTTP client")
             if self._client is not None:
                 try:
                     await asyncio.wait_for(self._client.aclose(), self.spec.kill_timeout)

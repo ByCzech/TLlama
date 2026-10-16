@@ -37,7 +37,7 @@ async def test_real_transport_result_and_stream_have_matching_content_and_measur
     assert streamed[-1].stats == result.stats
     assert streamed[-1].stats.input_tokens == 25 and streamed[-1].stats.evaluated_tokens == 6
     assert streamed[-1].stats.cached_tokens == 19
-    requests = [r for r in records(root, "requests") if r["path"] not in {"/health", "/props"}]
+    requests = [r for r in records(root, "requests") if r["path"] in {"/completion", "/v1/chat/completions"}]
     assert len(requests) == 2 and all(r["body"]["n_predict"] == 10 for r in requests)
     if not raw:
         assert requests[-1]["body"]["stream_options"]["include_usage"] is True

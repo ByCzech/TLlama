@@ -118,7 +118,8 @@ async def handle(reader, writer):
             return
         if path == "/props":
             await json_response(writer, {
-                "build_info": "wrong" if MODE == "wrong-build" else "b11552-ec2797836f",
+                "build_info": (None if MODE == "missing-build" else "wrong" if MODE == "wrong-build"
+                               else os.environ.get("STUB_BUILD", "b11552-ec2797836f")),
                 "model_alias": "wrong" if MODE == "wrong-alias" else arg("--alias"),
                 "total_slots": 4 if MODE == "wrong-slots" else 1,
                 "model_path": arg("--model"),
@@ -128,6 +129,24 @@ async def handle(reader, writer):
                 "chat_template": (Path(arg("--chat-template-file")).read_text() if "--chat-template-file" in sys.argv
                                   else "{% for m in messages %}{{ m.role }}:{{ m.content }}\n{% endfor %}"),
             })
+            return
+        if path == "/tllama/memory":
+            behavior = (ROOT / "memory-behavior").read_text() if (ROOT / "memory-behavior").exists() else "normal"
+            if behavior == "hang":
+                await reader.read()
+                mark("cancelled", "memory")
+                return
+            if behavior == "disconnect":
+                return
+            status = int((ROOT / "memory-status").read_text()) if (ROOT / "memory-status").exists() else 200
+            file = ROOT / "memory-report"
+            if not file.exists():
+                await json_response(writer, {"error": "not found"}, 404)
+                return
+            data = file.read_bytes()
+            writer.write(f"HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\n"
+                         f"Content-Length: {len(data)}\r\nConnection: close\r\n\r\n".encode() + data)
+            await writer.drain()
             return
         if path == "/tokenize":
             # Deterministic IDs expose exact render text in the request log.

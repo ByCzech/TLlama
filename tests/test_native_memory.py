@@ -99,9 +99,12 @@ def test_truncation_or_parser_error_does_not_publish_a_partial_total(reason):
     assert parser.snapshot()['reason'] == reason and parser.snapshot()['allocated_bytes'] is None
 
 
-def test_pending_log_and_unsupported_runtime_are_explicit():
+def test_pending_log_and_unverified_runtime_are_explicit():
     assert observe(end=False).snapshot()['reason'] == 'load_log_pending'
-    assert observe(runtime_fingerprint='new-runtime').snapshot()['reason'] == 'unsupported_runtime'
+    report = observe(runtime_fingerprint='new-runtime').snapshot()
+    assert report['status'] == 'known' and report['runtime_fingerprint'] == 'new-runtime'
+    assert report['runtime_verified'] is False
+    assert observe().snapshot()['runtime_verified'] is True
 
 
 def test_projector_weight_summary_is_not_misreported_as_allocated_buffer():

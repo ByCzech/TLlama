@@ -18,7 +18,7 @@ from tllama.helpers.runtime_params import coerce_runtime_overrides
 from tllama.helpers.sampling_params import coerce_sampling_overrides
 from tllama.native_cli import RUNTIME_OPTION_NAMES
 from tllama.native_params import freeze_values, kv_type_name, runtime_problem
-from tllama.worker_config import DEFAULT_EXECUTABLE, WorkerLaunchSpec
+from tllama.worker_config import WorkerLaunchSpec
 
 
 _DEFAULTS = {"n_gpu_layers": -1, "flash_attn": False, "n_batch": 512, "n_ubatch": 512,
@@ -57,7 +57,7 @@ def _plain(value):
 def resolve_worker_config(
     config: BackendConfig, model: Path, virtual_spec: VirtualModelSpec | None = None, *,
     num_ctx: int | None = None, mmproj: Path | None = None,
-    environment: Mapping[str, str] | None = None, executable: Path = DEFAULT_EXECUTABLE,
+    environment: Mapping[str, str] | None = None, executable: Path | None = None,
     alias: str = "tllama-worker", load_timeout: float = 600,
     request_timeout: float | None = None,
 ) -> ResolvedWorkerConfig:
@@ -120,7 +120,10 @@ def resolve_worker_config(
     sampling = coerce_sampling_overrides(config.sampling_overrides)
     try:
         launch = WorkerLaunchSpec(
-            model=model, executable=executable, device=device, alias=alias, mmproj=mmproj,
+            model=model, executable=config.runtime_executable if executable is None else executable,
+            device=device, alias=alias, mmproj=mmproj,
+            version_policy=config.runtime_version_policy,
+            memory_source=config.memory_source, memory_compare=config.memory_compare,
             n_ctx=int(runtime["n_ctx"]), n_gpu_layers=int(runtime["n_gpu_layers"]),
             type_k=runtime["type_k"], type_v=runtime["type_v"], flash_attn=runtime["flash_attn"],
             environment=environment or {}, load_timeout=load_timeout, request_timeout=request_timeout,

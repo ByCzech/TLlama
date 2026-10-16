@@ -1,4 +1,4 @@
-"""Reported initial allocations for native runtime b11552-ec2797836f.
+"""Initial allocations recognized from native runtime load diagnostics.
 
 These figures describe backend buffers, not RSS/PSS or physical VRAM residency.
 The parser keeps bounded structured observations independently of raw log retention.
@@ -64,7 +64,7 @@ class NativeMemory:
         self.projector = projector
         self._buffers: dict[tuple[str, str], int] = {}
         self._ended = False
-        self._invalid = None if runtime_fingerprint == RUNTIME_FINGERPRINT else 'unsupported_runtime'
+        self._invalid = None
         self._projector_backend = None
         self._projector_contexts = 0
         self._projector_weights = {}
@@ -75,6 +75,10 @@ class NativeMemory:
     def invalidate(self, reason):
         if not self._ended:
             self._invalid = self._invalid or reason
+
+    def identify_runtime(self, fingerprint: str | None):
+        """Attach observed identity without discarding already drained load lines."""
+        self.runtime_fingerprint = fingerprint
 
     def observe(self, line: str):
         if self._ended or self._invalid:
@@ -166,6 +170,7 @@ class NativeMemory:
         if reason is None and not classified:
             reason = 'unknown_buffer_location'
         return {'source':'native_load_log', 'runtime_fingerprint':self.runtime_fingerprint,
+                'runtime_verified':self.runtime_fingerprint == RUNTIME_FINGERPRINT,
                 'scope':'initial_load_allocations', 'precision':'rounded_mib', 'units':'bytes',
                 'status':'known' if reason is None else 'partial' if buffers else 'unavailable',
                 'reason':reason, 'buffers':buffers, 'allocated_bytes':allocated,

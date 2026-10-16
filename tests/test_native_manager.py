@@ -301,10 +301,11 @@ async def test_managed_hardware_smoke_entry_point(native_manager, valid):
     root.mkdir()
     env = {key: value for key, value in os.environ.items() if not key.startswith("TLLAMA_")}
     env.update(PYTHONPATH=str(repo / "src"), TLLAMA_MODELS=str(manager.models_dir),
-               TLLAMA_RUNTIME_DEVICE="none", STUB_ROOT=str(root), STUB_MODE="normal")
+               TLLAMA_RUNTIME_DEVICE="none", STUB_ROOT=str(root), STUB_MODE="normal",
+               TLLAMA_RUNTIME_EXECUTABLE=str(manager._native_launch_options["executable"]))
     child = await asyncio.create_subprocess_exec(
         sys.executable, str(repo / "scripts" / "manager-smoke.py"), "--model", name if valid else "missing",
-        "--executable", str(manager._native_launch_options["executable"]), "--load-timeout", "5",
+        "--load-timeout", "5",
         "--request-timeout", "2", cwd=repo, env=env,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, start_new_session=True,
     )
@@ -321,6 +322,10 @@ async def test_managed_hardware_smoke_entry_point(native_manager, valid):
         return
     assert child.returncode == 0, (stdout.decode(), stderr.decode())
     assert len(records(root, "launch")) == 1
-    assert [stage["stage"] for stage in stages] == ["preloaded", "ready", "chat", "unload-during-stream",
-                                                    "stream-finished", "worker-closed", "manager-closed"]
+    assert [stage["stage"] for stage in stages] == ["preloaded", "ready", "memory-ready", "chat",
+        "memory-after-chat", "unload-during-stream", "memory-during-stream",
+        "stream-finished", "worker-closed", "manager-closed"]
+    measurements = [stage["telemetry"] for stage in stages if stage["stage"].startswith("memory-")]
+    assert all(item["source"] == "native_load_log" and item["fallback_reason"] == "endpoint_not_supported"
+               for item in measurements)
     assert stages[-2]["directory_removed"] is True and stages[-1]["residency"] == []

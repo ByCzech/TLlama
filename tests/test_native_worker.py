@@ -90,7 +90,7 @@ async def test_custom_template_is_an_owned_private_file_and_is_cleaned_up(factor
     assert not path.exists()
 
 
-@pytest.mark.parametrize("mode", ["wrong-build", "wrong-alias", "wrong-slots", "bad-context", "bad-health"])
+@pytest.mark.parametrize("mode", ["wrong-alias", "wrong-slots", "bad-context", "bad-health"])
 async def test_readiness_checks_actual_runtime_and_model(factory, mode):
     worker, _ = factory(mode)
     with pytest.raises(WorkerStartupError):
@@ -207,7 +207,7 @@ async def test_non_stream_chat_and_completion_preserve_native_results(factory):
         assert chat["timings"]["prompt_n"] == 6
         raw = await worker.completion({"prompt": "hi"})
         assert raw["content"] == "Ahoj světe" and raw["stop_type"] == "eos"
-        request = records(root, "requests")[-2]
+        request = next(r for r in records(root, "requests") if r["path"] == "/v1/chat/completions")
         assert request["body"]["model"] == "tllama-worker"
         assert request["body"]["stream"] is False
         assert "x-conversation-id" not in request["header_names"]
@@ -223,7 +223,7 @@ async def test_sse_handles_fragmented_utf8_multiline_data_and_empty_choices(fact
         assert chunks[-1]["choices"] == []
         assert chunks[-1]["usage"]["prompt_tokens"] == 25
         assert chunks[-1]["timings"]["cache_n"] == 19
-        request = records(root, "requests")[-1]
+        request = next(r for r in records(root, "requests") if r["path"] == "/v1/chat/completions")
         assert request["body"]["stream_options"]["include_usage"] is True
         async with worker.completion_stream({"prompt": "hi"}) as events:
             chunks = [chunk async for chunk in events]

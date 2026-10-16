@@ -214,10 +214,17 @@ def test_full_offload_cpu_output_is_a_result_buffer_not_cpu_layer_execution():
     assert ollama_memory_sizes(memory) == (memory['device_bytes'], memory['device_bytes'])
 
 
-@pytest.mark.parametrize('options', [{'end':False}, {'runtime_fingerprint':'new-runtime'}, {'projector':True}])
+@pytest.mark.parametrize('options', [{'end':False}, {'projector':True}])
 def test_full_offload_cannot_turn_incomplete_allocations_into_a_known_ps_total(options):
     memory = observe(VULKAN + '\nload_tensors: offloaded 41/41 layers to GPU', **options).snapshot()
     assert ollama_memory_sizes(memory) == (None, None)
+
+
+def test_unverified_build_does_not_apply_the_pinned_host_buffer_exclusion():
+    memory = observe(VULKAN + '\nload_tensors: offloaded 41/41 layers to GPU',
+                     runtime_fingerprint='new-runtime').snapshot()
+    assert memory['runtime_verified'] is False
+    assert ollama_memory_sizes(memory) == (memory['allocated_bytes'], memory['device_bytes'])
 
 
 def test_full_offload_summary_without_device_weights_cannot_hide_cpu_allocations():

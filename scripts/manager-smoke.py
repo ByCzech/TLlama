@@ -12,7 +12,6 @@ from tllama.backend import ModelManager
 from tllama.config import load_backend_config_from_env
 from tllama.native_config import build_native_sampling
 from tllama.worker import WorkerError
-from tllama.worker_config import DEFAULT_EXECUTABLE
 
 
 def report(stage, **values):
@@ -24,7 +23,8 @@ async def exercise(args):
     if args.models_dir is not None:
         config = replace(config, models_dir=str(args.models_dir.expanduser().resolve()))
     manager = ModelManager(config, native_launch_options={
-        "executable": args.executable.expanduser().resolve(), "load_timeout": args.load_timeout,
+        "executable": args.executable.expanduser().resolve() if args.executable else None,
+        "load_timeout": args.load_timeout,
         "request_timeout": args.request_timeout,
     })
     worker = None
@@ -39,10 +39,14 @@ async def exercise(args):
             report("ready", pid=worker.pid, generation=lease.generation, address=worker.base_url,
                    fingerprint=worker.props["build_info"],
                    context=worker.props["default_generation_settings"]["n_ctx"], argv=worker.command)
+            await worker.refresh_memory()
+            report("memory-ready", telemetry=worker.memory_snapshot())
             body = {**build_native_sampling({"temperature": 0, "num_predict": 32}, resolved=lease.resolved),
                     "messages": [{"role": "user", "content": "Napiš krátký pozdrav česky."}],
                     "reasoning_effort": "none"}
             report("chat", response=await worker.chat(body))
+            await worker.refresh_memory()
+            report("memory-after-chat", telemetry=worker.memory_snapshot())
             text, reasoning, final = [], [], None
             unloaded = False
             async with worker.chat_stream(body) as events:
@@ -65,6 +69,8 @@ async def exercise(args):
                             raise WorkerError("Unload did not preserve the active stream's generation")
                         unloaded = True
                         report("unload-during-stream", pid=worker.pid, residency=snapshot)
+                        await worker.refresh_memory()
+                        report("memory-during-stream", telemetry=worker.memory_snapshot())
             if not unloaded:
                 raise WorkerError("Stream produced no content to exercise unload during output")
             if final is None:
@@ -88,7 +94,7 @@ def main():
     parser.add_argument("--model", required=True, help="Registered TLlama name, not a GGUF path or category prefix")
     parser.add_argument("--models-dir", type=Path)
     parser.add_argument("--ctx", type=int, default=2048)
-    parser.add_argument("--executable", type=Path, default=DEFAULT_EXECUTABLE)
+    parser.add_argument("--executable", type=Path)
     parser.add_argument("--load-timeout", type=float, default=600)
     parser.add_argument("--request-timeout", type=float, default=120)
     parser.add_argument("--log", type=Path)
