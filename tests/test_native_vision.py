@@ -250,11 +250,13 @@ async def test_vision_hardware_smoke_runs_over_public_tcp_and_checks_image_chang
     if mode == 'normal':
         assert stages[-1] == {'stage':'manager-closed','residency':[]}
         assert next(s for s in stages if s['stage'] == 'ready')['requested_context'] == 4096
-        for api in ('ollama','openai'):
+        for api in ('ollama','openai','generate'):
             assert next(s for s in stages if s['stage'] == api + '-image-0')['colors'] == {'left':'red','right':'blue'}
             assert next(s for s in stages if s['stage'] == api + '-image-1')['colors'] == {'left':'blue','right':'red'}
             assert len([s for s in stages if s['stage'].startswith(api + '-image-')]) == 4
         assert next(s for s in stages if s['stage'] == 'after-vision-cancel')['colors'] == {'left':'blue','right':'red'}
+        assert next(s for s in stages if s['stage'] == 'after-generate-vision-cancel')['colors'] == {'left':'blue','right':'red'}
+        assert next(s for s in stages if s['stage'] == 'generate-vision-thinking')['reasoning'] == 'myšlenka'
         assert next(s for s in stages if s['stage'] == 'worker-closed')['directory_removed']
         memory = next(s for s in stages if s['stage'] == 'ps-vision')['model']['memory']
         assert memory['source'] == ('native_memory_api' if native_memory else 'native_load_log')

@@ -114,9 +114,10 @@ class TestChatRefusesAnImageItCannotUse:
         assert response.status_code == 200
 
 
-class TestGenerateRefusesImagesForNow:
-    def test_an_image_is_refused(self, client, loaded):
-        loaded(vision=True)
+class TestGenerateRequiresVision:
+    @pytest.mark.parametrize("vision", [False, True])
+    def test_an_image_uses_actual_worker_capability(self, client, loaded, vision):
+        loaded(vision=vision)
 
         response = client.post("/api/generate", json={
             "model": "m",
@@ -125,19 +126,24 @@ class TestGenerateRefusesImagesForNow:
             "images": [ONE_PIXEL],
         })
 
-        assert response.status_code == 501
-        assert "Images in /api/generate" in response.json()["error"]
+        assert response.status_code == (200 if vision else 400)
+        if vision:
+            assert response.json()["response"] == "ok"
+        else:
+            assert NO_MULTIMODAL_SUPPORT in response.json()["error"]
 
-    def test_a_prompt_without_images_is_untouched(self, client, loaded):
+    @pytest.mark.parametrize("images", [None, []])
+    def test_a_prompt_without_images_is_untouched(self, client, loaded, images):
         loaded(vision=False)
 
         response = client.post("/api/generate", json={
             "model": "m",
             "stream": False,
             "prompt": "ahoj",
+            "images": images,
         })
 
-        assert response.status_code != 400
+        assert response.status_code == 200 and response.json()["response"] == "ok"
 
 
 class TestAnUnusableImageIsAClientError:

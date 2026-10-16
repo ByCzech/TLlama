@@ -1,4 +1,4 @@
-"""Shared ownership and preparation for the public native text endpoints."""
+"""Shared ownership and preparation for public native text/image endpoints."""
 
 from __future__ import annotations
 
@@ -20,12 +20,10 @@ from tllama.native_api import (NativeAPI, ReplyContext, ollama_response, openai_
                               ollama_stream, openai_stream, public_error)
 from tllama.native_config import _plain
 from tllama.native_requests import (NativeRequest, prepare_ollama_chat, prepare_openai_chat,
-                                   prepare_completion, _response_format, normalize_chat_input)
+                                   prepare_completion, prepare_ollama_generate_images,
+                                   _response_format, normalize_chat_input)
 from tllama.residency import _settle_owned
 from tllama.worker import WorkerProtocolError
-
-
-VISION_UNAVAILABLE = "Images in /api/generate are not implemented in this native checkpoint"
 
 
 class NativeStreamingResponse(StreamingResponse):
@@ -82,7 +80,15 @@ def _validate(request, api, kind):
             if request.raw and any(value is not None for value in (request.template, request.system, request.context)):
                 raise ValueError("raw mode does not support template, system, or context")
             if request_carries_images(request.images):
-                raise HTTPException(501, VISION_UNAVAILABLE)
+                if request.raw:
+                    raise ValueError("Images in /api/generate do not support raw mode")
+                if request.template is not None:
+                    raise ValueError("Images in /api/generate use the model template; request template is unsupported")
+                messages = []
+                if request.system is not None:
+                    messages.append({"role": "system", "content": request.system})
+                messages.append({"role": "user", "content": request.prompt, "images": request.images})
+                return normalize_chat_input(messages)
     else:
         validate_sampling_options({key: value for key, value in {
             "temperature": request.temperature, "top_p": request.top_p, "num_predict": request.max_tokens,
@@ -145,7 +151,7 @@ async def serve_native(manager, request, *, api, kind="chat"):
         keep_alive = request.keep_alive if api == "ollama" else None
         if api == "ollama":
             seconds = manager.resolve_keep_alive(keep_alive)
-            empty = not request.messages if kind == "chat" else not request.prompt
+            empty = not request.messages if kind == "chat" else not request.prompt and not normalized
             if empty:
                 phase = "load"
                 if seconds == 0:
@@ -163,13 +169,16 @@ async def serve_native(manager, request, *, api, kind="chat"):
         context = ReplyContext(request.model, started_ns=started, acquired_ns=time.monotonic_ns())
         metadata = lease_metadata(lease)
         phase = "prepare"
-        if kind == "completion":
+        if normalized and any(content_carries_images(message['content']) for message in normalized):
+            modalities = (lease.worker.props or {}).get('modalities')
+            if not isinstance(modalities, dict) or modalities.get('vision') is not True:
+                raise ValueError(NO_MULTIMODAL_SUPPORT)
+        if kind == "completion" and normalized is not None:
+            prepared = prepare_ollama_generate_images(request, resolved=lease.resolved, metadata_info=metadata,
+                                                      normalized_messages=normalized)
+        elif kind == "completion":
             prepared = await _completion_request(request, lease, metadata)
         else:
-            if any(content_carries_images(message['content']) for message in normalized):
-                modalities = (lease.worker.props or {}).get('modalities')
-                if not isinstance(modalities, dict) or modalities.get('vision') is not True:
-                    raise ValueError(NO_MULTIMODAL_SUPPORT)
             builder = prepare_ollama_chat if api == "ollama" else prepare_openai_chat
             prepared = builder(request, resolved=lease.resolved, metadata_info=metadata, normalized_messages=normalized)
         native = NativeAPI(lease.worker, prepared)

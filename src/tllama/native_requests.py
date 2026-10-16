@@ -1,8 +1,8 @@
 """Prepare text/image chat payloads from a lease's resolved configuration.
 
 No model lookup, transport, prompt rendering or public route selection occurs
-here. Generate rendering and live vision capability checks live in native_routes;
-generate images and FIM remain separate checkpoints.
+here. Text generate rendering and live vision capability checks live in
+native_routes; image generate uses the same native chat preparation as vision.
 """
 
 from __future__ import annotations
@@ -156,15 +156,26 @@ def prepare_chat(messages, opts, *, resolved: ResolvedWorkerConfig, metadata_inf
     return NativeRequest("chat", body)
 
 
+def _ollama_response_format(value):
+    validate_format(value)
+    if value == "json":
+        return {"type": "json_object"}
+    if isinstance(value, dict):
+        return {"type": "json_object", "schema": value}
+    return None
+
+
 def prepare_ollama_chat(request, *, resolved: ResolvedWorkerConfig, metadata_info=None, normalized_messages=None):
-    validate_format(request.format)
-    response_format = None
-    if request.format == "json":
-        response_format = {"type": "json_object"}
-    elif isinstance(request.format, dict):
-        response_format = {"type": "json_object", "schema": request.format}
     return prepare_chat(request.messages, request.options, resolved=resolved, metadata_info=metadata_info,
-                        think=request.think, response_format=response_format, tools=request.tools,
+                        think=request.think, response_format=_ollama_response_format(request.format), tools=request.tools,
+                        normalized_messages=normalized_messages)
+
+
+def prepare_ollama_generate_images(request, *, resolved: ResolvedWorkerConfig, metadata_info=None, normalized_messages):
+    # The native chat template inserts image markers; tokenizing a locally
+    # rendered text prompt would discard the multimodal input structure.
+    return prepare_chat([], request.options, resolved=resolved, metadata_info=metadata_info,
+                        think=request.think, response_format=_ollama_response_format(request.format),
                         normalized_messages=normalized_messages)
 
 

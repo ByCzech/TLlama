@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify native vision through public chat APIs on one private TLlama instance."""
+"""Verify native vision through public chat/generate APIs on one private TLlama instance."""
 
 import argparse
 import asyncio
@@ -57,6 +57,9 @@ async def wait_until(predicate, timeout=15):
 
 def payload(model, path, image, stream=False):
     message = {'role':'user','content':PROMPT}
+    if path == '/api/generate':
+        return {'model':model, 'prompt':PROMPT, 'images':[image], 'stream':stream,
+                'think':False, 'format':SCHEMA, 'options':{'temperature':0,'num_predict':128}}
     if path == '/api/chat':
         message['images'] = [image]
         return {'model':model, 'messages':[message], 'stream':stream, 'think':False, 'format':SCHEMA,
@@ -111,9 +114,11 @@ async def exercise(args):
             require('vision' in show['capabilities'], 'The registered definition does not declare vision')
             require(not manager.native_snapshot(), '/api/show unexpectedly loaded a model')
             report('show-without-load', capabilities=show['capabilities'])
-            bad = payload(args.model, '/api/chat', images[0])
-            bad['messages'][0]['images'] = ['http://127.0.0.1:9/image.png']
-            require((await client.post('/api/chat', json=bad)).status_code == 400, 'Remote images were not refused')
+            for path in ('/api/chat', '/api/generate'):
+                bad = payload(args.model, path, images[0])
+                message = bad if path == '/api/generate' else bad['messages'][0]
+                message['images'] = ['http://127.0.0.1:9/image.png']
+                require((await client.post(path, json=bad)).status_code == 400, 'Remote images were not refused')
             require(not manager.native_snapshot(), 'Invalid input unexpectedly loaded a model')
             loaded = await post('/api/chat', {'model':args.model,'messages':[],'keep_alive':-1})
             require(loaded['done_reason'] == 'load', 'Native preload failed')
@@ -154,6 +159,12 @@ async def exercise(args):
                                 reasoning.append(delta.get('reasoning_content') or '')
                                 if choice.get('finish_reason'):
                                     final = value
+                        elif path == '/api/generate':
+                            require('message' not in value, 'Generate stream returned a chat response')
+                            content.append(value.get('response') or '')
+                            reasoning.append(value.get('thinking') or '')
+                            if value.get('done'):
+                                done, final = True, value
                         else:
                             content.append(value.get('message', {}).get('content') or '')
                             reasoning.append(value.get('message', {}).get('thinking') or '')
@@ -168,40 +179,51 @@ async def exercise(args):
                 report(stage, content=text, reasoning=''.join(reasoning), final=final)
                 same_generation()
 
-            for path in ('/api/chat', '/v1/chat/completions'):
-                api = 'ollama' if path == '/api/chat' else 'openai'
+            for path, api in (('/api/chat', 'ollama'), ('/v1/chat/completions', 'openai'),
+                              ('/api/generate', 'generate')):
                 for swapped, image in enumerate(images):
                     data = payload(args.model, path, image)
                     response = await post(path, data)
-                    text = response['message']['content'] if api == 'ollama' else response['choices'][0]['message']['content']
+                    if api == 'generate':
+                        require('message' not in response and response.get('done') is True
+                                and response.get('done_reason') == 'stop', 'Invalid image GenerateResponse')
+                        text = response['response']
+                    else:
+                        text = response['message']['content'] if api == 'ollama' else response['choices'][0]['message']['content']
                     report(f'{api}-image-{swapped}', colors=check_colors(text, bool(swapped)), response=response)
                     same_generation()
                     await stream(path, {**data,'stream':True}, f'{api}-image-{swapped}-stream', colors=bool(swapped))
 
-            thinking = payload(args.model, '/api/chat', images[0], True)
-            thinking.pop('format')
-            thinking.update(think=True, options={'temperature':0,'num_predict':64})
-            await stream('/api/chat', thinking, 'vision-thinking')
+            for path, prefix in (('/api/chat', 'vision'), ('/api/generate', 'generate-vision')):
+                thinking = payload(args.model, path, images[0], True)
+                thinking.pop('format')
+                thinking.update(think=True, options={'temperature':0,'num_predict':64})
+                await stream(path, thinking, prefix + '-thinking')
 
-            cancel = payload(args.model, '/api/chat', images[0], True)
-            cancel.pop('format')
-            cancel['messages'][0]['content'] = 'Describe the image in a long, detailed story.'
-            cancel['options'] = {'temperature':0,'num_predict':512}
-            async with client.stream('POST', '/api/chat', json=cancel) as response:
-                require(response.status_code == 200, 'Vision cancellation stream was refused')
-                async for line in response.aiter_lines():
-                    if line:
-                        value = json.loads(line)
-                        require('error' not in value, f'Vision cancellation failed: {value}')
-                        if value.get('message', {}).get('content') or value.get('message', {}).get('thinking'):
-                            report('vision-stream-cancel', first=value)
-                            break
+                cancel = payload(args.model, path, images[0], True)
+                cancel.pop('format')
+                if path == '/api/generate':
+                    cancel['prompt'] = 'Describe the image in a long, detailed story.'
                 else:
-                    raise WorkerError('No image output before cancellation')
-            await wait_until(lambda: manager.native_snapshot()[0]['leases'] == 0)
-            response = await asyncio.wait_for(post('/api/chat', payload(args.model, '/api/chat', images[1])), timeout=30)
-            report('after-vision-cancel', colors=check_colors(response['message']['content'], True))
-            same_generation()
+                    cancel['messages'][0]['content'] = 'Describe the image in a long, detailed story.'
+                cancel['options'] = {'temperature':0,'num_predict':512}
+                async with client.stream('POST', path, json=cancel) as response:
+                    require(response.status_code == 200, 'Vision cancellation stream was refused')
+                    async for line in response.aiter_lines():
+                        if line:
+                            value = json.loads(line)
+                            require('error' not in value, f'Vision cancellation failed: {value}')
+                            output = value if path == '/api/generate' else value.get('message', {})
+                            if output.get('response') or output.get('content') or output.get('thinking'):
+                                report(prefix + '-stream-cancel', first=value)
+                                break
+                    else:
+                        raise WorkerError('No image output before cancellation')
+                await wait_until(lambda: manager.native_snapshot()[0]['leases'] == 0)
+                response = await asyncio.wait_for(post(path, payload(args.model, path, images[1])), timeout=args.request_timeout)
+                text = response['response'] if path == '/api/generate' else response['message']['content']
+                report('after-' + prefix + '-cancel', colors=check_colors(text, True))
+                same_generation()
             await worker.refresh_memory()
             [process] = (await client.get('/api/ps')).json()['models']
             memory = process['memory']
