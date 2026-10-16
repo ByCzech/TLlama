@@ -21,6 +21,8 @@ spec.loader.exec_module(smoke)
     ('normal', False, True), ('repo', False, True), ('semantic-bad', False, True),
     ('negative', True, True), ('missing-route', True, False), ('bad-terminal', False, False),
     ('normal', True, False), ('negative', False, False),
+    ('codegemma', False, True), ('starcoder', False, True), ('ignored-stops', False, False),
+    ('codestral', False, True),
 ])
 def test_cli_reference_comparison_negative_errors_and_cleanup(tmp_path, mode, negative, ok):
     root = tmp_path / 'stub'
@@ -29,24 +31,26 @@ def test_cli_reference_comparison_negative_errors_and_cleanup(tmp_path, mode, ne
     models.mkdir(parents=True)
     (models / 'a.gguf').write_bytes(b'fake weights')
     (models / 'a.toml').write_text('[llm]\nmodel="Local/a.gguf"\n[runtime]\ndevice="none"\nn_batch=64\nn_ctx=8192\nspm_infill=true\n')
+    if mode == 'codestral':
+        (models / 'Codestral-test.toml').write_text((models / 'a.toml').read_text())
     executable = tmp_path / 'native-stub'
     executable.write_text(f'#!{sys.executable}\n' + Path(__file__).with_name('native_worker_stub.py').read_text())
     executable.chmod(0o700)
     output = tmp_path / 'results'
-    command = [sys.executable, str(SCRIPT), '--negative-model' if negative else '--model', 'a',
+    command = [sys.executable, str(SCRIPT), '--negative-model' if negative else '--model', 'Codestral-test' if mode == 'codestral' else 'a',
                '--models-dir', str(models.parent), '--executable', str(executable), '--output', str(output)]
     env = {**os.environ, 'PYTHONPATH': str(SCRIPT.parents[1] / 'src'), 'STUB_FIM': mode,
            'STUB_ROOT': str(root), 'TLLAMA_MEMORY_SOURCE': 'log'}
-    run = subprocess.run(command, env=env, capture_output=True, text=True, timeout=30)
+    run = subprocess.run(command, env=env, capture_output=True, text=True, timeout=60)
     assert run.returncode == (0 if ok else 1), run.stdout + run.stderr
     records = [json.loads(line) for line in (output / 'raw.jsonl').read_text().splitlines()]
     summaries = [json.loads(line) for line in (output / 'summary.jsonl').read_text().splitlines()]
     assert run.stdout == (output / 'summary.jsonl').read_text()
     assert all('full_tokens' not in record and 'final' not in record for record in summaries)
     assert records[-1]['transport_ok'] is ok and records[-1]['public_suffix'] == 'not_implemented'
-    assert records[-1]['review_required'] is (not ok or mode == 'semantic-bad')
+    assert records[-1]['review_required'] is (not ok or mode in {'semantic-bad', 'codestral'})
     closed = [record for record in records if record['stage'] == 'worker-closed']
-    assert len(closed) == (1 if negative else 2)
+    assert len(closed) == (1 if negative or mode == 'codestral' else 2)
     assert all(record['clean'] and record['directory_removed']
                and record['returncode'] in (0, -signal.SIGTERM) for record in closed)
     launches = [json.loads(line) for line in (root / 'launch').read_text().splitlines()]
@@ -56,9 +60,9 @@ def test_cli_reference_comparison_negative_errors_and_cleanup(tmp_path, mode, ne
         assert argv[argv.index('--batch-size') + 1] == '512'
         assert argv[argv.index('--ctx-size') + 1] == '4096'
         assert ('--spm-infill' in argv) is (index == 1)
-    if ok and not negative:
+    if ok and not negative and mode != 'codestral':
         comparisons = [record for record in records if record['stage'] == 'comparison']
-        assert len(comparisons) == 4
+        assert len(comparisons) == 12
         assert all(record['infill_matches_native_equivalent'] and record['infill_matches_full']
                    and record['infill_stream_matches'] and record['full_stream_matches'] for record in comparisons)
         assert len([r for r in records if r['stage'] == 'after-cancel']) == 2
@@ -73,6 +77,30 @@ def test_cli_reference_comparison_negative_errors_and_cleanup(tmp_path, mode, ne
         assert all(r['semantic_match'] is (mode != 'semantic-bad') for r in results)
         assert all(r['full_counts']['extra'] == 0 for r in prompts)
         assert all((r['native_equivalent_counts']['extra'] > 0) is (mode == 'repo') for r in prompts)
+        checks = [r for r in records if r['stage'] == 'stop-check']
+        assert len(checks) == (8 if mode in {'codegemma', 'starcoder'} else 4)
+        assert all(r['verified'] and r['content'] == '' for r in checks)
+        training = [r for r in records if r['stage'] == 'training-spm-prompt']
+        assert len(training) == 6
+        assert all(r['order'] == 'spm' for r in training)
+        if mode in {'codegemma', 'starcoder'}:
+            baselines = [r for r in records if r['stage'] == 'unstopped-baseline']
+            assert all('unwanted continuation' in r['content'] for r in baselines)
+            assert all('unwanted continuation' not in r['content'] for r in results)
+            assert all(r['final']['stop_type'] == 'word' for r in results)
+            requests = [json.loads(line) for line in (root / 'requests').read_text().splitlines()]
+            controlled = [r['body'] for r in requests if r['path'] in {'/infill', '/completion'} and r['body'].get('stop')]
+            assert all(r['stop'] == r['preserved_tokens'] for r in controlled)
+    if ok and mode == 'codestral':
+        assert len([r for r in records if r['stage'] == 'native-fim-unassigned']) == 2
+        results = [r for r in records if r['stage'] == 'completion']
+        assert len(results) == 12 and all(r['semantic_match'] for r in results)
+        prompts = [r for r in records if r['stage'] == 'prompts']
+        assert all(r['reference'] == 'codestral-official' and 1100033 not in r['full_tokens'] for r in prompts)
+        assert all(r['full_tokens'][:2] == [7, 1100032] for r in prompts)
+        assert all(r['full_tokens'].index(1100032) < r['full_tokens'].index(1100031) for r in prompts)
+        assert any(r['stage'] == 'after-cancel' for r in records)
+
     if ok and negative:
         assert len([r for r in records if r['stage'] == 'negative-rejected']) == 2
         assert any(r['stage'] == 'after-negative' for r in records)
@@ -84,7 +112,9 @@ def test_cli_reference_comparison_negative_errors_and_cleanup(tmp_path, mode, ne
 
 @pytest.mark.parametrize('text,case,expected', [('a + b', 'add', True), ('b * a', 'multiply', True),
     ('a - b', 'add', False), ('__import__("os").system("anything")', 'add', False),
-    ('a + b\nprint("extra")', 'add', False), ('```python\na+b\n```', 'add', False)])
+    ('a + b\nprint("extra")', 'add', False), ('```python\na+b\n```', 'add', False),
+    ('violet', 'python-violet', True), ('amber', 'typescript-amber', True),
+    ('amber', 'python-violet', False), ('violet; extra', 'typescript-violet', False)])
 def test_semantic_probe_only_inspects_expected_expression(text, case, expected):
     assert smoke.semantic_check(text, case) is expected
 
@@ -96,3 +126,10 @@ def test_invalid_cli_does_not_create_evidence_directory(tmp_path, extra):
     run = subprocess.run([sys.executable, str(SCRIPT), '--output', str(output), *extra],
                          capture_output=True, text=True, timeout=10)
     assert run.returncode != 0 and not output.exists()
+
+
+def test_independent_fim_layouts_do_not_conflate_native_and_training_spm():
+    inventory = {key: {'id': value} for key, value in {'PRE': 1, 'SUF': 2, 'MID': 3}.items()}
+    assert smoke.layout_tokens(inventory, [10, 11], [20, 21], 'psm') == [1, 10, 11, 2, 20, 21, 3]
+    assert smoke.layout_tokens(inventory, [10, 11], [20, 21], 'spm') == [2, 20, 21, 1, 10, 11, 3]
+    assert smoke.layout_tokens(inventory, [10, 11], [20, 21], 'training-spm') == [1, 2, 20, 21, 3, 10, 11]

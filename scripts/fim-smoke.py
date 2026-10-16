@@ -28,6 +28,17 @@ NEGATIVE = "unsloth/Llama-3.2-3B-Instruct-GGUF/Llama-3.2-3B-Instruct-Q8_0"
 PREFIX = "def combine(a, b):\n    return "
 SUFFIXES = {"add": "\n\nassert combine(7, 2) == 9\n",
             "multiply": "\n\nassert combine(7, 2) == 14\n"}
+# Direct lexical probes complement arithmetic; they do not execute output.
+PROBES = {case: {"prefix": PREFIX, "suffix": suffix, "checker": "python_ast"}
+          for case, suffix in SUFFIXES.items()}
+for language in ("python", "typescript"):
+    for setting in ("violet", "amber"):
+        PROBES[f"{language}-{setting}"] = {
+            "prefix": ('def read_config(config):\n    return config["' if language == "python" else
+                       'export function readConfig(config: { violet: string; amber: string }): string {\n  return config.'),
+            "suffix": ('"]\n\n# Read the "' + setting + '" setting.\n' if language == "python" else
+                       ';\n}\n\n// Read the ' + setting + ' setting.\n'),
+            "checker": "exact_identifier", "expected": setting}
 TOKEN_LINE = re.compile(r"FIM (PRE|SUF|MID|PAD|REP|SEP) token\s*=\s*(\d+) '([^'\n]*)'")
 
 
@@ -48,9 +59,12 @@ def token_inventory(log):
 
 
 def semantic_check(content, case):
-    """Inspect syntax only; never execute model-generated code or its asserts."""
+    """Inspect AST or exact identifier; never execute generated output."""
+    probe = PROBES[case]
+    if probe["checker"] == "exact_identifier":
+        return content.strip() == probe["expected"]
     try:
-        tree = ast.parse(PREFIX + content + SUFFIXES[case])
+        tree = ast.parse(probe["prefix"] + content + probe["suffix"])
     except (SyntaxError, ValueError, RecursionError):
         return False
     if len(tree.body) != 2 or not isinstance(tree.body[0], ast.FunctionDef):
@@ -118,12 +132,113 @@ async def prompt_tokens(worker, inventory, bos, prefix, suffix, order, *, native
         for kind, text in (("REP", "myproject\n"), ("SEP", "filename\n")):
             if kind in inventory:
                 extra += [inventory[kind]["id"]] + await tokenize(worker, text)
-    pre = [inventory["PRE"]["id"]] + prefix_ids
-    suf = [inventory["SUF"]["id"]] + suffix_ids
-    tokens = extra + bos + (pre + suf if order == "psm" else suf + pre) + [inventory["MID"]["id"]]
+    tokens = extra + bos + layout_tokens(inventory, prefix_ids, suffix_ids, order)
     counts.update(used_prefix=len(prefix_ids), used_suffix=len(suffix_ids),
                   extra=len(extra), total=len(tokens))
     return tokens, counts
+
+
+def layout_tokens(inventory, prefix, suffix, order):
+    pre, suf, mid = (inventory[key]["id"] for key in ("PRE", "SUF", "MID"))
+    if order == "training-spm":
+        # Independent training reference; NOT what --spm-infill constructs.
+        return [pre, suf] + suffix + [mid] + prefix
+    if order == "psm":
+        return [pre] + prefix + [suf] + suffix + [mid]
+    require(order == "spm", "Unknown FIM order")
+    return [suf] + suffix + [pre] + prefix + [mid]
+
+
+async def verified_piece(worker, piece):
+    ids = await worker.tokenize(piece, add_special=False)
+    require(len(ids) == 1, f"Expected one live token for the documented delimiter: {piece}")
+    return {"id": ids[0], "piece": piece}
+
+
+async def stop_policy(worker, inventory):
+    # Explicit diagnostic candidates, not a production capability detector.
+    stops = dict(inventory)
+    pre = inventory["PRE"]["piece"]
+    extra = {"<|fim_prefix|>": ("<|file_separator|>",),
+             "<fim_prefix>": ("<file_sep>",)}.get(pre, ())
+    for index, piece in enumerate(extra):
+        stops[f"FILE{index}"] = await verified_piece(worker, piece)
+    pieces = list(dict.fromkeys(value["piece"] for value in stops.values()))
+    # Native process_token must SEE the special token before text stops work.
+    return {"stop": pieces, "preserved_tokens": pieces}, stops
+
+
+async def verify_stops(worker, sampling, policy, stops, prompt, emit):
+    # Force a delimiter independently of model quality. In particular, file_sep
+    # may be hidden by default, and a plain stop string would then do nothing.
+    for key in ("PRE", *(key for key in stops if key.startswith("FILE"))):
+        token = stops[key]
+        for stream in (False, True):
+            response = await collect(worker, "/completion", {
+                **sampling, **policy, "prompt": prompt, "ignore_eos": True,
+                "n_predict": 4, "logit_bias": [[token["id"], 1000]]}, stream)
+            final = response["final"]
+            ok = (response["content"] == "" and final.get("stop_type") == "word"
+                  and final.get("stopping_word") == token["piece"])
+            emit("stop-check", token=token, stream=stream, verified=ok, **response)
+            require(ok, "Native delimiter stop was not honored; inspect stop-check evidence")
+
+
+async def probe_refusal(worker, sampling, infill, emit, stage, *, allow_supported=False):
+    for stream in (False, True):
+        try:
+            response = await collect(worker, "/infill", {**sampling, **infill}, stream)
+        except WorkerRequestError as exc:
+            message = str(exc).lower()
+            require((400 <= exc.http_status < 500 or exc.http_status == 501)
+                    and "infill is not supported by this model" in message
+                    and "token is missing" in message, "Unexpected missing-token FIM error")
+            emit(stage, stream=stream, http_status=exc.http_status, error=exc.payload)
+        else:
+            require(allow_supported, "Vocabulary without native FIM assignments unexpectedly accepted /infill")
+            emit("native-fim-accepted", stream=stream, **response)
+
+
+async def codestral_reference(worker, sampling, infill, emit):
+    # Mistral InstructTokenizerV2.encode_fim, inherited by V3:
+    # BOS SUFFIX encode_infilling(suffix) PREFIX encode(prefix); NO MIDDLE.
+    inventory = {key: await verified_piece(worker, piece) for key, piece in
+                 (("PRE", "[PREFIX]"), ("SUF", "[SUFFIX]"), ("MID", "[MIDDLE]"))}
+    emit("codestral-vocabulary", tokens=inventory)
+    bos = await framing(worker, inventory)
+    require(len(bos) == 1, "Codestral reference requires the verified native BOS")
+    # Official _encode_infilling strips the SentencePiece dummy leading space.
+    sentinel = await tokenize(worker, "☺")
+    emit("codestral-framing", bos_tokens=bos, suffix_sentinel_tokens=sentinel)
+    require(len(sentinel) == 2, "Codestral suffix sentinel framing differs from mistral-common")
+    policy, stops = await stop_policy(worker, inventory)
+    prompt = bos + [inventory["PRE"]["id"]] + await tokenize(worker, PREFIX)
+    await verify_stops(worker, sampling, policy, stops, prompt, emit)
+    await probe_refusal(worker, sampling, infill, emit, "native-fim-unassigned", allow_supported=True)
+    for case, probe in PROBES.items():
+        suffix = await tokenize(worker, "☺" + probe["suffix"])
+        require(suffix[:2] == sentinel, "Codestral suffix sentinel does not occupy the first two tokens")
+        prompt = (bos + [inventory["SUF"]["id"]] + suffix[2:]
+                  + [inventory["PRE"]["id"]] + await tokenize(worker, probe["prefix"]))
+        emit("prompts", case=case, reference="codestral-official", full_tokens=prompt,
+             prefix=probe["prefix"], suffix=probe["suffix"], checker=probe["checker"])
+        outputs = []
+        for stream in (False, True):
+            response = await collect(worker, "/completion", {**sampling, **policy, "prompt": prompt}, stream)
+            outputs.append(response["content"])
+            emit("completion", case=case, path="/completion", reference="codestral-official", stream=stream,
+                 semantic_match=semantic_check(response["content"], case), **response)
+        emit("reference-stream-comparison", case=case, reference="codestral-official", matches=outputs[0] == outputs[1])
+    async with events(worker, "/completion", {**sampling, "prompt": prompt, "ignore_eos": True,
+                                              "n_predict": 512}) as iterator:
+        async for value in iterator:
+            if value.get("content") or value.get("tokens"):
+                require(value.get("stop") is not True, "Codestral stream finished before cancellation")
+                emit("stream-cancel", first=value)
+                break
+        else:
+            raise WorkerError("Codestral cancel stream produced no tokens")
+    emit("after-cancel", **await collect(worker, "/completion", {**sampling, **policy, "prompt": prompt}, False))
 
 
 async def collect(worker, path, body, stream):
@@ -144,9 +259,11 @@ async def collect(worker, path, body, stream):
     return {"content": content, "final": final}
 
 
-async def exercise_worker(worker, args, order, negative, emit):
+async def exercise_worker(worker, args, order, negative, name, emit):
     inventory = token_inventory(worker.load_log)
     emit("vocabulary", tokens=inventory)
+    if "missing pre-tokenizer type" in worker.load_log:
+        emit("tokenizer-warning", reason="missing_pre_tokenizer", quality_claims="unreliable")
     sampling = {"temperature": 0, "seed": 0, "n_predict": args.predict,
                 "repeat_penalty": 1, "top_k": 0, "top_p": 1, "min_p": 0,
                 "cache_prompt": False, "return_tokens": True}
@@ -154,50 +271,65 @@ async def exercise_worker(worker, args, order, negative, emit):
     if negative:
         require(not all(key in inventory for key in ("PRE", "SUF", "MID")),
                 "Negative candidate has all FIM tokens; select another model")
-        for stream in (False, True):
-            try:
-                await collect(worker, "/infill", {**sampling, **infill}, stream)
-            except WorkerRequestError as exc:
-                # A missing route or arbitrary transport failure is NOT proof
-                # that this loaded vocabulary lacks FIM support.
-                message = str(exc).lower()
-                require((400 <= exc.http_status < 500 or exc.http_status == 501)
-                        and "infill is not supported by this model" in message
-                        and "token is missing" in message, "Unexpected negative FIM error")
-                emit("negative-rejected", stream=stream, http_status=exc.http_status, error=exc.payload)
-            else:
-                raise WorkerError("Negative candidate unexpectedly accepted /infill")
+        await probe_refusal(worker, sampling, infill, emit, "negative-rejected")
         response = await collect(worker, "/completion", {**sampling, "prompt": "Once upon a time"}, False)
         require(bool(response["content"]), "Plain completion after negative FIM produced no text")
         emit("after-negative", **response)
         return
 
-    require(all(key in inventory for key in ("PRE", "SUF", "MID")),
-            "Loaded FIM token diagnostics incomplete; inspect worker.log and /infill before classifying")
+    if "codestral" in name.lower():
+        await codestral_reference(worker, sampling, infill, emit)
+        return
+    if not all(key in inventory for key in ("PRE", "SUF", "MID")):
+        await probe_refusal(worker, sampling, infill, emit, "positive-native-rejected")
+        raise WorkerError("Positive FIM diagnostics incomplete; native refusal recorded")
     bos = await framing(worker, inventory)
+    policy, stops = await stop_policy(worker, inventory)
+    emit("stop-policy", tokens=stops, request=policy)
+    prompt, _ = await prompt_tokens(worker, inventory, bos, PREFIX, SUFFIXES["add"], order,
+                                    native=False, batch=args.batch)
+    await verify_stops(worker, sampling, policy, stops, prompt, emit)
+    # Retain a raw baseline so delimiter handling is observable, not post-hoc
+    # stripping that could disguise generation beyond the first terminator.
+    emit("unstopped-baseline", **await collect(worker, "/completion", {**sampling, "prompt": prompt}, False))
+    sampling = {**sampling, **policy}
     outputs = {}
-    for case, suffix in SUFFIXES.items():
-        full, full_counts = await prompt_tokens(worker, inventory, bos, PREFIX, suffix, order,
+    for case, probe in PROBES.items():
+        prefix, suffix = probe["prefix"], probe["suffix"]
+        full, full_counts = await prompt_tokens(worker, inventory, bos, prefix, suffix, order,
                                                native=False, batch=args.batch)
-        equivalent, equivalent_counts = await prompt_tokens(worker, inventory, bos, PREFIX, suffix, order,
+        equivalent, equivalent_counts = await prompt_tokens(worker, inventory, bos, prefix, suffix, order,
                                                             native=True, batch=args.batch)
-        emit("prompts", case=case, full_tokens=full, native_equivalent_tokens=equivalent,
+        emit("prompts", case=case, prefix=prefix, suffix=suffix, checker=probe["checker"],
+             full_tokens=full, native_equivalent_tokens=equivalent,
              full_counts=full_counts, native_equivalent_counts=equivalent_counts)
-        for path, label, body in (("/infill", "infill", {"input_prefix": PREFIX, "input_suffix": suffix, "prompt": ""}),
-                                  ("/completion", "full", {"prompt": full}),
-                                  ("/completion", "native-equivalent", {"prompt": equivalent})):
+        paths = [("/infill", "infill", {"input_prefix": prefix, "input_suffix": suffix, "prompt": ""}),
+                 ("/completion", "full", {"prompt": full}),
+                 ("/completion", "native-equivalent", {"prompt": equivalent})]
+        if order == "spm":
+            training, _ = await prompt_tokens(worker, inventory, bos, prefix, suffix, "training-spm",
+                                              native=False, batch=args.batch)
+            emit("training-spm-prompt", case=case, full_tokens=training)
+            paths.append(("/completion", "training-spm", {"prompt": training}))
+        for path, label, body in paths:
             for stream in ((False,) if label == "native-equivalent" else (False, True)):
                 response = await collect(worker, path, {**sampling, **body}, stream)
                 outputs[case, label, stream] = response["content"]
                 emit("completion", case=case, path=path, reference=label, stream=stream,
                      semantic_match=semantic_check(response["content"], case), **response)
+            if label == "training-spm":
+                emit("reference-stream-comparison", case=case, reference=label,
+                     matches=outputs[case, label, False] == outputs[case, label, True])
         emit("comparison", case=case,
              infill_matches_native_equivalent=outputs[case, "infill", False] == outputs[case, "native-equivalent", False],
              infill_matches_full=outputs[case, "infill", False] == outputs[case, "full", False],
              infill_stream_matches=outputs[case, "infill", False] == outputs[case, "infill", True],
              full_stream_matches=outputs[case, "full", False] == outputs[case, "full", True])
-    emit("suffix-influence", **{label: outputs["add", label, False] != outputs["multiply", label, False]
-                               for label in ("infill", "full", "native-equivalent")})
+    for first, second in (("add", "multiply"), ("python-violet", "python-amber"),
+                          ("typescript-violet", "typescript-amber")):
+        emit("suffix-influence", pair=[first, second], changed={
+            label: outputs[first, label, False] != outputs[second, label, False]
+            for label in ("infill", "full", "native-equivalent")})
 
     # Exceed BOTH native batch-derived limits, while keeping the full prompt
     # within the real context. One output token suffices to measure admission.
@@ -224,7 +356,8 @@ async def exercise_worker(worker, args, order, negative, emit):
         emit("long-completion", reference=label, expected_tokens=expected,
              token_count_matches=response["final"].get("tokens_evaluated") == expected, **response)
 
-    async with events(worker, "/infill", {**sampling, **infill, "ignore_eos": True, "n_predict": 512}) as iterator:
+    cancel_sampling = {key: value for key, value in sampling.items() if key not in policy}
+    async with events(worker, "/infill", {**cancel_sampling, **infill, "ignore_eos": True, "n_predict": 512}) as iterator:
         async for value in iterator:
             if value.get("content") or value.get("tokens"):
                 require(value.get("stop") is not True, "FIM cancel stream finished before cancellation")
@@ -244,10 +377,12 @@ async def exercise(args, emit):
     if not selected:
         selected = [(name, False) for name in MODELS] + [(NEGATIVE, True)]
     orders = ("psm", "spm") if args.order == "both" else (args.order,)
+    emit("diagnostic-version", version=2, probes=list(PROBES),
+         native_formatter="b11552 hypothesis", stopping="live-verified delimiters with preserved_tokens")
     all_ok = True
     semantic_matches, semantic_total, review_profiles = 0, 0, 0
     for index, (name, negative) in enumerate(selected):
-        for order in (("psm",) if negative else orders):
+        for order in (("psm",) if negative or "codestral" in name.lower() else orders):
             label = f"{index:02d}-{order}"
             workers = []
             def factory(spec):
@@ -273,7 +408,13 @@ async def exercise(args, emit):
                     observations.append("reference_difference")
                 if stage == "long-completion" and not values["token_count_matches"]:
                     observations.append("native_formatter_hypothesis_differs")
-                if stage == "suffix-influence" and not all(values.values()):
+                if stage == "tokenizer-warning":
+                    observations.append("missing_pre_tokenizer")
+                if stage == "native-fim-unassigned":
+                    observations.append("native_fim_unassigned")
+                if stage == "reference-stream-comparison" and not values["matches"]:
+                    observations.append("stream_difference")
+                if stage == "suffix-influence" and not all(values["changed"].values()):
                     observations.append("suffix_did_not_change_output")
                 emit(stage, profile=label, model=name, order=order, **values)
             ok = True
@@ -283,7 +424,7 @@ async def exercise(args, emit):
                     record("ready", generation=lease.generation, pid=worker.pid, argv=worker.command,
                            fingerprint=worker.runtime_fingerprint, context=worker.props["default_generation_settings"]["n_ctx"],
                            expectation="unsupported" if negative else "supported")
-                    await exercise_worker(worker, args, order, negative, record)
+                    await exercise_worker(worker, args, order, negative, name, record)
             except Exception as exc:
                 ok = False
                 record("error", error=f"{type(exc).__name__}: {exc}")

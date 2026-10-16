@@ -90,11 +90,26 @@ def event(value):
 
 
 FIM_TOKENS = {"[PRE]": 1100001, "[SUF]": 1100002, "[MID]": 1100003,
-              "[REP]": 1100004, "[SEP]": 1100005, "<bos>": 7}
+              "[REP]": 1100004, "[SEP]": 1100005, "<bos>": 7,
+              "<|fim_prefix|>": 1100011, "<|fim_suffix|>": 1100012, "<|fim_middle|>": 1100013,
+              "<|file_separator|>": 1100014, "<fim_prefix>": 1100021,
+              "<fim_suffix>": 1100022, "<fim_middle>": 1100023, "<file_sep>": 1100024,
+              "[PREFIX]": 1100031, "[SUFFIX]": 1100032, "[MIDDLE]": 1100033}
+
+
+def fim_selected():
+    mode = os.environ.get('STUB_FIM')
+    pieces = (('<|fim_prefix|>', '<|fim_suffix|>', '<|fim_middle|>') if mode == 'codegemma' else
+              ('<fim_prefix>', '<fim_suffix>', '<fim_middle>') if mode == 'starcoder' else
+              ('[PRE]', '[SUF]', '[MID]'))
+    return dict(zip(('PRE', 'SUF', 'MID'), pieces))
 
 
 def fim_tokenize(text, special=False):
     result = []
+    if text.startswith('☺'):
+        result.extend([8, 9])
+        text = text[1:]
     while text:
         piece = next((p for p in FIM_TOKENS if special and text.startswith(p)), None)
         if piece:
@@ -112,34 +127,59 @@ async def fim_request(reader, writer, path, body):
         tokens = fim_tokenize(body['content'], body.get('parse_special', True))
         await json_response(writer, {'tokens': ([7] if body.get('add_special') else []) + tokens})
         return
-    if path == '/infill' and mode in {'negative', 'missing-route'}:
+    if path == '/infill' and mode in {'negative', 'missing-route', 'codestral'}:
         message = ('Infill is not supported by this model: prefix token is missing. suffix token is missing. middle token is missing.'
-                   if mode == 'negative' else 'not found')
-        await json_response(writer, {'error': {'message': message, 'code': 501 if mode == 'negative' else 404}},
-                            501 if mode == 'negative' else 404)
+                   if mode != 'missing-route' else 'not found')
+        await json_response(writer, {'error': {'message': message, 'code': 501 if mode != 'missing-route' else 404}},
+                            501 if mode != 'missing-route' else 404)
         return
     async with LOCK:
         if path == '/infill':
             batch = int(arg('--batch-size'))
             pre, suf = fim_tokenize(body['input_prefix']), fim_tokenize(body['input_suffix'])
-            pre, suf = [1100001] + pre[-3 * (batch // 4):], [1100002] + suf[:batch // 4 - 2]
-            tokens = [7] + (suf + pre if '--spm-infill' in sys.argv else pre + suf) + [1100003]
+            selected = fim_selected()
+            pre, suf = [FIM_TOKENS[selected['PRE']]] + pre[-3 * (batch // 4):], [FIM_TOKENS[selected['SUF']]] + suf[:batch // 4 - 2]
+            tokens = [7] + (suf + pre if '--spm-infill' in sys.argv else pre + suf) + [FIM_TOKENS[selected['MID']]]
             if mode == 'repo':
                 tokens = [1100004] + fim_tokenize('myproject\n') + [1100005] + fim_tokenize('filename\n') + tokens
         else:
             tokens = body['prompt'] if isinstance(body['prompt'], list) else fim_tokenize(body['prompt'])
         reverse = {value: key for key, value in FIM_TOKENS.items()}
-        text = ''.join(reverse[t] if t in reverse else chr(t - 1000) for t in tokens)
-        content = 'a - b' if mode == 'semantic-bad' else 'a * b' if '== 14' in text else 'a + b'
-        final = {'content': content, 'stop': True, 'stop_type': 'eos', 'tokens_evaluated': len(tokens),
-                 'tokens_predicted': 3, 'timings': {'prompt_n': len(tokens), 'predicted_n': 3}}
+        text = ''.join(reverse[t] if t in reverse else '' if t in (8, 9) else chr(t - 1000) for t in tokens)
+        if '// Read the ' in text or '# Read the "' in text:
+            content = 'amber' if 'Read the amber' in text or 'Read the "amber"' in text else 'violet'
+        else:
+            content = 'a * b' if '== 14' in text else 'a + b'
+        if mode == 'semantic-bad':
+            content = 'a - b'
+        stopping_word = ''
+        generated = fim_tokenize(content)
+        if body.get('logit_bias'):
+            forced = body['logit_bias'][0][0]
+            piece = reverse[forced]
+            generated = [forced]
+            if piece in body.get('stop', []) and piece in body.get('preserved_tokens', []) and mode != 'ignored-stops':
+                content, stopping_word = '', piece
+            else:
+                content = piece + 'unstopped'
+        elif mode in {'codegemma', 'starcoder'}:
+            piece = '<|file_separator|>' if mode == 'codegemma' else '<file_sep>'
+            generated.append(FIM_TOKENS[piece])
+            if piece in body.get('stop', []) and piece in body.get('preserved_tokens', []):
+                stopping_word = piece
+            else:
+                content += piece + 'unwanted continuation'
+                generated.extend(fim_tokenize('unwanted continuation'))
+        final = {'content': content, 'stop': True, 'stop_type': 'word' if stopping_word else 'eos',
+                 'stopping_word': stopping_word, 'tokens': generated, 'tokens_evaluated': len(tokens),
+                 'tokens_predicted': len(generated), 'timings': {'prompt_n': len(tokens), 'predicted_n': len(generated)}}
         if not body['stream']:
             await json_response(writer, final)
             return
         writer.write(b'HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n')
         await writer.drain()
         await stream_bytes(writer, event({'content': content, 'stop': False}))
-        if body.get('ignore_eos'):
+        if body.get('ignore_eos') and not body.get('logit_bias'):
             mark('started', 'fim-stream')
             await reader.read()
             mark('cancelled', 'fim-stream')
@@ -328,8 +368,8 @@ async def main():
         print('sched_reserve: Vulkan_Host compute buffer size = 1.00 MiB', flush=True)
     else:
         print("load_tensors: CPU model buffer size = 10.00 MiB", flush=True)
-    if os.environ.get('STUB_FIM') not in (None, 'negative', 'missing-route'):
-        for kind, piece in [('PRE', '[PRE]'), ('SUF', '[SUF]'), ('MID', '[MID]')]:
+    if os.environ.get('STUB_FIM') not in (None, 'negative', 'missing-route', 'codestral'):
+        for kind, piece in fim_selected().items():
             print(f"llama_vocab: FIM {kind} token = {FIM_TOKENS[piece]} '{piece}'", flush=True)
         if os.environ['STUB_FIM'] == 'repo':
             for kind, piece in [('REP', '[REP]'), ('SEP', '[SEP]')]:
