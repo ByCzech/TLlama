@@ -96,29 +96,39 @@ async def exercise(args):
                         '/api/ps reported a different generation')
                 require(model['state'] == state and (leases is None or model['leases'] == leases), '/api/ps state/leases disagree')
                 memory = model['memory']
-                require(memory['status'] == 'known', f'Incomplete text-model memory report: {memory}')
-                require(model['size_vram'] == memory['device_bytes']
-                        and model['size_vram'] <= model['size'] <= memory['allocated_bytes'],
-                        '/api/ps processor summary exceeds its allocation report')
-                require(memory['host_bytes'] + memory['device_bytes'] == memory['allocated_bytes'], 'Allocation split disagrees')
-                offload = memory['layer_offload']
-                full = offload is not None and offload['offloaded_layers'] == offload['total_layers']
-                if not full:
-                    require(model['size'] == memory['allocated_bytes'], 'CPU/partial offload lost host allocations')
-                else:
+                compatibility = memory['ollama_compatibility']
+                require(model['size'] == compatibility['size'] and model['size_vram'] == compatibility['size_vram'],
+                        'Processor sizes disagree with their declared basis')
+                require((model['size'] is None) == (model['size_vram'] is None), 'Incomplete processor split')
+                if memory['host_bytes'] is not None and memory['device_bytes'] is not None:
+                    require(memory['host_bytes'] + memory['device_bytes'] == memory['allocated_bytes'], 'Allocation split disagrees')
+                if model['size'] is not None:
+                    require(model['size_vram'] == memory['device_bytes']
+                            and model['size_vram'] <= model['size'] <= memory['allocated_bytes'],
+                            '/api/ps processor summary exceeds its allocation report')
+                    require(memory['allocated_bytes'] - model['size'] == compatibility['excluded_host_bytes'],
+                            'Excluded helpers disagree with the complete footprint')
+                if memory['source'] == 'native_memory_api':
+                    require(memory['schema_version'] == 1 and memory['precision'] == 'exact_bytes'
+                            and memory['scope'] == 'backend_buffers', 'Unexpected native memory provenance')
+                elif memory['source'] == 'native_load_log' and memory['status'] == 'known':
+                    offload = memory['layer_offload']
+                    full = offload is not None and offload['offloaded_layers'] == offload['total_layers']
                     # A full device load with only input/staging buffers on
                     # the host must not look like partial CPU execution.
                     host_work = sum(size for backend, kinds in memory['buffers'].items()
                                     for kind, size in kinds.items() if buffer_location(backend) == 'host'
                                     and kind not in {'model', 'output'}
                                     and not (backend.upper().endswith('_HOST') and kind == 'compute'))
-                    if not host_work:
+                    if full and memory['runtime_verified'] and not host_work:
                         require(model['size'] == model['size_vram'], 'Full offload is not reported as 100% GPU')
-                require(memory['physical_residency_bytes'] is None, 'Load logs were reported as physical residency')
+                require(memory['physical_residency_bytes'] is None, 'Buffer capacities were reported as physical residency')
                 require(model['context_length'] == worker.props['default_generation_settings']['n_ctx'], 'Effective context disagrees')
                 report(stage, models=models)
 
-            await wait_until(lambda: worker.memory.snapshot()['reason'] != 'load_log_pending')
+            await worker.refresh_memory()
+            await wait_until(lambda: worker.memory_snapshot()['source'] != 'native_load_log'
+                             or worker.memory.snapshot()['reason'] != 'load_log_pending')
             await ps('ps-ready', leases=0)
 
             messages = [{'role':'user', 'content':'Napiš krátký pozdrav česky.'}]

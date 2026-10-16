@@ -475,7 +475,7 @@ class NativeResidency:
                 'retirement_reason':entry.reason, 'file_info':_plain(entry.definition.file_info),
                 'metadata':_plain(entry.definition.metadata),
                 'context_length':(worker.props or {}).get('default_generation_settings', {}).get('n_ctx') if entry.loaded else None,
-                'memory':worker.memory.snapshot(),
+                'memory':worker.memory_snapshot(),
             })
         return result
 

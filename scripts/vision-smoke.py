@@ -202,8 +202,17 @@ async def exercise(args):
             response = await asyncio.wait_for(post('/api/chat', payload(args.model, '/api/chat', images[1])), timeout=30)
             report('after-vision-cancel', colors=check_colors(response['message']['content'], True))
             same_generation()
+            await worker.refresh_memory()
             [process] = (await client.get('/api/ps')).json()['models']
-            require(process['size'] is None and process['size_vram'] is None, 'Projector weight summary was reported as an allocation')
+            memory = process['memory']
+            require((process['size'] is None) == (process['size_vram'] is None), 'Incomplete processor split')
+            if memory['source'] == 'native_load_log':
+                require(process['size'] is None and process['size_vram'] is None,
+                        'Projector log summary was reported as a complete allocation')
+            elif process['size'] is not None:
+                require(memory['status'] == 'known' and process['size_vram'] == memory['device_bytes']
+                        and process['size_vram'] <= process['size'] <= memory['allocated_bytes'],
+                        'Vision processor summary exceeds the native allocation report')
             report('ps-vision', model=process)
             unloaded = await post('/api/chat', {'model':args.model,'messages':[],'keep_alive':0})
             require(unloaded['done_reason'] == 'unload', 'Vision unload failed')

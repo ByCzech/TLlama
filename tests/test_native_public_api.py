@@ -19,6 +19,7 @@ from tllama.schemas.ollama import OllamaChatRequest, OllamaGenerateRequest
 from tllama.routers import ollama, openai
 
 from test_native_manager import native_manager, records, wait_until
+from test_native_memory_api import payload as memory_payload
 
 
 @pytest.fixture
@@ -395,13 +396,18 @@ async def test_public_crash_is_not_replayed_and_next_independent_request_can_rel
 
 
 @pytest.mark.parametrize('valid', [False, True])
-async def test_public_hardware_smoke_entry_point(public, valid):
+@pytest.mark.parametrize('native_memory', [False, True])
+async def test_public_hardware_smoke_entry_point(public, valid, native_memory, memory_payload):
     manager, _, name, _ = public
     root = manager.models_dir.parent / 'cli-worker'
     root.mkdir()
+    if native_memory:
+        memory_payload['runtime_fingerprint'] = 'b11552-ec2797836f'
+        memory_payload['placement']['layer_groups'][-1].update(location='accelerator', device_ids=['gpu0'])
+        (root / 'memory-report').write_text(json.dumps(memory_payload))
     script = Path(__file__).resolve().parents[1] / 'scripts' / 'api-smoke.py'
     env = {**os.environ, 'PYTHONPATH':str(script.parent.parent / 'src'),
-           'STUB_ROOT':str(root), 'TLLAMA_RUNTIME_DEVICE':'none'}
+           'STUB_ROOT':str(root), 'TLLAMA_RUNTIME_DEVICE':'none', 'TLLAMA_MEMORY_SOURCE':'auto'}
     process = await asyncio.create_subprocess_exec(sys.executable, str(script),
         '--model', name if valid else 'missing', '--models-dir', str(manager.models_dir),
         '--executable', str(manager._native_launch_options['executable']), '--load-timeout', '5', '--request-timeout','5',
@@ -420,7 +426,9 @@ async def test_public_hardware_smoke_entry_point(public, valid):
         assert any(stage['stage'] == 'after-stream-cancel' for stage in stages)
         reports = {stage['stage']:stage['models'] for stage in stages if stage['stage'].startswith('ps-')}
         assert set(reports) == {'ps-ready', 'ps-during-stream', 'ps-after-stream-cancel', 'ps-draining', 'ps-empty'}
-        assert reports['ps-ready'][0]['size'] == int(16.5 * 1024**2)
+        ready = reports['ps-ready'][0]
+        assert ready['size'] == (1300 if native_memory else int(16.5 * 1024**2))
+        assert ready['memory']['source'] == ('native_memory_api' if native_memory else 'native_load_log')
         assert reports['ps-during-stream'][0]['leases'] == 1
         assert reports['ps-draining'][0]['state'] == 'draining' and reports['ps-empty'] == []
         assert (root / 'cancelled').exists()

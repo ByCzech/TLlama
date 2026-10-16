@@ -14,6 +14,7 @@ from tllama.routers import ollama
 from test_native_manager import native_manager, records, wait_until
 from test_native_public_api import public, stream_mode
 from test_native_requests import resolved
+from test_native_memory_api import payload as memory_payload
 from vision_fixtures import RED_BLUE, BLUE_RED, RED_BLUE_URL, BLUE_RED_URL
 
 
@@ -221,13 +222,19 @@ async def test_unsupported_or_malformed_parts_do_not_reach_native_media_loader(p
 
 
 @pytest.mark.parametrize('mode', ['normal', 'no-vision'])
-async def test_vision_hardware_smoke_runs_over_public_tcp_and_checks_image_changes(vision, mode):
+@pytest.mark.parametrize('native_memory', [False, True])
+async def test_vision_hardware_smoke_runs_over_public_tcp_and_checks_image_changes(vision, mode, native_memory, memory_payload):
     manager, _, name, _ = vision
     root = manager.models_dir.parent / 'vision-cli-worker'
     root.mkdir()
+    if native_memory:
+        memory_payload['runtime_fingerprint'] = 'b11552-ec2797836f'
+        memory_payload['placement']['layer_groups'][-1].update(location='accelerator', device_ids=['gpu0'])
+        (root / 'memory-report').write_text(json.dumps(memory_payload))
     script = Path(__file__).resolve().parents[1] / 'scripts' / 'vision-smoke.py'
     env = {**os.environ, 'PYTHONPATH':str(script.parent.parent / 'src'), 'STUB_ROOT':str(root),
-           'STUB_MODE':mode, 'TLLAMA_RUNTIME_DEVICE':'none', 'TLLAMA_CONTEXT_LENGTH':'4096'}
+           'STUB_MODE':mode, 'TLLAMA_RUNTIME_DEVICE':'none', 'TLLAMA_CONTEXT_LENGTH':'4096',
+           'TLLAMA_MEMORY_SOURCE':'auto'}
     process = await asyncio.create_subprocess_exec(sys.executable, str(script), '--model', name,
         '--models-dir', str(manager.models_dir), '--executable', str(manager._native_launch_options['executable']),
         '--load-timeout','5','--request-timeout','5', stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=env)
@@ -249,6 +256,8 @@ async def test_vision_hardware_smoke_runs_over_public_tcp_and_checks_image_chang
             assert len([s for s in stages if s['stage'].startswith(api + '-image-')]) == 4
         assert next(s for s in stages if s['stage'] == 'after-vision-cancel')['colors'] == {'left':'blue','right':'red'}
         assert next(s for s in stages if s['stage'] == 'worker-closed')['directory_removed']
+        memory = next(s for s in stages if s['stage'] == 'ps-vision')['model']['memory']
+        assert memory['source'] == ('native_memory_api' if native_memory else 'native_load_log')
         assert (root / 'cancelled').exists()
     else:
         assert stages[-1]['stage'] == 'error' and 'no vision capability' in stages[-1]['error']

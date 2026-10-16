@@ -71,6 +71,7 @@ class MemoryTelemetry:
         use_log = self.mode == "log" or self.mode == "auto" and native is None
         result = {
             "mode": self.mode,
+            "runtime_fingerprint": log["runtime_fingerprint"],
             "source": "native_memory_api" if use_native else "native_load_log" if use_log else None,
             "fallback_reason": self._reason if self.mode == "auto" and use_log else None,
             "native": {"support": self._support, "reason": self._reason, "http_status": self._http_status},

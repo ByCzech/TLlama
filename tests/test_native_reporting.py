@@ -155,10 +155,10 @@ async def test_returned_reporting_data_cannot_mutate_a_generation(public):
     await manager.preload_native_model(name)
     report = manager.native_reporting_snapshot()[0]
     report['metadata']['arch'] = 'wrong'
-    report['memory']['buffers']['CPU']['model'] = 0
+    report['memory']['measurement']['report']['buffers']['CPU']['model'] = 0
     again = manager.native_reporting_snapshot()[0]
     assert again['metadata'].get('arch') != 'wrong'
-    assert again['memory']['buffers']['CPU']['model'] == 10 * MIB
+    assert again['memory']['measurement']['report']['buffers']['CPU']['model'] == 10 * MIB
 
 
 async def test_large_accepted_keep_alive_cannot_overflow_reporting_timestamp(public):
