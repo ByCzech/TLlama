@@ -89,6 +89,64 @@ def event(value):
     return ("data: " + data + "\r\n\r\n").encode()
 
 
+FIM_TOKENS = {"[PRE]": 1100001, "[SUF]": 1100002, "[MID]": 1100003,
+              "[REP]": 1100004, "[SEP]": 1100005, "<bos>": 7}
+
+
+def fim_tokenize(text, special=False):
+    result = []
+    while text:
+        piece = next((p for p in FIM_TOKENS if special and text.startswith(p)), None)
+        if piece:
+            result.append(FIM_TOKENS[piece])
+            text = text[len(piece):]
+        else:
+            result.append(ord(text[0]) + 1000)
+            text = text[1:]
+    return result
+
+
+async def fim_request(reader, writer, path, body):
+    mode = os.environ['STUB_FIM']
+    if path == '/tokenize':
+        tokens = fim_tokenize(body['content'], body.get('parse_special', True))
+        await json_response(writer, {'tokens': ([7] if body.get('add_special') else []) + tokens})
+        return
+    if path == '/infill' and mode in {'negative', 'missing-route'}:
+        message = ('Infill is not supported by this model: prefix token is missing. suffix token is missing. middle token is missing.'
+                   if mode == 'negative' else 'not found')
+        await json_response(writer, {'error': {'message': message, 'code': 501 if mode == 'negative' else 404}},
+                            501 if mode == 'negative' else 404)
+        return
+    async with LOCK:
+        if path == '/infill':
+            batch = int(arg('--batch-size'))
+            pre, suf = fim_tokenize(body['input_prefix']), fim_tokenize(body['input_suffix'])
+            pre, suf = [1100001] + pre[-3 * (batch // 4):], [1100002] + suf[:batch // 4 - 2]
+            tokens = [7] + (suf + pre if '--spm-infill' in sys.argv else pre + suf) + [1100003]
+            if mode == 'repo':
+                tokens = [1100004] + fim_tokenize('myproject\n') + [1100005] + fim_tokenize('filename\n') + tokens
+        else:
+            tokens = body['prompt'] if isinstance(body['prompt'], list) else fim_tokenize(body['prompt'])
+        reverse = {value: key for key, value in FIM_TOKENS.items()}
+        text = ''.join(reverse[t] if t in reverse else chr(t - 1000) for t in tokens)
+        content = 'a - b' if mode == 'semantic-bad' else 'a * b' if '== 14' in text else 'a + b'
+        final = {'content': content, 'stop': True, 'stop_type': 'eos', 'tokens_evaluated': len(tokens),
+                 'tokens_predicted': 3, 'timings': {'prompt_n': len(tokens), 'predicted_n': 3}}
+        if not body['stream']:
+            await json_response(writer, final)
+            return
+        writer.write(b'HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n')
+        await writer.drain()
+        await stream_bytes(writer, event({'content': content, 'stop': False}))
+        if body.get('ignore_eos'):
+            mark('started', 'fim-stream')
+            await reader.read()
+            mark('cancelled', 'fim-stream')
+        elif mode != 'bad-terminal':
+            await stream_bytes(writer, event({**final, 'content': ''}))
+
+
 async def handle(reader, writer):
     global HEALTH_READS
     try:
@@ -147,6 +205,9 @@ async def handle(reader, writer):
             writer.write(f"HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\n"
                          f"Content-Length: {len(data)}\r\nConnection: close\r\n\r\n".encode() + data)
             await writer.drain()
+            return
+        if os.environ.get('STUB_FIM') and path in {'/tokenize', '/completion', '/infill'}:
+            await fim_request(reader, writer, path, body)
             return
         if path == "/tokenize":
             # Deterministic IDs expose exact render text in the request log.
@@ -267,6 +328,12 @@ async def main():
         print('sched_reserve: Vulkan_Host compute buffer size = 1.00 MiB', flush=True)
     else:
         print("load_tensors: CPU model buffer size = 10.00 MiB", flush=True)
+    if os.environ.get('STUB_FIM') not in (None, 'negative', 'missing-route'):
+        for kind, piece in [('PRE', '[PRE]'), ('SUF', '[SUF]'), ('MID', '[MID]')]:
+            print(f"llama_vocab: FIM {kind} token = {FIM_TOKENS[piece]} '{piece}'", flush=True)
+        if os.environ['STUB_FIM'] == 'repo':
+            for kind, piece in [('REP', '[REP]'), ('SEP', '[SEP]')]:
+                print(f"llama_vocab: FIM {kind} token = {FIM_TOKENS[piece]} '{piece}'", flush=True)
     if MODE not in {'memory-missing', 'memory-full-offload'}:
         print("llama_kv_cache: CPU KV buffer size = 1.00 MiB", flush=True)
         print("llama_memory_recurrent: CPU RS buffer size = 2.00 MiB", flush=True)
