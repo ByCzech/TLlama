@@ -209,10 +209,13 @@ class ModelManager:
             # Listing does not hash a potentially changed GGUF behind a live
             # generation. Retain only a content digest already cached for it.
             info['content_sha256'] = (load_digest_cache(self.metadata_cache_dir, model) or {}).get('content_sha256', '')
+            metadata_scanned = False
             try:
                 metadata = load_metadata_cache(self.metadata_cache_dir, model)
                 if metadata is None:
-                    metadata = self._get_model_metadata_sync(str(model)) or {}
+                    metadata = self._get_model_metadata_sync(str(model))
+                    metadata_scanned = metadata is not None
+                    metadata = metadata or {}
             except Exception as exc:
                 # The native loader remains authoritative for model validity.
                 # Missing optional header recommendations must not invent defaults.
@@ -226,6 +229,13 @@ class ModelManager:
             resolved = resolve_worker_config(self.config, model.resolve(), spec, num_ctx=num_ctx,
                                              mmproj=mmproj.resolve() if mmproj else None,
                                              **self._native_launch_options)
+            if metadata_scanned:
+                # Admission must warm the same header cache as /api/show.
+                # Otherwise every request rescans a cold GGUF, even while its
+                # worker remains loaded. Preserve the scanned fingerprint if
+                # the weights change again during the optional cache write.
+                save_metadata_cache(self.metadata_cache_dir, model_name, model, metadata,
+                                    fingerprint=file_after['model'])
             fingerprint = {"toml": after, **file_after}
             return ModelDefinition(model_name, resolved, fingerprint, info, metadata)
         raise RuntimeError(f"Model definition '{model_name}' kept changing while it was resolved")

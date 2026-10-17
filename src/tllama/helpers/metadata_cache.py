@@ -130,6 +130,7 @@ def _save_cache_document(
     schema_version: int,
     section: str,
     payload: Dict[str, Any],
+    fingerprint: Optional[Dict[str, Any]] = None,
 ) -> None:
     """
     Save one cache document using an atomic replace.
@@ -139,7 +140,8 @@ def _save_cache_document(
     try:
         cache_dir.mkdir(parents=True, exist_ok=True)
 
-        fingerprint = build_model_file_fingerprint(model_path)
+        if fingerprint is None:
+            fingerprint = build_model_file_fingerprint(model_path)
 
         document = {
             "schema_version": schema_version,
@@ -210,8 +212,15 @@ def save_metadata_cache(
     model_name: str,
     model_path: str | Path,
     metadata: Dict[str, Any],
+    *,
+    fingerprint: Optional[Dict[str, Any]] = None,
 ) -> None:
-    """Save GGUF metadata to its JSON cache file."""
+    """Save GGUF metadata with the fingerprint of the file actually scanned.
+
+    A supplied fingerprint prevents a delayed write from labeling old metadata
+    with the identity of weights replaced after the scan. The cache loader will
+    reject that old snapshot for the new file.
+    """
     cache_dir = Path(cache_dir)
     model_path = Path(model_path)
 
@@ -223,6 +232,7 @@ def save_metadata_cache(
         schema_version=SCHEMA_VERSION,
         section=_METADATA_SECTION,
         payload=metadata,
+        fingerprint=fingerprint,
     )
 
 
