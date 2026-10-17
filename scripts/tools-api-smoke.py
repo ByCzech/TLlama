@@ -3,6 +3,7 @@
 
 import argparse
 import asyncio
+from contextlib import aclosing
 from dataclasses import replace
 import importlib.util
 import json
@@ -162,6 +163,93 @@ def body_for(name, api, probe, native, stream, predict):
     return common
 
 
+async def exercise_clients(args, address, emit):
+    """Use SDK objects directly, including Ollama's ID-less history shape."""
+    try:
+        import openai
+        import ollama
+    except ImportError as exc:
+        raise WorkerError('SDK smoke needs the optional openai and ollama Python packages: ' + str(exc)) from exc
+    from importlib.metadata import version
+    emit('sdk-versions', openai=version('openai'), ollama=version('ollama'))
+    review = []
+    native = reference.probes(args.predict)[3][1]
+    async with openai.AsyncOpenAI(base_url=address + '/v1', api_key='local-test', max_retries=0,
+            timeout=args.request_timeout, http_client=openai.DefaultAsyncHttpxClient(trust_env=False)) as oa:
+        ol = ollama.AsyncClient(host=address, trust_env=False, timeout=args.request_timeout,
+                                headers={'authorization': 'Bearer local-test'})
+        try:
+            for api, client in (('openai', oa), ('ollama', ol)):
+                for stream in (False, True):
+                    body = body_for(args.model, api, 'parallel-auto', native, stream, args.predict)
+                    if api == 'openai':
+                        body.pop('model')
+                        response = await client.chat.completions.create(model=args.model, **body)
+                        consumer = Consumer('openai')
+                        if stream:
+                            async with response:
+                                async for part in response:
+                                    payload = part.model_dump(exclude_none=True)
+                                    emit('sdk-event', api=api, stream=True, payload=payload)
+                                    consumer.push(payload, True)
+                        else:
+                            payload = response.model_dump(exclude_none=True)
+                            emit('sdk-event', api=api, stream=False, payload=payload)
+                            consumer.push(payload, False)
+                        result = consumer.result()
+                    else:
+                        response = await client.chat(**body)
+                        message = {'role': 'assistant', 'content': ''}
+                        calls = []
+                        if stream:
+                            async with aclosing(response):
+                                async for part in response:
+                                    emit('sdk-event', api=api, stream=True, payload=part.model_dump(exclude_none=True))
+                                    message['content'] += part.message.content or ''
+                                    calls.extend(part.message.tool_calls or [])
+                            require(part.done, 'Ollama SDK stream lacks done')
+                        else:
+                            emit('sdk-event', api=api, stream=False, payload=response.model_dump(exclude_none=True))
+                            message['content'] = response.message.content or ''
+                            calls = response.message.tool_calls or []
+                        message['tool_calls'] = [call.model_dump(exclude_none=True) for call in calls]
+                        require(all(isinstance(c.function.arguments, dict) for c in calls), 'SDK arguments are not objects')
+                        result = {'message': message, 'arguments': [{'valid': True, 'arguments': dict(c.function.arguments)} for c in calls],
+                                  'finish_reason': 'tool_calls' if calls else 'stop'}
+                    match = reference.semantics(result, ['alpha', 'beta'])
+                    emit('sdk-assembled', api=api, stream=stream, semantic_match=match, **result)
+                    if not match:
+                        review.append(f'sdk:{api}:{stream}:semantic_mismatch')
+                        continue
+                    markers = [f'SDK_RESULT_7f4a_{i}' for i in range(2)]
+                    if api == 'openai':
+                        history = native['messages'] + [result['message']] + [
+                            {'role': 'tool', 'tool_call_id': c['id'], 'content': json.dumps({'marker': marker})}
+                            for c, marker in zip(result['message']['tool_calls'], markers)]
+                        answer = await client.chat.completions.create(model=args.model, messages=history,
+                            tools=reference.TOOLS, tool_choice='none', temperature=0, max_tokens=args.predict,
+                            reasoning_effort='none')
+                        content = answer.choices[0].message.content or ''
+                        payload = answer.model_dump(exclude_none=True)
+                        complete = answer.choices[0].finish_reason == 'stop' and not answer.choices[0].message.tool_calls
+                    else:
+                        history = native['messages'] + [ollama.Message(role='assistant', content=message['content'], tool_calls=calls)] + [
+                            ollama.Message(role='tool', tool_name=c.function.name, content=json.dumps({'marker': marker}))
+                            for c, marker in zip(calls, markers)]
+                        answer = await client.chat(model=args.model, messages=history, tools=reference.TOOLS,
+                            stream=False, think=False, options={'temperature': 0, 'num_predict': args.predict})
+                        content = answer.message.content or ''
+                        payload = answer.model_dump(exclude_none=True)
+                        complete = answer.done and answer.done_reason == 'stop' and not answer.message.tool_calls
+                    match = complete and all(marker in content for marker in markers)
+                    emit('sdk-followup', api=api, stream=stream, semantic_match=match, response=payload)
+                    if not match:
+                        review.append(f'sdk:{api}:{stream}:followup_mismatch')
+        finally:
+            await ol.close()
+    return review
+
+
 async def exercise(args, emit):
     from tllama import main
     from tllama.routers import ollama, openai
@@ -198,7 +286,7 @@ async def exercise(args, emit):
                 worker = lease.worker
                 emit('ready', pid=worker.pid, generation=lease.generation, argv=worker.command,
                      fingerprint=worker.runtime_fingerprint, context=worker.props['default_generation_settings']['n_ctx'])
-            for api, path in (('ollama', '/api/chat'), ('openai', '/v1/chat/completions')):
+            for api, path in (() if args.clients_only else (('ollama', '/api/chat'), ('openai', '/v1/chat/completions'))):
                 cases = reference.probes(args.predict)
                 if api == 'ollama':
                     # Ollama has no public tool_choice / parallel switch. Test
@@ -236,35 +324,38 @@ async def exercise(args, emit):
                         except Exception as exc:
                             ok = False
                             emit('error', api=api, error=f'{type(exc).__name__}: {exc}', **labels)
-            # Cancel while OpenAI still exposes only partial string arguments.
-            native = reference.probes(args.predict)[1][1]
-            body = body_for(args.model, 'openai', 'single-required', native, True, 512)
-            body['messages'] = [native['messages'][0], {'role': 'user', 'content':
-                'Call lookup_record with this key: ' + json.dumps('cancel_' + 'x' * 1024)}]
-            seen = False
-            async with client.stream('POST', '/v1/chat/completions', json=body) as response:
-                require(response.status_code == 200, 'Public cancellation request failed')
-                async for line in response.aiter_lines():
-                    if line.startswith('data: ') and line[6:] != '[DONE]':
-                        payload = json.loads(line[6:])
-                        emit('public-event', api='openai', probe='cancel', payload=payload)
-                        require('error' not in payload, f'Cancellation stream error: {payload}')
-                        for choice in payload.get('choices', []):
-                            if any(c.get('function', {}).get('arguments') for c in choice['delta'].get('tool_calls', [])):
-                                seen = choice.get('finish_reason') is None
-                        if seen:
-                            break
-            await wait_until(lambda: not manager.native_snapshot()[0]['leases'])
-            emit('stream-cancel', partial_arguments_seen=seen, tool_dispatched=False,
-                 native_cancellation_proof='Review cancel task in worker.log; reuse alone is not proof')
-            if not seen:
-                review.append('cancel:no_live_arguments')
-            body = body_for(args.model, 'openai', 'single-required', native, False, args.predict)
-            result = await collect(client, '/v1/chat/completions', body, 'openai', emit, probe='after-cancel')
-            match = reference.semantics(result, ['alpha'])
-            emit('after-cancel', pid=worker.pid, semantic_match=match, **result)
-            if not match:
-                review.append('after-cancel:semantic_mismatch')
+            if args.clients_only:
+                review.extend(await exercise_clients(args, str(client.base_url).rstrip('/'), emit))
+            else:
+                # Cancel while OpenAI still exposes only partial string arguments.
+                native = reference.probes(args.predict)[1][1]
+                body = body_for(args.model, 'openai', 'single-required', native, True, 512)
+                body['messages'] = [native['messages'][0], {'role': 'user', 'content':
+                    'Call lookup_record with this key: ' + json.dumps('cancel_' + 'x' * 1024)}]
+                seen = False
+                async with client.stream('POST', '/v1/chat/completions', json=body) as response:
+                    require(response.status_code == 200, 'Public cancellation request failed')
+                    async for line in response.aiter_lines():
+                        if line.startswith('data: ') and line[6:] != '[DONE]':
+                            payload = json.loads(line[6:])
+                            emit('public-event', api='openai', probe='cancel', payload=payload)
+                            require('error' not in payload, f'Cancellation stream error: {payload}')
+                            for choice in payload.get('choices', []):
+                                if any(c.get('function', {}).get('arguments') for c in choice['delta'].get('tool_calls', [])):
+                                    seen = choice.get('finish_reason') is None
+                            if seen:
+                                break
+                await wait_until(lambda: not manager.native_snapshot()[0]['leases'])
+                emit('stream-cancel', partial_arguments_seen=seen, tool_dispatched=False,
+                     native_cancellation_proof='Review cancel task in worker.log; reuse alone is not proof')
+                if not seen:
+                    review.append('cancel:no_live_arguments')
+                body = body_for(args.model, 'openai', 'single-required', native, False, args.predict)
+                result = await collect(client, '/v1/chat/completions', body, 'openai', emit, probe='after-cancel')
+                match = reference.semantics(result, ['alpha'])
+                emit('after-cancel', pid=worker.pid, semantic_match=match, **result)
+                if not match:
+                    review.append('after-cancel:semantic_mismatch')
             require(len(workers) == 1 and workers[0] is worker, 'Public requests changed the owned worker')
     except Exception as exc:
         ok = False
@@ -295,6 +386,7 @@ def main(argv=None):
     parser.add_argument('--models-dir', type=Path)
     parser.add_argument('--executable', type=Path)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--clients-only', action='store_true', help='Only actual Python SDK cycles; needs optional openai/ollama packages')
     parser.add_argument('--ctx', type=int, default=4096)
     parser.add_argument('--predict', type=int, default=256)
     parser.add_argument('--load-timeout', type=float, default=600)
@@ -316,7 +408,7 @@ def main(argv=None):
         def emit(stage, **values):
             record = {'stage': stage, **values}
             raw.write(json.dumps(record, ensure_ascii=False) + '\n'); raw.flush()
-            if stage not in {'request', 'public-event', 'public-response'}:
+            if stage not in {'request', 'public-event', 'public-response', 'sdk-event'}:
                 line = json.dumps({k: v for k, v in record.items() if k != 'argv'}, ensure_ascii=False)
                 summary.write(line + '\n'); summary.flush()
                 print(line, flush=True)

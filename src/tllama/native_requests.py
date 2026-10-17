@@ -15,6 +15,7 @@ from tllama.helpers.chat import build_think_kwargs_ex, apply_default_system_prom
 from tllama.helpers.common import validate_format
 from tllama.native_config import ResolvedWorkerConfig, build_native_sampling, _plain
 from tllama.native_params import freeze_values
+from tllama.native_tool_input import tool_options, tool_history
 from tllama.helpers.vision import normalize_image_content_parts, to_image_data_url
 
 
@@ -51,7 +52,7 @@ class NativeRequest:
         return _plain(self.payload)
 
 
-def normalize_chat_input(messages):
+def normalize_chat_input(messages, *, tool_api="ollama"):
     """Validate text/image inputs before admission, preserving all media order."""
     result = []
     for message in messages:
@@ -88,15 +89,17 @@ def normalize_chat_input(messages):
             # Ollama's call objects need not carry OpenAI's type discriminator.
             normalized["tool_calls"] = [{"type": "function", **call} for call in calls]
         if value.get("tool_name") is not None:
+            if value.get("name") is not None and value['name'] != value['tool_name']:
+                raise ValueError("Conflicting tool result name and tool_name")
             normalized["name"] = value["tool_name"]
         if value.get("thinking") is not None:
             normalized["reasoning_content"] = value["thinking"]
         result.append(normalized)
-    return result
+    return tool_history(_json_copy(result), api=tool_api)
 
 
-def _chat_messages(messages, resolved, normalized_messages=None):
-    result = normalize_chat_input(messages) if normalized_messages is None else _json_copy(normalized_messages)
+def _chat_messages(messages, resolved, normalized_messages=None, *, tool_api="ollama"):
+    result = normalize_chat_input(messages, tool_api=tool_api) if normalized_messages is None else _json_copy(normalized_messages)
     # Presence, including an explicit empty system message, wins over TOML.
     return apply_default_system_prompt(result, {"default_system_prompt": resolved.system_prompt})
 
@@ -129,26 +132,14 @@ def _response_format(value):
 
 def prepare_chat(messages, opts, *, resolved: ResolvedWorkerConfig, metadata_info=None,
                  think=None, response_format=None, tools=None, tool_choice=None,
-                 parallel_tool_calls=None, normalized_messages=None) -> NativeRequest:
+                 parallel_tool_calls=None, normalized_messages=None, tool_api="ollama") -> NativeRequest:
+    tools, tool_choice = tool_options(tools, tool_choice, parallel_tool_calls)
     body = build_native_sampling(opts or {}, metadata_info, resolved=resolved)
-    body.update({"messages": _chat_messages(messages, resolved, normalized_messages),
+    body.update({"messages": _chat_messages(messages, resolved, normalized_messages, tool_api=tool_api),
                  "reasoning_format": "deepseek"})  # Structured fields, never legacy reasoning-in-content.
     body.update(_think_payload(think))
     if response_format is not None:
         body["response_format"] = _response_format(response_format)
-    if isinstance(tool_choice, dict):
-        function = tool_choice.get("function")
-        if tool_choice.get("type") != "function" or not isinstance(function, dict) or not isinstance(function.get("name"), str):
-            raise ValueError("Forced tool_choice needs type=function and function.name")
-        selected = [tool for tool in (tools or []) if isinstance(tool, dict)
-                    and isinstance(tool.get("function"), dict) and tool["function"].get("name") == function["name"]]
-        if len(selected) != 1:
-            raise ValueError("Forced tool_choice must identify exactly one declared tool")
-        # The pinned parser accepts only auto/none/required. Restricting the
-        # declarations to the chosen function preserves forced-call meaning.
-        tools, tool_choice = selected, "required"
-    elif tool_choice is not None and tool_choice not in {"auto", "none", "required"}:
-        raise ValueError("tool_choice must be auto, none, required or a named function")
     for name, value in {"tools": tools, "tool_choice": tool_choice,
                         "parallel_tool_calls": parallel_tool_calls}.items():
         if value is not None:
@@ -195,7 +186,7 @@ def prepare_openai_chat(request, *, resolved: ResolvedWorkerConfig, metadata_inf
     return prepare_chat(request.messages, opts, resolved=resolved, metadata_info=metadata_info,
                         think=effort, response_format=request.response_format, tools=request.tools,
                         tool_choice=request.tool_choice, parallel_tool_calls=request.parallel_tool_calls,
-                        normalized_messages=normalized_messages)
+                        normalized_messages=normalized_messages, tool_api="openai")
 
 
 def prepare_completion(prompt: str, opts, *, resolved: ResolvedWorkerConfig, metadata_info=None,

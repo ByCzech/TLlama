@@ -1,9 +1,73 @@
-# Public Tools checkpoint 0045
+# Public Tools checkpoints 0045 / 0046
 
 Working verification instructions; final user documentation is deferred.
 0044 established the native reference. This checkpoint implements the public
 argument representations and stream state. Complete Tools acceptance still
 requires this hardware run and the remaining admission/client checks.
+
+0045 public hardware evidence is now reviewed: 18/22 exact initial matches,
+16/16 executed follow-ups, stable parallel identities, live thinking, one-time
+Ollama object delivery, native cancel at n_gen=10/512 and same-worker reuse.
+Only the four known escaped-key semantic mismatches remain, one per API/mode;
+no public protocol failure was observed. Worker exit/cleanup succeeded.
+
+0046 adds pre-admission validation and actual Python SDK checks. For the next
+hardware check use **--clients-only** below; the accepted raw matrix need not
+be repeated unless something changes.
+
+## SDK-only check after 0046
+
+The optional Python packages `openai` and `ollama` must be installed in the
+chosen test environment. They are not TLlama runtime dependencies. Locally
+verified with openai 3.33.0 (httpx2) and ollama 0.6.3 (httpx); other installed
+versions are recorded by the diagnostic. Use a virtual environment if an
+isolated installation is needed; do not change the system environment solely
+for this test. Optional pytest cases skip when a client package is absent.
+
+```bash
+pytest -q tests/test_native_tool_input.py tests/test_tools_clients.py tests/test_tools_api_smoke.py
+
+export PYTHONPATH=src
+export TLLAMA_RUNTIME_DEVICE=Vulkan0
+tools_results="/tmp/tllama-tools-clients-$(date +%Y%m%d-%H%M%S)"
+python scripts/tools-api-smoke.py --clients-only \
+  --model unsloth/Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-IQ3_S \
+  --output "$tools_results"
+tar -cJf "$tools_results.tar.xz" -C "$tools_results" .
+```
+
+This runs four initial parallel-call requests: each SDK with stream=false/true.
+Exact matches receive two fixed fixture results, followed by a non-stream SDK
+answer that must include both markers. SDK objects are replayed directly for
+Ollama, which may discard server IDs/type in its typed call model. This tests
+the real ID-less history path; the raw 0045 matrix retained IDs. Neither SDK
+executes model-generated code. No model download or native rebuild is needed.
+SDK events/versions/results and native logs are saved in the same archive form.
+
+Ollama name-only results for repeated calls to the same function must be returned
+in original call order. Unnamed results follow the full call order. Explicit
+IDs, when present, take precedence and permit results in any order. TLlama fills
+missing result IDs only from matched assistant calls; it never invents IDs.
+The OpenAI contract requires IDs and string arguments. Historical tools need
+not appear in the current declarations, allowing tool sets to change per turn.
+
+TLlama sends the native call ID by default in Ollama result and stream calls,
+and accepts tool_call_id on returned tool results. This behavior already exists
+in 0045; SDK compatibility does not remove IDs from the HTTP protocol. The
+current upstream Ollama Go API also defines optional ToolCall.id and
+Message.tool_call_id (api/types.go, checked 2026-10-17). The Python SDK's typed
+objects can discard those fields, so a client using IDs must preserve them on
+both deserialization and replay. A server switch cannot change SDK behavior.
+Default ID emission stays enabled; there is no new disable switch without a
+demonstrated incompatible client.
+
+Invalid declarations, duplicate function names/IDs within a turn, orphan or
+duplicate results, incomplete call/result histories and malformed completed
+arguments now return HTTP 400 before model admission. The complete result set
+must precede the next ordinary message or inference request. Tool JSON Schema
+extensions remain unchanged; the native runtime evaluates schema support.
+
+## Original raw HTTP matrix
 
 Run from the patched checkout, in the same Python environment as pytest:
 

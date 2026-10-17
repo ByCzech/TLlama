@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictBool
 from typing import List, Optional, Any, Dict, Literal, Union
 
 
@@ -41,7 +41,7 @@ class ChatCompletionRequest(BaseModel):
     # OpenAI tool/function calling.
     tools: Optional[List[Dict[str, Any]]] = None
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
-    parallel_tool_calls: Optional[bool] = None
+    parallel_tool_calls: Optional[StrictBool] = None
 
     # Deprecated OpenAI compatibility path.
     functions: Optional[List[Dict[str, Any]]] = None

@@ -55,6 +55,10 @@ async def test_hardware_capture_preserves_native_ids_and_arguments_on_both_surfa
     assert [c['function']['arguments'] for c in ollama_response(full, CONTEXT)['message']['tool_calls']] == expected
     outputs = await projected(captured['events'], 'ollama')
     calls = [c for output in outputs for c in output['message'].get('tool_calls', [])]
+    native_ids = [c['id'] for payload in captured['events'] for choice in payload['choices']
+                  for c in choice['delta'].get('tool_calls', []) if 'id' in c]
+    assert [c['id'] for c in calls] == list(dict.fromkeys(native_ids))
+    assert [c['id'] for c in ollama_response(full, CONTEXT)['message']['tool_calls']] == [c['id'] for c in original]
     assert [c['function']['arguments'] for c in calls] == expected
     assert [c['function']['index'] for c in calls] == list(range(len(calls)))
     assert outputs[-2]['done'] is False and outputs[-2]['message']['tool_calls'] == calls

@@ -20,6 +20,7 @@ from tllama.native_api import (NativeAPI, ReplyContext, ollama_response, openai_
                               ollama_stream, openai_stream, public_error)
 from tllama.native_config import _plain
 from tllama.native_fim import prepare_fim, validate_fim_input
+from tllama.native_tool_input import tool_options
 from tllama.native_requests import (NativeRequest, prepare_ollama_chat, prepare_openai_chat,
                                    prepare_completion, prepare_ollama_generate_images,
                                    _response_format, normalize_chat_input)
@@ -99,10 +100,11 @@ def _validate(request, api, kind):
         if request.functions is not None or request.function_call is not None:
             raise ValueError("Deprecated functions/function_call is unsupported; use tools/tool_choice")
     if kind == "chat":
+        tool_options(request.tools, getattr(request, "tool_choice", None), getattr(request, "parallel_tool_calls", None))
         if any(getattr(message, "function_call", None) is not None or message.role == "function"
                for message in request.messages):
             raise ValueError("Deprecated function-call history is unsupported; use tool messages")
-        return normalize_chat_input(request.messages)
+        return normalize_chat_input(request.messages, tool_api=api)
 
 
 def lease_metadata(lease):

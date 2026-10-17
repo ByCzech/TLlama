@@ -158,9 +158,10 @@ def test_invalid_forced_tool_choice_cannot_fall_back_to_auto(resolved, choice):
 
 def test_ollama_tool_history_gains_required_native_type_without_losing_arguments(resolved):
     arguments = {"city": "Praha"}
-    body = prepare_chat([{"role": "assistant", "tool_calls": [{"function": {"name": "weather", "arguments": arguments}}]}],
+    body = prepare_chat([{"role": "assistant", "tool_calls": [{"function": {"name": "weather", "arguments": arguments}}]},
+                         {"role": "tool", "tool_name": "weather", "content": "sunny"}],
                         {}, resolved=resolved).body()
-    assert body["messages"][-1]["tool_calls"] == [{"type": "function", "function": {"name": "weather", "arguments": arguments}}]
+    assert body["messages"][-2]["tool_calls"] == [{"type": "function", "function": {"name": "weather", "arguments": arguments}}]
 
 
 @pytest.mark.parametrize("message", [{"role": "user", "images": ["base64"], "content": "hi"},
