@@ -140,7 +140,7 @@ def test_saved_evidence_inference_and_cleanup(tmp_path, payload, profile, status
             evidence = summary['locality']
             assert evidence['status'] == ('unavailable' if profile == 'cpu' else 'partial')
             assert evidence['allocation_count'] == (0 if profile == 'cpu' else 1)
-            assert 'allocation_locality' not in measurements[0]['telemetry']['measurement']['report']
+            assert measurements[0]['telemetry']['measurement']['report']['allocation_locality'] == payload['allocation_locality']
             if profile == 'no-mmap':
                 assignment = evidence['assignments'][0]
                 assert assignment['device_ids'] == ['gpu0']

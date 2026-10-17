@@ -13,7 +13,7 @@ from tllama.native_params import freeze_values, kv_type_name
 
 
 RUNTIME_FINGERPRINT = "b11552-ec2797836f"
-SUPPORTED_RUNTIME_FINGERPRINTS = frozenset({RUNTIME_FINGERPRINT, "b11552-d1570abd3d"})
+SUPPORTED_RUNTIME_FINGERPRINTS = frozenset({RUNTIME_FINGERPRINT, "b11552-d1570abd3d", "b11552-3144c167ef"})
 DEFAULT_EXECUTABLE = Path("/usr/lib/tllama/server/tllama-server")
 _OWNED_ENV = {"GGML_BACKEND_PATH", "MTMD_BACKEND_DEVICE", "LLAMA_API_KEY"}
 

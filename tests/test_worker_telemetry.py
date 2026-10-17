@@ -44,10 +44,11 @@ async def test_strict_version_policy_still_rejects_unknown_build(factory, mode):
     assert not worker.runtime_directory.exists() and worker.process.returncode is not None
 
 
-async def test_memory_api_runtime_is_supported_in_strict_mode(factory):
-    worker, _ = factory(version_policy="strict", environment={"STUB_BUILD": "b11552-d1570abd3d"})
+@pytest.mark.parametrize("fingerprint", ["b11552-d1570abd3d", "b11552-3144c167ef"])
+async def test_memory_api_runtime_is_supported_in_strict_mode(factory, fingerprint):
+    worker, _ = factory(version_policy="strict", environment={"STUB_BUILD": fingerprint})
     async with worker:
-        assert worker.runtime_fingerprint == "b11552-d1570abd3d"
+        assert worker.runtime_fingerprint == fingerprint
         assert worker.memory.snapshot()["runtime_fingerprint"] == worker.runtime_fingerprint
         assert worker.memory.snapshot()["status"] == "known"
         assert worker.memory.snapshot()["runtime_verified"] is True

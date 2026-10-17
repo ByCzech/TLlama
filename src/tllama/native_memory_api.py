@@ -121,6 +121,114 @@ def _coverage(section, path, owners):
         raise MemoryReportError(f"{path}: known coverage has missing components")
 
 
+def _unsigned(value, path):
+    value = _integer(value, path)
+    if value > 2**64 - 1:
+        raise MemoryReportError(f"{path}: unsigned integer overflow")
+    return value
+
+
+def _nullable_unsigned(value, path):
+    return None if value is None else _unsigned(value, path)
+
+
+def _native_properties(value, path):
+    obj = _object(value, path)
+    names = {"vulkan.memory_type_index", "vulkan.heap_index",
+             "vulkan.memory_property_flags", "vulkan.heap_flags", "level_zero.memory_ordinal"}
+    # Never expose unrecognized native handles/tokens. Zero is known evidence.
+    return {key: _unsigned(obj[key], f"{path}.{key}") for key in obj if key in names}
+
+
+_assignment = _record(status=_status, device_ids=_array(_string),
+    sources=_array(_enum("loader_selection", "loader_override", "loader_mmap",
+                         "loader_lazy", "native_buffer")), reasons=_array(_string))
+_allocation = _record(id=_string, device_ids=_array(_string),
+    kind=_enum("device", "host", "host_pinned", "managed", "shared", "system", "unknown"),
+    origin=_enum("allocated", "imported", "registered", "unknown"), native_api=_nullable_string,
+    size_bytes=_nullable_unsigned, locality=_enum("device_local", "non_device_local", "unknown"),
+    native_properties=_native_properties)
+_binding = _record(buffer_id=_string, allocation_id=_string,
+    buffer_offset_bytes=_nullable_unsigned, allocation_offset_bytes=_nullable_unsigned,
+    size_bytes=_nullable_unsigned)
+_locality = _record(status=_status, scope=_enum("backend_buffer_allocations"),
+    physical_aliasing=_enum("unknown"),
+    missing_components=_array(_record(buffer_id=_nullable_string, reason=_string)),
+    allocations=_array(_allocation), bindings=_array(_binding))
+
+
+def _parse_assignment(value, path, devices):
+    result = _assignment(value, path)
+    _references(result["device_ids"], devices, f"{path}.device_ids")
+    for key in ("sources", "reasons"):
+        _unique(result[key], f"{path}.{key}")
+    if result["status"] == "known" and (result["reasons"] or not result["device_ids"]):
+        raise MemoryReportError(f"{path}: known assignment lacks complete evidence")
+    return result
+
+
+def _parse_locality(value, path, data, devices):
+    result = _locality(value, path)
+    buffers = {buffer["id"]: buffer for buffer in data["buffers"]}
+    allocations = result["allocations"]
+    _unique([allocation["id"] for allocation in allocations], f"{path}.allocations")
+    allocations = {allocation["id"]: allocation for allocation in allocations}
+    for allocation in allocations.values():
+        _references(allocation["device_ids"], devices, f"{path}.allocations.device_ids")
+    missing = result["missing_components"]
+    _unique([(item["buffer_id"], item["reason"]) for item in missing], f"{path}.missing_components")
+    if any(item["buffer_id"] is not None and item["buffer_id"] not in buffers for item in missing):
+        raise MemoryReportError(f"{path}.missing_components: unresolved buffer")
+    if result["status"] == "known" and missing:
+        raise MemoryReportError(f"{path}: known coverage has missing components")
+    _unique([tuple(binding.values()) for binding in result["bindings"]], f"{path}.bindings")
+    for binding in result["bindings"]:
+        if binding["buffer_id"] not in buffers or binding["allocation_id"] not in allocations:
+            raise MemoryReportError(f"{path}.bindings: unresolved reference")
+        length = binding["size_bytes"]
+        for key, span in (("buffer_offset_bytes", buffers[binding["buffer_id"]]["size_bytes"]),
+                          ("allocation_offset_bytes", allocations[binding["allocation_id"]]["size_bytes"])):
+            offset = binding[key]
+            end = offset + length if offset is not None and length is not None else None
+            if end is not None and end > 2**64 - 1:
+                raise MemoryReportError(f"{path}.bindings: range overflow")
+            if span is not None and any(v is not None and v > span for v in (offset, length, end)):
+                raise MemoryReportError(f"{path}.bindings: range exceeds span")
+    # Coverage of relationships does not imply known sizes, locality or aliases.
+    return result
+
+
+def _extensions(obj, data, devices):
+    """Optional metadata failures leave the valid V1 capacity inventory usable.
+
+    Sanitize only the failed section, retain an explicit diagnostic, and never
+    silently turn malformed assignment evidence into an older provider guess.
+    """
+    errors = []
+
+    def parse(value, path, validate, unavailable):
+        try:
+            return validate(value, path)
+        except MemoryReportError as exc:
+            errors.append({"path": path, "reason": str(exc)})
+            return unavailable
+
+    for index, group in enumerate(obj["placement"]["layer_groups"]):
+        if "assignment" in group:
+            path = f"report.placement.layer_groups[{index}].assignment"
+            data["placement"]["layer_groups"][index]["assignment"] = parse(
+                group["assignment"], path, lambda v, p: _parse_assignment(v, p, devices),
+                {"status": "unavailable", "device_ids": [], "sources": [], "reasons": ["invalid_metadata"]})
+    if "allocation_locality" in obj:
+        data["allocation_locality"] = parse(obj["allocation_locality"], "report.allocation_locality",
+            lambda v, p: _parse_locality(v, p, data, devices),
+            {"status": "unavailable", "scope": "backend_buffer_allocations", "physical_aliasing": "unknown",
+             "missing_components": [{"buffer_id": None, "reason": "invalid_metadata"}],
+             "allocations": [], "bindings": []})
+    if errors:
+        data["extension_errors"] = errors
+
+
 @dataclass(frozen=True)
 class MemoryTotals:
     """Inventory totals and explicitly incomplete subtotals, all in bytes.
@@ -189,6 +297,7 @@ class NativeMemoryReport:
                 if key in layers:
                     raise MemoryReportError("report.placement: overlapping layer groups")
                 layers.add(key)
+        _extensions(obj, data, devices)
         self._data = data
 
     def snapshot(self) -> dict:

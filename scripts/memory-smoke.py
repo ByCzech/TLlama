@@ -207,6 +207,13 @@ async def exercise(args, spec, emit):
                             "error": f"{type(exc).__name__}: {exc}"[:2048]}
             summary["locality"] = evidence
             summary["checks"].update(evidence["checks"])
+            # Validate the selected observation on its own; its IDs/sequence may
+            # differ from the independently read raw response above.
+            selected = (telemetry.get("measurement") or {}).get("report") or {}
+            summary["checks"]["locality_adapter_valid"] = (
+                telemetry["source"] == "native_memory_api" and not selected.get("extension_errors")
+                and "allocation_locality" in selected
+                and all("assignment" in group for group in selected["placement"]["layer_groups"]))
         checks.append(all(summary["checks"].values()))
         emit(stage, raw_native=raw, telemetry=telemetry, summary=summary)
 

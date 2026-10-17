@@ -2,11 +2,13 @@
 
 import asyncio
 from dataclasses import replace
+import json
 import signal
 
 import pytest
 
 from test_native_memory_api import payload
+from test_native_memory_locality import extended
 from test_native_public_api import public, request_body, stream_mode
 from test_native_reporting import ps
 from test_native_manager import native_manager, records, wait_until
@@ -55,6 +57,45 @@ async def test_native_ps_reports_complete_and_display_totals_without_io_or_lease
         assert memory['comparison']['log']['report']['allocated_bytes'] == int(16.5 * 1024**2)
     assert records(manager.test.roots[0], 'requests') == before
     assert len(manager.test.ledger) == 1 and manager.native_snapshot()[0]['leases'] == 0
+
+
+async def test_optional_locality_crosses_cached_public_ps_during_stream_and_recovers(native_public, extended):
+    manager, client, name, _, _, _ = native_public
+    _, worker = await loaded(manager, name)
+    worker._memory_task.cancel()
+    await asyncio.gather(worker._memory_task, return_exceptions=True)
+    root = manager.test.roots[0]
+    async with worker.chat_stream({'stub':'hold'}) as events:
+        await anext(events)
+        await asyncio.wait_for(worker.refresh_memory(), 0.5)
+        before = records(root, 'requests')
+        [model] = await ps(client)
+        report = model['memory']
+        assert report['allocation_locality'] == extended['allocation_locality']
+        assert report['placement']['layer_groups'][0]['assignment']['device_ids'] == ['cpu']
+        assert model['size'] == model['size_vram'] == 1300
+        assert records(root, 'requests') == before
+        # A failed extension must not replace usable native capacities with log totals.
+        extended['allocation_locality']['bindings'][0]['allocation_id'] = 'missing'
+        extended['snapshot_sequence'] += 1
+        (root/'memory-report').write_text(json.dumps(extended))
+        await asyncio.wait_for(worker.refresh_memory(), 0.5)
+        [bad] = await ps(client)
+        assert bad['memory']['allocation_locality']['status'] == 'unavailable'
+        assert bad['memory']['extension_errors']
+        assert bad['memory']['allocated_bytes'] == 1350 and bad['size'] == 1300
+        assert bad['memory']['fallback_reason'] is None
+        assert report['allocation_locality']['status'] == 'partial'
+        # A new snapshot can restore locality without reloading the model.
+        extended['allocation_locality']['bindings'][0]['allocation_id'] = 'a0'
+        extended['snapshot_sequence'] += 1
+        (root/'memory-report').write_text(json.dumps(extended))
+        await worker.refresh_memory()
+        [recovered] = await ps(client)
+        assert recovered['memory']['allocation_locality']['status'] == 'partial'
+        assert 'extension_errors' not in recovered['memory']
+    assert (await client.post('/api/chat',json=request_body(name,'/api/chat'))).status_code == 200
+    assert len(manager.test.ledger) == 1
 
 
 async def test_public_ps_does_not_wait_for_a_hung_memory_refresh(native_public):

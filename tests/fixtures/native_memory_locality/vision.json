@@ -1,0 +1,1006 @@
+{
+  "status": "known",
+  "missing_components": [],
+  "owners": [
+    {
+      "id": "o1",
+      "kind": "model",
+      "roles": [
+        "main"
+      ]
+    },
+    {
+      "id": "o2",
+      "kind": "context",
+      "roles": [
+        "main"
+      ]
+    },
+    {
+      "id": "o3",
+      "kind": "projector",
+      "roles": [
+        "vision"
+      ]
+    }
+  ],
+  "devices": [
+    {
+      "id": "d1",
+      "backend": "CPU",
+      "name": "CPU",
+      "type": "cpu"
+    },
+    {
+      "id": "d2",
+      "backend": "Vulkan",
+      "name": "Vulkan0",
+      "type": "igpu"
+    }
+  ],
+  "buffers": [
+    {
+      "id": "b1",
+      "owners": [
+        {
+          "owner_id": "o1",
+          "component": "model_weights"
+        }
+      ],
+      "device_ids": [
+        "d1"
+      ],
+      "buffer_type": "CPU_Mapped",
+      "memory_kind": "host",
+      "backing": "mmap",
+      "size_bytes": 417177600
+    },
+    {
+      "id": "b2",
+      "owners": [
+        {
+          "owner_id": "o1",
+          "component": "model_weights"
+        }
+      ],
+      "device_ids": [
+        "d2"
+      ],
+      "buffer_type": "Vulkan0",
+      "memory_kind": "device",
+      "backing": "allocated",
+      "size_bytes": 1071351296
+    },
+    {
+      "id": "b3",
+      "owners": [
+        {
+          "owner_id": "o1",
+          "component": "model_weights"
+        }
+      ],
+      "device_ids": [
+        "d2"
+      ],
+      "buffer_type": "Vulkan0",
+      "memory_kind": "device",
+      "backing": "allocated",
+      "size_bytes": 971280640
+    },
+    {
+      "id": "b4",
+      "owners": [
+        {
+          "owner_id": "o1",
+          "component": "model_weights"
+        }
+      ],
+      "device_ids": [
+        "d2"
+      ],
+      "buffer_type": "Vulkan0",
+      "memory_kind": "device",
+      "backing": "allocated",
+      "size_bytes": 1070108160
+    },
+    {
+      "id": "b5",
+      "owners": [
+        {
+          "owner_id": "o1",
+          "component": "model_weights"
+        }
+      ],
+      "device_ids": [
+        "d2"
+      ],
+      "buffer_type": "Vulkan0",
+      "memory_kind": "device",
+      "backing": "allocated",
+      "size_bytes": 1040748032
+    },
+    {
+      "id": "b6",
+      "owners": [
+        {
+          "owner_id": "o1",
+          "component": "model_weights"
+        }
+      ],
+      "device_ids": [
+        "d2"
+      ],
+      "buffer_type": "Vulkan0",
+      "memory_kind": "device",
+      "backing": "allocated",
+      "size_bytes": 1073631488
+    },
+    {
+      "id": "b7",
+      "owners": [
+        {
+          "owner_id": "o1",
+          "component": "model_weights"
+        }
+      ],
+      "device_ids": [
+        "d2"
+      ],
+      "buffer_type": "Vulkan0",
+      "memory_kind": "device",
+      "backing": "allocated",
+      "size_bytes": 960579840
+    },
+    {
+      "id": "b8",
+      "owners": [
+        {
+          "owner_id": "o1",
+          "component": "model_weights"
+        }
+      ],
+      "device_ids": [
+        "d2"
+      ],
+      "buffer_type": "Vulkan0",
+      "memory_kind": "device",
+      "backing": "allocated",
+      "size_bytes": 1070108160
+    },
+    {
+      "id": "b9",
+      "owners": [
+        {
+          "owner_id": "o1",
+          "component": "model_weights"
+        }
+      ],
+      "device_ids": [
+        "d2"
+      ],
+      "buffer_type": "Vulkan0",
+      "memory_kind": "device",
+      "backing": "allocated",
+      "size_bytes": 1040748032
+    },
+    {
+      "id": "b10",
+      "owners": [
+        {
+          "owner_id": "o1",
+          "component": "model_weights"
+        }
+      ],
+      "device_ids": [
+        "d2"
+      ],
+      "buffer_type": "Vulkan0",
+      "memory_kind": "device",
+      "backing": "allocated",
+      "size_bytes": 1073631488
+    },
+    {
+      "id": "b11",
+      "owners": [
+        {
+          "owner_id": "o1",
+          "component": "model_weights"
+        }
+      ],
+      "device_ids": [
+        "d2"
+      ],
+      "buffer_type": "Vulkan0",
+      "memory_kind": "device",
+      "backing": "allocated",
+      "size_bytes": 1070108160
+    },
+    {
+      "id": "b12",
+      "owners": [
+        {
+          "owner_id": "o1",
+          "component": "model_weights"
+        }
+      ],
+      "device_ids": [
+        "d2"
+      ],
+      "buffer_type": "Vulkan0",
+      "memory_kind": "device",
+      "backing": "allocated",
+      "size_bytes": 987842816
+    },
+    {
+      "id": "b13",
+      "owners": [
+        {
+          "owner_id": "o1",
+          "component": "model_weights"
+        }
+      ],
+      "device_ids": [
+        "d2"
+      ],
+      "buffer_type": "Vulkan0",
+      "memory_kind": "device",
+      "backing": "allocated",
+      "size_bytes": 1040748032
+    },
+    {
+      "id": "b14",
+      "owners": [
+        {
+          "owner_id": "o1",
+          "component": "model_weights"
+        }
+      ],
+      "device_ids": [
+        "d2"
+      ],
+      "buffer_type": "Vulkan0",
+      "memory_kind": "device",
+      "backing": "allocated",
+      "size_bytes": 777669376
+    },
+    {
+      "id": "b15",
+      "owners": [
+        {
+          "owner_id": "o2",
+          "component": "kv_cache"
+        }
+      ],
+      "device_ids": [
+        "d2"
+      ],
+      "buffer_type": "Vulkan0",
+      "memory_kind": "device",
+      "backing": "allocated",
+      "size_bytes": 34078720
+    },
+    {
+      "id": "b16",
+      "owners": [
+        {
+          "owner_id": "o2",
+          "component": "recurrent_state"
+        }
+      ],
+      "device_ids": [
+        "d2"
+      ],
+      "buffer_type": "Vulkan0",
+      "memory_kind": "device",
+      "backing": "allocated",
+      "size_bytes": 65863680
+    },
+    {
+      "id": "b17",
+      "owners": [
+        {
+          "owner_id": "o2",
+          "component": "compute"
+        }
+      ],
+      "device_ids": [
+        "d2"
+      ],
+      "buffer_type": "Vulkan0",
+      "memory_kind": "device",
+      "backing": "allocated",
+      "size_bytes": 84185096
+    },
+    {
+      "id": "b18",
+      "owners": [
+        {
+          "owner_id": "o2",
+          "component": "compute"
+        }
+      ],
+      "device_ids": [
+        "d2"
+      ],
+      "buffer_type": "Vulkan_Host",
+      "memory_kind": "host_pinned",
+      "backing": "allocated",
+      "size_bytes": 21286944
+    },
+    {
+      "id": "b19",
+      "owners": [
+        {
+          "owner_id": "o2",
+          "component": "output"
+        }
+      ],
+      "device_ids": [
+        "d2"
+      ],
+      "buffer_type": "Vulkan_Host",
+      "memory_kind": "host_pinned",
+      "backing": "allocated",
+      "size_bytes": 993312
+    },
+    {
+      "id": "b20",
+      "owners": [
+        {
+          "owner_id": "o3",
+          "component": "projector_weights"
+        }
+      ],
+      "device_ids": [
+        "d2"
+      ],
+      "buffer_type": "Vulkan0",
+      "memory_kind": "device",
+      "backing": "allocated",
+      "size_bytes": 642928448
+    },
+    {
+      "id": "b21",
+      "owners": [
+        {
+          "owner_id": "o3",
+          "component": "projector_compute"
+        }
+      ],
+      "device_ids": [
+        "d2"
+      ],
+      "buffer_type": "Vulkan0",
+      "memory_kind": "device",
+      "backing": "allocated",
+      "size_bytes": 260149504
+    },
+    {
+      "id": "b22",
+      "owners": [
+        {
+          "owner_id": "o3",
+          "component": "projector_compute"
+        }
+      ],
+      "device_ids": [
+        "d1"
+      ],
+      "buffer_type": "CPU",
+      "memory_kind": "host",
+      "backing": "allocated",
+      "size_bytes": 26136832
+    }
+  ],
+  "placement": {
+    "status": "known",
+    "missing_components": [],
+    "layer_groups": [
+      {
+        "owner_id": "o1",
+        "component": "input_weights",
+        "layer_indices": [],
+        "location": "cpu",
+        "device_ids": [
+          "d1"
+        ],
+        "assignment": {
+          "status": "known",
+          "device_ids": [
+            "d1"
+          ],
+          "sources": [
+            "loader_mmap"
+          ],
+          "reasons": []
+        }
+      },
+      {
+        "owner_id": "o1",
+        "component": "output_weights",
+        "layer_indices": [],
+        "location": "accelerator",
+        "device_ids": [
+          "d2"
+        ],
+        "assignment": {
+          "status": "known",
+          "device_ids": [
+            "d2"
+          ],
+          "sources": [
+            "loader_selection"
+          ],
+          "reasons": []
+        }
+      },
+      {
+        "owner_id": "o1",
+        "component": "repeating_layers",
+        "layer_indices": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25,
+          26,
+          27,
+          28,
+          29,
+          30,
+          31,
+          32,
+          33,
+          34,
+          35,
+          36,
+          37,
+          38,
+          39
+        ],
+        "location": "accelerator",
+        "device_ids": [
+          "d2"
+        ],
+        "assignment": {
+          "status": "known",
+          "device_ids": [
+            "d2"
+          ],
+          "sources": [
+            "loader_selection"
+          ],
+          "reasons": []
+        }
+      }
+    ]
+  },
+  "allocation_locality": {
+    "status": "partial",
+    "scope": "backend_buffer_allocations",
+    "physical_aliasing": "unknown",
+    "missing_components": [
+      {
+        "buffer_id": "b1",
+        "reason": "unsupported_backend"
+      },
+      {
+        "buffer_id": "b22",
+        "reason": "unsupported_backend"
+      }
+    ],
+    "allocations": [
+      {
+        "kind": "device",
+        "origin": "allocated",
+        "native_api": "vkAllocateMemory",
+        "size_bytes": 1071351296,
+        "locality": "device_local",
+        "native_properties": {
+          "vulkan.memory_type_index": 3,
+          "vulkan.heap_index": 1,
+          "vulkan.memory_property_flags": 7,
+          "vulkan.heap_flags": 1
+        },
+        "device_ids": [
+          "d2"
+        ],
+        "id": "a1"
+      },
+      {
+        "kind": "device",
+        "origin": "allocated",
+        "native_api": "vkAllocateMemory",
+        "size_bytes": 971280640,
+        "locality": "device_local",
+        "native_properties": {
+          "vulkan.memory_type_index": 3,
+          "vulkan.heap_index": 1,
+          "vulkan.memory_property_flags": 7,
+          "vulkan.heap_flags": 1
+        },
+        "device_ids": [
+          "d2"
+        ],
+        "id": "a2"
+      },
+      {
+        "kind": "device",
+        "origin": "allocated",
+        "native_api": "vkAllocateMemory",
+        "size_bytes": 1070108160,
+        "locality": "device_local",
+        "native_properties": {
+          "vulkan.memory_type_index": 3,
+          "vulkan.heap_index": 1,
+          "vulkan.memory_property_flags": 7,
+          "vulkan.heap_flags": 1
+        },
+        "device_ids": [
+          "d2"
+        ],
+        "id": "a3"
+      },
+      {
+        "kind": "device",
+        "origin": "allocated",
+        "native_api": "vkAllocateMemory",
+        "size_bytes": 1040748032,
+        "locality": "device_local",
+        "native_properties": {
+          "vulkan.memory_type_index": 3,
+          "vulkan.heap_index": 1,
+          "vulkan.memory_property_flags": 7,
+          "vulkan.heap_flags": 1
+        },
+        "device_ids": [
+          "d2"
+        ],
+        "id": "a4"
+      },
+      {
+        "kind": "device",
+        "origin": "allocated",
+        "native_api": "vkAllocateMemory",
+        "size_bytes": 1073631488,
+        "locality": "device_local",
+        "native_properties": {
+          "vulkan.memory_type_index": 3,
+          "vulkan.heap_index": 1,
+          "vulkan.memory_property_flags": 7,
+          "vulkan.heap_flags": 1
+        },
+        "device_ids": [
+          "d2"
+        ],
+        "id": "a5"
+      },
+      {
+        "kind": "device",
+        "origin": "allocated",
+        "native_api": "vkAllocateMemory",
+        "size_bytes": 960579840,
+        "locality": "device_local",
+        "native_properties": {
+          "vulkan.memory_type_index": 3,
+          "vulkan.heap_index": 1,
+          "vulkan.memory_property_flags": 7,
+          "vulkan.heap_flags": 1
+        },
+        "device_ids": [
+          "d2"
+        ],
+        "id": "a6"
+      },
+      {
+        "kind": "device",
+        "origin": "allocated",
+        "native_api": "vkAllocateMemory",
+        "size_bytes": 1070108160,
+        "locality": "device_local",
+        "native_properties": {
+          "vulkan.memory_type_index": 3,
+          "vulkan.heap_index": 1,
+          "vulkan.memory_property_flags": 7,
+          "vulkan.heap_flags": 1
+        },
+        "device_ids": [
+          "d2"
+        ],
+        "id": "a7"
+      },
+      {
+        "kind": "device",
+        "origin": "allocated",
+        "native_api": "vkAllocateMemory",
+        "size_bytes": 1040748032,
+        "locality": "device_local",
+        "native_properties": {
+          "vulkan.memory_type_index": 3,
+          "vulkan.heap_index": 1,
+          "vulkan.memory_property_flags": 7,
+          "vulkan.heap_flags": 1
+        },
+        "device_ids": [
+          "d2"
+        ],
+        "id": "a8"
+      },
+      {
+        "kind": "device",
+        "origin": "allocated",
+        "native_api": "vkAllocateMemory",
+        "size_bytes": 1073631488,
+        "locality": "device_local",
+        "native_properties": {
+          "vulkan.memory_type_index": 3,
+          "vulkan.heap_index": 1,
+          "vulkan.memory_property_flags": 7,
+          "vulkan.heap_flags": 1
+        },
+        "device_ids": [
+          "d2"
+        ],
+        "id": "a9"
+      },
+      {
+        "kind": "device",
+        "origin": "allocated",
+        "native_api": "vkAllocateMemory",
+        "size_bytes": 1070108160,
+        "locality": "device_local",
+        "native_properties": {
+          "vulkan.memory_type_index": 3,
+          "vulkan.heap_index": 1,
+          "vulkan.memory_property_flags": 7,
+          "vulkan.heap_flags": 1
+        },
+        "device_ids": [
+          "d2"
+        ],
+        "id": "a10"
+      },
+      {
+        "kind": "device",
+        "origin": "allocated",
+        "native_api": "vkAllocateMemory",
+        "size_bytes": 987842816,
+        "locality": "device_local",
+        "native_properties": {
+          "vulkan.memory_type_index": 3,
+          "vulkan.heap_index": 1,
+          "vulkan.memory_property_flags": 7,
+          "vulkan.heap_flags": 1
+        },
+        "device_ids": [
+          "d2"
+        ],
+        "id": "a11"
+      },
+      {
+        "kind": "device",
+        "origin": "allocated",
+        "native_api": "vkAllocateMemory",
+        "size_bytes": 1040748032,
+        "locality": "device_local",
+        "native_properties": {
+          "vulkan.memory_type_index": 3,
+          "vulkan.heap_index": 1,
+          "vulkan.memory_property_flags": 7,
+          "vulkan.heap_flags": 1
+        },
+        "device_ids": [
+          "d2"
+        ],
+        "id": "a12"
+      },
+      {
+        "kind": "device",
+        "origin": "allocated",
+        "native_api": "vkAllocateMemory",
+        "size_bytes": 777669376,
+        "locality": "device_local",
+        "native_properties": {
+          "vulkan.memory_type_index": 3,
+          "vulkan.heap_index": 1,
+          "vulkan.memory_property_flags": 7,
+          "vulkan.heap_flags": 1
+        },
+        "device_ids": [
+          "d2"
+        ],
+        "id": "a13"
+      },
+      {
+        "kind": "device",
+        "origin": "allocated",
+        "native_api": "vkAllocateMemory",
+        "size_bytes": 34078720,
+        "locality": "device_local",
+        "native_properties": {
+          "vulkan.memory_type_index": 3,
+          "vulkan.heap_index": 1,
+          "vulkan.memory_property_flags": 7,
+          "vulkan.heap_flags": 1
+        },
+        "device_ids": [
+          "d2"
+        ],
+        "id": "a14"
+      },
+      {
+        "kind": "device",
+        "origin": "allocated",
+        "native_api": "vkAllocateMemory",
+        "size_bytes": 65863680,
+        "locality": "device_local",
+        "native_properties": {
+          "vulkan.memory_type_index": 3,
+          "vulkan.heap_index": 1,
+          "vulkan.memory_property_flags": 7,
+          "vulkan.heap_flags": 1
+        },
+        "device_ids": [
+          "d2"
+        ],
+        "id": "a15"
+      },
+      {
+        "kind": "device",
+        "origin": "allocated",
+        "native_api": "vkAllocateMemory",
+        "size_bytes": 84185104,
+        "locality": "device_local",
+        "native_properties": {
+          "vulkan.memory_type_index": 3,
+          "vulkan.heap_index": 1,
+          "vulkan.memory_property_flags": 7,
+          "vulkan.heap_flags": 1
+        },
+        "device_ids": [
+          "d2"
+        ],
+        "id": "a16"
+      },
+      {
+        "kind": "host_pinned",
+        "origin": "allocated",
+        "native_api": "vkAllocateMemory",
+        "size_bytes": 21286944,
+        "locality": "non_device_local",
+        "native_properties": {
+          "vulkan.memory_type_index": 5,
+          "vulkan.heap_index": 0,
+          "vulkan.memory_property_flags": 14,
+          "vulkan.heap_flags": 0
+        },
+        "device_ids": [
+          "d2"
+        ],
+        "id": "a17"
+      },
+      {
+        "kind": "host_pinned",
+        "origin": "allocated",
+        "native_api": "vkAllocateMemory",
+        "size_bytes": 993312,
+        "locality": "non_device_local",
+        "native_properties": {
+          "vulkan.memory_type_index": 5,
+          "vulkan.heap_index": 0,
+          "vulkan.memory_property_flags": 14,
+          "vulkan.heap_flags": 0
+        },
+        "device_ids": [
+          "d2"
+        ],
+        "id": "a18"
+      },
+      {
+        "kind": "device",
+        "origin": "allocated",
+        "native_api": "vkAllocateMemory",
+        "size_bytes": 642928448,
+        "locality": "device_local",
+        "native_properties": {
+          "vulkan.memory_type_index": 3,
+          "vulkan.heap_index": 1,
+          "vulkan.memory_property_flags": 7,
+          "vulkan.heap_flags": 1
+        },
+        "device_ids": [
+          "d2"
+        ],
+        "id": "a19"
+      },
+      {
+        "kind": "device",
+        "origin": "allocated",
+        "native_api": "vkAllocateMemory",
+        "size_bytes": 260149504,
+        "locality": "device_local",
+        "native_properties": {
+          "vulkan.memory_type_index": 3,
+          "vulkan.heap_index": 1,
+          "vulkan.memory_property_flags": 7,
+          "vulkan.heap_flags": 1
+        },
+        "device_ids": [
+          "d2"
+        ],
+        "id": "a20"
+      }
+    ],
+    "bindings": [
+      {
+        "buffer_offset_bytes": 0,
+        "allocation_offset_bytes": 0,
+        "size_bytes": 1071351296,
+        "buffer_id": "b2",
+        "allocation_id": "a1"
+      },
+      {
+        "buffer_offset_bytes": 0,
+        "allocation_offset_bytes": 0,
+        "size_bytes": 971280640,
+        "buffer_id": "b3",
+        "allocation_id": "a2"
+      },
+      {
+        "buffer_offset_bytes": 0,
+        "allocation_offset_bytes": 0,
+        "size_bytes": 1070108160,
+        "buffer_id": "b4",
+        "allocation_id": "a3"
+      },
+      {
+        "buffer_offset_bytes": 0,
+        "allocation_offset_bytes": 0,
+        "size_bytes": 1040748032,
+        "buffer_id": "b5",
+        "allocation_id": "a4"
+      },
+      {
+        "buffer_offset_bytes": 0,
+        "allocation_offset_bytes": 0,
+        "size_bytes": 1073631488,
+        "buffer_id": "b6",
+        "allocation_id": "a5"
+      },
+      {
+        "buffer_offset_bytes": 0,
+        "allocation_offset_bytes": 0,
+        "size_bytes": 960579840,
+        "buffer_id": "b7",
+        "allocation_id": "a6"
+      },
+      {
+        "buffer_offset_bytes": 0,
+        "allocation_offset_bytes": 0,
+        "size_bytes": 1070108160,
+        "buffer_id": "b8",
+        "allocation_id": "a7"
+      },
+      {
+        "buffer_offset_bytes": 0,
+        "allocation_offset_bytes": 0,
+        "size_bytes": 1040748032,
+        "buffer_id": "b9",
+        "allocation_id": "a8"
+      },
+      {
+        "buffer_offset_bytes": 0,
+        "allocation_offset_bytes": 0,
+        "size_bytes": 1073631488,
+        "buffer_id": "b10",
+        "allocation_id": "a9"
+      },
+      {
+        "buffer_offset_bytes": 0,
+        "allocation_offset_bytes": 0,
+        "size_bytes": 1070108160,
+        "buffer_id": "b11",
+        "allocation_id": "a10"
+      },
+      {
+        "buffer_offset_bytes": 0,
+        "allocation_offset_bytes": 0,
+        "size_bytes": 987842816,
+        "buffer_id": "b12",
+        "allocation_id": "a11"
+      },
+      {
+        "buffer_offset_bytes": 0,
+        "allocation_offset_bytes": 0,
+        "size_bytes": 1040748032,
+        "buffer_id": "b13",
+        "allocation_id": "a12"
+      },
+      {
+        "buffer_offset_bytes": 0,
+        "allocation_offset_bytes": 0,
+        "size_bytes": 777669376,
+        "buffer_id": "b14",
+        "allocation_id": "a13"
+      },
+      {
+        "buffer_offset_bytes": 0,
+        "allocation_offset_bytes": 0,
+        "size_bytes": 34078720,
+        "buffer_id": "b15",
+        "allocation_id": "a14"
+      },
+      {
+        "buffer_offset_bytes": 0,
+        "allocation_offset_bytes": 0,
+        "size_bytes": 65863680,
+        "buffer_id": "b16",
+        "allocation_id": "a15"
+      },
+      {
+        "buffer_offset_bytes": 0,
+        "allocation_offset_bytes": 0,
+        "size_bytes": 84185096,
+        "buffer_id": "b17",
+        "allocation_id": "a16"
+      },
+      {
+        "buffer_offset_bytes": 0,
+        "allocation_offset_bytes": 0,
+        "size_bytes": 21286944,
+        "buffer_id": "b18",
+        "allocation_id": "a17"
+      },
+      {
+        "buffer_offset_bytes": 0,
+        "allocation_offset_bytes": 0,
+        "size_bytes": 993312,
+        "buffer_id": "b19",
+        "allocation_id": "a18"
+      },
+      {
+        "buffer_offset_bytes": 0,
+        "allocation_offset_bytes": 0,
+        "size_bytes": 642928448,
+        "buffer_id": "b20",
+        "allocation_id": "a19"
+      },
+      {
+        "buffer_offset_bytes": 0,
+        "allocation_offset_bytes": 0,
+        "size_bytes": 260149504,
+        "buffer_id": "b21",
+        "allocation_id": "a20"
+      }
+    ]
+  },
+  "schema_version": 1,
+  "runtime_fingerprint": "b11552-3144c167ef",
+  "scope": "backend_buffers",
+  "precision": "exact_bytes",
+  "model_state": "loaded",
+  "snapshot_sequence": 2,
+  "snapshot_stage": "after_load",
+  "snapshot_age_ms": 158
+}

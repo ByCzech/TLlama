@@ -87,12 +87,22 @@ belongs to raw_native; `summary.snapshot` belongs to filtered telemetry. Never
 join IDs between these observations. HTTP error bodies/status are retained too;
 401/503 must not be interpreted as proof the endpoint is unsupported.
 
+Since patch 0043, production telemetry retains the understood assignment and
+allocation-locality fields too. `locality_adapter_valid` checks their presence
+and absence of adapter validation errors in the independently selected native
+observation. Existing V1 workers without these optional fields remain usable
+in production; this diagnostic flag intentionally requires the new extension.
+
 The locality summary checks extension presence, assignment/allocation/binding
 references within that response, coverage vocabulary and CPU input assignment
 in no-mmap. It is a diagnostic subset, not the future production adapter's full
 validation or final ps policy. Malformed extension data remains in raw evidence
 and fails these diagnostic checks without invalidating otherwise valid core
-buffer totals.
+buffer totals. In production, the failed optional section becomes unavailable
+with `invalid_metadata` and an `extension_errors` diagnostic; other sections
+remain usable. Invalid/incomplete assignment evidence prevents a ps processor
+claim rather than reverting to provider-based guessing. Allocation-locality
+coverage never drives the CPU/GPU percentage.
 
 CPU and other unsupported exporters may legitimately have unavailable locality,
 and Vulkan mixed with unsupported buffers may have partial locality. These

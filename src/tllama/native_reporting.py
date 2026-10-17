@@ -52,6 +52,15 @@ def _native_memory_sizes(memory):
             return None, None, 'unsupported_placement'
         if group['location'] == 'unknown':
             return None, None, 'incomplete_placement'
+        assignment = group.get('assignment')
+        if assignment is not None:
+            if assignment['status'] != 'known':
+                return None, None, 'incomplete_assignment'
+            types = {d['type'] for d in memory['devices'] if d['id'] in assignment['device_ids']}
+            if types <= {'cpu', 'gpu', 'igpu', 'accel'}:
+                location = ('cpu' if types == {'cpu'} else 'mixed' if 'cpu' in types else 'accelerator')
+                if location != group['location']:
+                    return None, None, 'inconsistent_assignment'
         groups[group['owner_id']].append(group)
     if not groups or any(not values for values in groups.values()):
         return None, None, 'incomplete_placement'
