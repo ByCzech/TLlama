@@ -208,3 +208,60 @@ TLLAMA_RUNTIME_DEVICE=Vulkan0 PYTHONPATH=src python scripts/fim-smoke.py \
 
 Keep the v2b evidence for StarCoder2, DeepSeek, Codestral and the negative model;
 those completed measurements do not need repeating for this diagnostic fix.
+
+
+## Vocabulary lookup and StarCoder2 metadata (0039)
+
+The v3 run established that CodeGemma's file delimiter text splits into six
+ordinary input tokens, not a whitespace token plus one delimiter ID. An output
+vocabulary token can exist without being recognized as one special input token.
+The diagnostic now falls back to a **read-only** lookup in the loaded GGUF's
+`tokenizer.ggml.tokens`. It requires one exact entry, compares vocabulary size
+with the actual load log, and verifies the candidate ID's piece using native
+`/tokenize` with integer input. The returned evidence includes its GGUF type and
+original split encoding. It never guesses an ID or changes tokenizer metadata.
+Forced native stream/nonstream stop checks remain mandatory. This metadata
+lookup is diagnostic only; normal API/show/list paths are unchanged.
+
+Evidence starts with `diagnostic-version: 4`. Only CodeGemma needs repeating to
+validate this change; the completed Qwen v3 evidence remains valid.
+
+For the tested native b11552 build, the StarCoder2 override proposed during
+review has this syntax:
+
+```text
+--override-kv tokenizer.ggml.pre=str:starcoder
+```
+
+`--tokenizer-metadata-override` is not an option in that source, and `starcoder2`
+is not an accepted pre-tokenizer name. The native converter itself maps the
+StarCoder2 tokenizer to `starcoder`. The official 7B tokenizer separates digits
+individually before ByteLevel tokenization; the native STARCODER profile matches
+that structure. Selecting the correct profile is substantive tokenization, not
+just suppressing a warning. Other conversion defects, if any, are not repaired.
+
+TLlama already supports this per-model setting. Merge this key into the
+StarCoder2 model's existing TOML (do not duplicate an existing table):
+
+```toml
+[runtime.kv_overrides]
+"tokenizer.ggml.pre" = "starcoder"
+```
+
+No rebuild or modification of weights is needed. The script preserves the
+setting, records the actual launch arguments and any remaining pre-tokenizer
+warning. Real inference with the corrected setting still requires a hardware run;
+local subprocess tests cannot establish the model's quality improvement.
+
+After setting that key, measure just CodeGemma and StarCoder2:
+
+```bash
+TLLAMA_RUNTIME_DEVICE=Vulkan0 PYTHONPATH=src python scripts/fim-smoke.py \
+  --model codegemma-2b-Q8_0 \
+  --model starcoder2-7b_Q4_K_M \
+  --output /tmp/tllama-fim-reference-v4
+```
+
+Sources: native `d1570abd3d` `common/arg.cpp`, `src/llama-vocab.cpp`,
+`conversion/base.py` and `convert_hf_to_gguf_update.py`;
+[official StarCoder2 7B tokenizer](https://huggingface.co/bigcode/starcoder2-7b/raw/main/tokenizer.json).

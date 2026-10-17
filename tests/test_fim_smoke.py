@@ -9,6 +9,7 @@ import subprocess
 import sys
 
 import pytest
+import gguf
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'scripts' / 'fim-smoke.py'
@@ -23,6 +24,7 @@ spec.loader.exec_module(smoke)
     ('normal', True, False), ('negative', False, False),
     ('codegemma', False, True), ('starcoder', False, True), ('ignored-stops', False, False),
     ('codestral', False, True), ('qwen', False, True),
+    ('codegemma-split', False, True), ('codegemma-bad-piece', False, False),
 ])
 def test_cli_reference_comparison_negative_errors_and_cleanup(tmp_path, mode, negative, ok):
     root = tmp_path / 'stub'
@@ -33,6 +35,8 @@ def test_cli_reference_comparison_negative_errors_and_cleanup(tmp_path, mode, ne
     (models / 'a.toml').write_text('[llm]\nmodel="Local/a.gguf"\n[runtime]\ndevice="none"\nn_batch=64\nn_ctx=8192\nspm_infill=true\n')
     if mode == 'codestral':
         (models / 'Codestral-test.toml').write_text((models / 'a.toml').read_text())
+    if mode in {'codegemma-split', 'codegemma-bad-piece'}:
+        write_vocab(models / 'a.gguf', ['unused'] * 70 + ['<|file_separator|>'])
     executable = tmp_path / 'native-stub'
     executable.write_text(f'#!{sys.executable}\n' + Path(__file__).with_name('native_worker_stub.py').read_text())
     executable.chmod(0o700)
@@ -78,21 +82,24 @@ def test_cli_reference_comparison_negative_errors_and_cleanup(tmp_path, mode, ne
         assert all(r['full_counts']['extra'] == 0 for r in prompts)
         assert all((r['native_equivalent_counts']['extra'] > 0) is (mode in {'repo', 'qwen'}) for r in prompts)
         checks = [r for r in records if r['stage'] == 'stop-check']
-        assert len(checks) == (8 if mode in {'codegemma', 'starcoder'} else 4)
+        assert len(checks) == (8 if mode in {'codegemma', 'codegemma-split', 'starcoder'} else 4)
         assert all(r['verified'] and r['content'] == '' for r in checks)
         training = [r for r in records if r['stage'] == 'training-spm-prompt']
         assert len(training) == 6
         assert all(r['order'] == 'spm' for r in training)
         policies = [r['tokens'] for r in records if r['stage'] == 'stop-policy']
         if mode == 'codegemma':
-            assert all(p['FILE0']['id'] == 1100014 and p['FILE0']['encoding'] == [1032, 1100014]
+            assert all(p['FILE0']['id'] == 70 and p['FILE0']['encoding'] == [1032, 70]
                        for p in policies)
+        if mode == 'codegemma-split':
+            assert all(p['FILE0']['id'] == 70 and p['FILE0']['resolution'] == 'gguf_and_native_piece'
+                       and p['FILE0']['encoding'] != [70] for p in policies)
         if mode == 'qwen':
             assert all('SEP' in p and 'FILE0' not in p for p in policies)
             requests = [json.loads(line) for line in (root / 'requests').read_text().splitlines()]
             assert not any(r['path'] == '/tokenize' and r['body']['content'] == '<|file_separator|>'
                            for r in requests)
-        if mode in {'codegemma', 'starcoder'}:
+        if mode in {'codegemma', 'codegemma-split', 'starcoder'}:
             baselines = [r for r in records if r['stage'] == 'unstopped-baseline']
             assert all('unwanted continuation' in r['content'] for r in baselines)
             assert all('unwanted continuation' not in r['content'] for r in results)
@@ -159,3 +166,27 @@ def test_delimiter_resolution_requires_exact_piece_and_only_whitespace_framing(e
     else:
         with pytest.raises(smoke.WorkerError, match='Cannot resolve delimiter'):
             smoke.delimiter_id('<file>', [8, 9], entries)
+
+
+def write_vocab(path, tokens):
+    writer = gguf.GGUFWriter(path, 'gemma')
+    writer.add_token_list(tokens)
+    writer.add_token_types([1] * len(tokens))
+    writer.write_header_to_file()
+    writer.write_kv_data_to_file()
+    writer.close()
+
+
+@pytest.mark.parametrize('tokens,expected', [
+    (['x', '<file>', 'y'], 1), (['x', 'y'], None), (['<file>', '<file>'], None),
+])
+def test_gguf_delimiter_uses_exact_unique_vocabulary_entry_without_mutation(tmp_path, tokens, expected):
+    path = tmp_path / 'vocab.gguf'
+    write_vocab(path, tokens)
+    before = path.read_bytes()
+    if expected is None:
+        with pytest.raises(smoke.WorkerError, match='Expected one exact GGUF'):
+            smoke.gguf_delimiter(path, '<file>')
+    else:
+        assert smoke.gguf_delimiter(path, '<file>') == {'id': expected, 'vocab_size': len(tokens), 'gguf_token_type': 1}
+    assert path.read_bytes() == before

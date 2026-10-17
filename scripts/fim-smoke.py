@@ -17,6 +17,8 @@ from pathlib import Path
 import re
 import signal
 
+import gguf
+
 from tllama.backend import ModelManager
 from tllama.config import load_backend_config_from_env
 from tllama.worker import NativeWorker, WorkerError, WorkerRequestError
@@ -158,8 +160,39 @@ async def verified_piece(worker, piece):
     response = await post(worker, "/tokenize", {"content": piece, "add_special": False,
                                                 "parse_special": True, "with_pieces": True})
     entries = response.get("tokens")
-    token_id = delimiter_id(piece, ids, entries)
+    try:
+        token_id = delimiter_id(piece, ids, entries)
+    except WorkerError:
+        # Some conversions contain a vocabulary entry which text tokenization
+        # cannot produce. Read its ID from the actual loaded model file, then
+        # independently verify that ID against the running worker's vocabulary.
+        candidate = await asyncio.to_thread(gguf_delimiter, worker.spec.model, piece)
+        sizes = re.findall(r"n_vocab\s*=\s*(\d+)", worker.load_log)
+        require(sizes and all(int(size) == candidate["vocab_size"] for size in sizes),
+                "Loaded vocabulary size and GGUF delimiter lookup disagree or are unreported")
+        live = await post(worker, "/tokenize", {"content": [candidate["id"]],
+                          "add_special": False, "with_pieces": True})
+        require(live.get("tokens") == [{"id": candidate["id"], "piece": piece}],
+                f"GGUF delimiter and native token piece disagree: {live!r}")
+        return {**candidate, "piece": piece, "encoding": ids, "token_pieces": entries,
+                "resolution": "gguf_and_native_piece"}
     return {"id": token_id, "piece": piece, "encoding": ids, "token_pieces": entries}
+
+
+def gguf_delimiter(model, piece):
+    """Read vocabulary metadata only; never load tensors or modify the GGUF."""
+    reader = gguf.GGUFReader(model, mode="r")
+    tokens = reader.get_field("tokenizer.ggml.tokens")
+    require(tokens is not None and tokens.types == [gguf.GGUFValueType.ARRAY, gguf.GGUFValueType.STRING],
+            "GGUF delimiter lookup requires a string vocabulary")
+    encoded = piece.encode("utf-8")
+    matches = [index for index, part in enumerate(tokens.data)
+               if tokens.parts[part].tobytes() == encoded]
+    require(len(matches) == 1, f"Expected one exact GGUF vocabulary entry for {piece!r}; found {matches!r}")
+    token_id = matches[0]
+    types = reader.get_field("tokenizer.ggml.token_type")
+    token_type = types.contents(token_id) if types is not None else None
+    return {"id": token_id, "vocab_size": len(tokens.data), "gguf_token_type": token_type}
 
 
 def delimiter_id(piece, ids, entries):
@@ -399,7 +432,7 @@ async def exercise(args, emit):
     if not selected:
         selected = [(name, False) for name in MODELS] + [(NEGATIVE, True)]
     orders = ("psm", "spm") if args.order == "both" else (args.order,)
-    emit("diagnostic-version", version=3, probes=list(PROBES),
+    emit("diagnostic-version", version=4, probes=list(PROBES),
          native_formatter="b11552 hypothesis", stopping="live-verified delimiters with preserved_tokens")
     all_ok = True
     semantic_matches, semantic_total, review_profiles = 0, 0, 0
