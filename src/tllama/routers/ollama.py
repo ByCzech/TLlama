@@ -11,6 +11,7 @@ from tllama.version import get_version as get_tllama_version
 from tllama.helpers.runner import RUNNER, validate_runner
 from tllama.helpers.common import format_ollama_parameters
 from tllama.helpers.reasoning_split import detect_reasoning_format
+from tllama.helpers.tool_capability import template_accepts_tools
 from tllama.native_routes import serve_native
 from tllama.native_reporting import ollama_processes
 from tllama.errors import ollama_stream_error_line
@@ -108,6 +109,8 @@ async def show_model_info(request: dict):
     # Offline vision is a configured capability, not a model-load probe.
     # Actual inference checks the admitted worker's modalities separately.
     capabilities = ["completion"]
+    if template_accepts_tools(metadata_info.get("tool_template", metadata_info.get("template"))):
+        capabilities.append("tools")
     if detect_reasoning_format(model_name, metadata_info) != "none":
         capabilities.append("thinking")
     if metadata_info.get('vision_configured', metadata_info.get('has_projector')) is True:

@@ -27,6 +27,7 @@ BASE_METADATA_KEYS = (
     "general.quantization_version",
     "general.type",
     "tokenizer.chat_template",
+    "tokenizer.chat_template.tool_use",
     "clip.has_vision_encoder",
     "split.no",
     "split.count",
@@ -381,6 +382,8 @@ def build_model_metadata_payload(meta: Dict[str, Any]) -> Dict[str, Any]:
         "size_label": size_label,
         "bits": bits,
         "template": template,
+        # Native chat selects the named variant for requests carrying tools.
+        "tool_template": _as_str(meta.get("tokenizer.chat_template.tool_use"), "") or template,
         "context_length": context_length,
         "display_name": display_name,
         "metadata_raw": metadata_raw,

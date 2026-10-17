@@ -614,6 +614,10 @@ class ModelManager:
             overrides = {}
             if virtual_spec.template is not None:
                 overrides["template"] = virtual_spec.template
+                # A nonempty native override replaces both GGUF variants.
+                # An empty override keeps native's model-template fallback.
+                if virtual_spec.template:
+                    overrides["tool_template"] = virtual_spec.template
             if virtual_spec.system_prompt is not None:
                 overrides["default_system_prompt"] = virtual_spec.system_prompt
             if virtual_spec.sampling:

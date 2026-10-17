@@ -74,8 +74,8 @@ and reasoning control still require the real-runtime smoke below.
 Image validation precedes model loading and does not fetch URLs. Chat image
 mapping and live capability checks are documented in native-vision.md.
 Model listing, definitions, version/runner rules and
-storage/pull remain available. Modern tool wire fields/forced choices are mapped
-as in 05a; full Tools capability is not claimed by /show here.
+storage/pull remain available. Tools cycles, admission, streaming and client
+compatibility are documented in [native-tools.md](native-tools.md).
 
 Statistics keep the 05a measured-source rules: OpenAI full input usage, Ollama
 evaluated input count, separate measured cache count, and ms-to-ns durations.

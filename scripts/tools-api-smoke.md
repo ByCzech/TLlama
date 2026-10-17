@@ -1,9 +1,8 @@
-# Public Tools checkpoints 0045 / 0046
+# Public Tools verification
 
-Working verification instructions; final user documentation is deferred.
-0044 established the native reference. This checkpoint implements the public
-argument representations and stream state. Complete Tools acceptance still
-requires this hardware run and the remaining admission/client checks.
+0044 established the native reference; 0045 implements the public argument
+representations and stream state; 0046 validates admission and client replay.
+See [native-tools.md](../docs/native-tools.md) for the production contract.
 
 0045 public hardware evidence is now reviewed: 18/22 exact initial matches,
 16/16 executed follow-ups, stable parallel identities, live thinking, one-time
@@ -11,9 +10,17 @@ Ollama object delivery, native cancel at n_gen=10/512 and same-worker reuse.
 Only the four known escaped-key semantic mismatches remain, one per API/mode;
 no public protocol failure was observed. Worker exit/cleanup succeeded.
 
-0046 adds pre-admission validation and actual Python SDK checks. For the next
-hardware check use **--clients-only** below; the accepted raw matrix need not
-be repeated unless something changes.
+0046 SDK hardware evidence is reviewed: openai 1.69.0 and ollama 0.6.3 passed
+all four initial requests and all four follow-ups, including actual Ollama
+object replay without IDs. No observations require review; cleanup succeeded.
+The commands below are repeatable diagnostics, not pending acceptance runs.
+Do not repeat the accepted matrix unless a relevant change warrants it.
+
+0047 adds offline `/api/show` Tools advertisement with 35 local tests. After
+applying it, the focused check is simply `pytest -q tests/test_tool_capability.py`.
+Optionally inspect the registered model using `ollama show` against TLlama;
+its capabilities should include `tools` when its selected template accepts it.
+No native rebuild or SDK/matrix rerun is required for this metadata change.
 
 ## SDK-only check after 0046
 

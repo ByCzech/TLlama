@@ -270,7 +270,7 @@ def test_fim_metadata_is_small_exact_and_rejects_duplicate_vocabulary(tmp_path):
     assert metadata['fim']['tokens']['<|file_separator|>'] == 10
     assert set(metadata['fim']['tokens'].values()) == {7,8,9,10}
     assert 'tokenizer.ggml.tokens' not in metadata['metadata_raw'] and 'fim' not in metadata['metadata_raw']
-    assert SCHEMA_VERSION == 3
+    assert SCHEMA_VERSION >= 3  # FIM inventory requires at least version 3.
     write_vocab(path, duplicate=True)
     assert build_model_metadata_payload(read_gguf_metadata(str(path)))['fim'] is None
 
