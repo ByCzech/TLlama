@@ -1,8 +1,9 @@
-# Embedded MTP native reference — 0048
+# Embedded MTP native reference and state audit — 0050
 
 This reference measures the native engine independently of production MTP TOML
-settings or public statistics. Its hardware result is accepted; for the next
-public check use [native-mtp.md](../docs/native-mtp.md). It uses the registered model containing
+settings or public statistics. Its reference and basic public hardware results
+are accepted; for the next state/Tools check use
+[native-mtp.md](../docs/native-mtp.md). It uses the registered model containing
 embedded MTP tensors. No sidecar draft model, download or native rebuild is
 requested. The regular non-MTP GGUF is not an equivalent off baseline.
 
@@ -30,7 +31,9 @@ is not refused under the default warning policy.
 
 - Sequential fresh private workers over **the same GGUF**: `--spec-type none`,
   then `--spec-type draft-mtp --spec-draft-n-max 3`. The latter flags are added
-  by a diagnostic-only launch subclass, not exposed as production configuration.
+  by a diagnostic-only launch subclass. Existing production TOML speculation
+  fields are excluded from this launch before adding the selected profile, so
+  flags are emitted once even when the registered model now enables MTP.
   Native `--mtp` is a download convenience, not used for this offline model.
 - Registered device, weight/KV types, flash attention and template stay in force.
   Context is explicitly 4096, batch/ubatch 512; one native slot. TOML and native
@@ -98,7 +101,16 @@ Inspected native revision `3144c167ef703e93cee0b58d7236b6a28c6e50ad`:
 context reuse), `tools/server/server-context.cpp` (activation/counters) and
 `tools/server/server-common.cpp` (`draft_n`, `draft_n_accepted` in timings).
 
-After hardware review, add typed per-model MTP settings, reload identity and
-public API/stream/statistics checks. Shared-memory locality exporters for
+Typed per-model MTP settings and basic public API checks were added in 0049.
+0050 adds `--state-only`, replacing the original prompt pair with repeated,
+extended, changed-branch and shortened inputs, each compared with its own
+cache-disabled control. MTP additionally checks the cached/fresh control after
+live cancellation. `cache-comparison` retains hash/finish/token agreement and
+`state-evidence` records measured reuse. Inspect worker.log for the native
+checkpoint path; positive cache_n alone is not proof of a checkpoint restore.
+All original transport, counter, memory and cleanup checks remain in force.
+
+Public optional statistics and a negative real-model path remain later work.
+Shared-memory locality exporters for
 CUDA/HIP/SYCL/CPU remain a separate native follow-up; existing buffer sizes and
 placement work without them and do not block this MTP reference.

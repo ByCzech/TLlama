@@ -12,10 +12,13 @@ import pytest
 SCRIPT = Path(__file__).resolve().parents[1] / 'scripts/tools-api-smoke.py'
 
 
-@pytest.mark.parametrize('mode,ok,review,clients_only', [('normal', True, False, False), ('growing-name', True, False, False),
-    ('semantic-bad', True, True, False), ('no-done', False, True, False), ('malformed-json', False, True, False),
-    ('normal', True, False, True), ('growing-name', True, False, True), ('semantic-bad', True, True, True)])
-def test_public_cli_full_cycle_raw_frames_cancellation_and_cleanup(tmp_path, monkeypatch, mode, ok, review, clients_only):
+@pytest.mark.parametrize('mode,ok,review,clients_only,mtp', [
+    ('normal', True, False, False, False), ('growing-name', True, False, False, False),
+    ('semantic-bad', True, True, False, False), ('no-done', False, True, False, False),
+    ('malformed-json', False, True, False, False), ('normal', True, False, True, False),
+    ('growing-name', True, False, True, False), ('semantic-bad', True, True, True, False),
+    ('normal', True, False, False, True), ('normal', True, False, True, True)])
+def test_public_cli_full_cycle_raw_frames_cancellation_and_cleanup(tmp_path, monkeypatch, mode, ok, review, clients_only, mtp):
     if clients_only:
         for key in ('HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy'):
             monkeypatch.delenv(key, raising=False)
@@ -24,7 +27,10 @@ def test_public_cli_full_cycle_raw_frames_cancellation_and_cleanup(tmp_path, mon
     root = tmp_path / 'stub'; root.mkdir()
     models = tmp_path / 'models/Local'; models.mkdir(parents=True)
     (models / 'a.gguf').write_bytes(b'fake weights')
-    (models / 'a.toml').write_text('[llm]\nmodel="Local/a.gguf"\n[runtime]\ndevice="none"\nn_ctx=8192\n')
+    definition = '[llm]\nmodel="Local/a.gguf"\n[runtime]\ndevice="none"\nn_ctx=8192\n'
+    if mtp:
+        definition += 'spec_type="draft-mtp"\ndraft_n_max=3\n'
+    (models / 'a.toml').write_text(definition)
     executable = tmp_path / 'native-stub'
     executable.write_text(f'#!{sys.executable}\n' + Path(__file__).with_name('native_worker_stub.py').read_text())
     executable.chmod(0o700)
@@ -45,6 +51,10 @@ def test_public_cli_full_cycle_raw_frames_cancellation_and_cleanup(tmp_path, mon
     assert raw[-2]['stage'] == 'worker-closed' and raw[-2]['clean']
     ready = next(r for r in raw if r['stage'] == 'ready')
     assert ready['argv'][ready['argv'].index('--ctx-size') + 1] == '4096'
+    assert (models / 'a.toml').read_text() == definition
+    if mtp:
+        assert ready['argv'][ready['argv'].index('--spec-type') + 1] == 'draft-mtp'
+        assert ready['argv'][ready['argv'].index('--spec-draft-n-max') + 1] == '3'
     if ok and not review and clients_only:
         assert len([r for r in raw if r['stage'] == 'sdk-assembled']) == 4
         assert len([r for r in raw if r['stage'] == 'sdk-followup']) == 4

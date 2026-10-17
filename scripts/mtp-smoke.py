@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare native embedded MTP off/on before adding production configuration."""
+"""Compare native embedded MTP off/on and audit cached request state."""
 
 import argparse
 import asyncio
@@ -25,6 +25,63 @@ PROMPTS = {
             'Include type hints and a short example. Output only Python code.',
 }
 CANCEL = 'Write the integers from 1 to 10000, one per line. Do not summarize or stop early.'
+STATE_PREFIX = [{'role': 'system', 'content': 'Follow the last user request. Background records:\n' + '\n'.join(
+    f'Record {n:02d}: label=sample_{n:02d}; value={n * 17}; status=available.' for n in range(12))}]
+
+
+def state_request(messages, predict, cache):
+    body = request('', predict)
+    return {**body, 'messages': messages, 'cache_prompt': cache}
+
+
+def compare_state(reference, actual, emit, observations, label):
+    before, after = reference['metrics']['predicted_n'], actual['metrics']['predicted_n']
+    checks = {'exact_text_match': reference['text_sha256'] == actual['text_sha256'],
+              'finish_match': reference['finish_reason'] == actual['finish_reason'],
+              'output_tokens_match': None if before is None or after is None else before == after}
+    emit('cache-comparison', probe=label, **checks,
+         reference_hash=reference['text_sha256'], actual_hash=actual['text_sha256'],
+         cached_tokens=actual['metrics']['cache_n'])
+    if not all(checks.values()):
+        observations.append(f'{label}:cached_result_differs')
+
+
+async def state_checks(worker, args, emit, observations):
+    """Compare each cached path with its own cache-disabled control."""
+    results = {}
+    base = STATE_PREFIX + [{'role': 'user', 'content': PROMPTS['copy']}]
+    async def run(label, messages, cache, stream=False):
+        result = await collect(worker, state_request(messages, args.predict, cache), stream, emit, probe=label)
+        results[label, stream] = result
+        if not result['content']:
+            observations.append(f'{label}:empty_content')
+        if not cache and result['metrics']['cache_n'] != 0:
+            observations.append(f'{label}:cache_disabled_not_measured_zero')
+        return result
+    cold = await run('base-cold', base, False)
+    repeat = await run('base-repeat', base, True, True)
+    compare_state(cold, repeat, emit, observations, 'repeat')
+    # Replay exactly the actual first answer, even when its token budget ended.
+    extended = base + [{'role': 'assistant', 'content': cold['content']},
+                       {'role': 'user', 'content': PROMPTS['code']}]
+    extension = await run('extension-cold', extended, False)
+    await run('base-prime', base, True)
+    continued = await run('extension-cached', extended, True, True)
+    compare_state(extension, continued, emit, observations, 'extension')
+    branch = STATE_PREFIX + [{'role': 'user', 'content': PROMPTS['code']}]
+    alternate = await run('branch-cold', branch, False)
+    await run('extension-prime', extended, True)
+    changed = await run('branch-cached', branch, True, True)
+    compare_state(alternate, changed, emit, observations, 'branch')
+    shortened = await run('base-return', base, True, True)
+    compare_state(cold, shortened, emit, observations, 'shortened')
+    if not any(r['metrics']['cache_n'] and r['metrics']['cache_n'] > 0
+               for r in (repeat, continued, changed, shortened)):
+        observations.append('state:no_measured_prefix_reuse')
+    emit('state-evidence', measured_prefix_reuse=any(
+        (r['metrics']['cache_n'] or 0) > 0 for r in (repeat, continued, changed, shortened)),
+        rollback_proof='Inspect worker.log: checkpoint restore or native rollback is not implied by cache_n')
+    return results, base, cold
 
 
 def require(condition, message):
@@ -136,13 +193,17 @@ async def exercise(args, emit):
         config = replace(config, models_dir=str(args.models_dir.expanduser().resolve()))
     profiles, observations, all_ok = {}, [], True
     baseline_definition, baseline_runtime = None, None
-    emit('diagnostic-version', version=1, model=args.model, public_api='not_exercised',
+    emit('diagnostic-version', version=2, model=args.model, public_api='not_exercised',
+         mode='state' if args.state_only else 'reference',
          native_contract='b11552-3144c167ef', note='Same GGUF, sequential fresh processes; diagnostic CLI flags only')
     for profile, speculation in [('off', 'none'), ('mtp', 'draft-mtp')]:
         workers, results = [], {}
         def factory(spec):
             values = {field.name: getattr(spec, field.name) for field in fields(WorkerLaunchSpec)}
-            values.update(runtime_options={**spec.runtime_options, 'n_batch': 512, 'n_ubatch': 512},
+            # This diagnostic owns the off/on selection even when TOML now
+            # enables MTP. Emit each CLI switch once, with no last-wins ambiguity.
+            runtime = {k: v for k, v in spec.runtime_options.items() if k not in {'spec_type', 'draft_n_max'}}
+            values.update(runtime_options={**runtime, 'n_batch': 512, 'n_ubatch': 512},
                           memory_source='native', memory_compare=False)
             worker = NativeWorker(ProbeLaunchSpec(**values, speculation=speculation, draft_tokens=args.draft))
             workers.append(worker)
@@ -167,7 +228,11 @@ async def exercise(args, emit):
                        load_elapsed_ms=(time.perf_counter() - started) * 1000)
                 await memory(worker, record, 'after-load')
                 control = await collect(worker, request('Reply exactly READY.', 16), False, record, probe='warmup')
-                for probe, prompt in PROMPTS.items():
+                if args.state_only:
+                    state_observations = []
+                    results, state_base, state_control = await state_checks(worker, args, record, state_observations)
+                    observations.extend(f'{profile}:{item}' for item in state_observations)
+                for probe, prompt in (() if args.state_only else PROMPTS.items()):
                     for stream in (False, True):
                         result = await collect(worker, request(prompt, args.predict), stream, record, probe=probe)
                         results[probe, stream] = result
@@ -184,7 +249,9 @@ async def exercise(args, emit):
                     if not owners:
                         observations.append('mtp:no_memory_owner_evidence')
                     live = False
-                    async with worker.chat_stream(request(CANCEL, 512)) as events:
+                    cancel_body = (state_request(state_base + [{'role': 'user', 'content': CANCEL}], 512, True)
+                                   if args.state_only else request(CANCEL, 512))
+                    async with worker.chat_stream(cancel_body) as events:
                         async for payload in events:
                             record('native-event', probe='cancel', payload=payload)
                             choices = payload.get('choices', [])
@@ -198,6 +265,13 @@ async def exercise(args, emit):
                     if not live:
                         observations.append('mtp:no_live_cancel_delta')
                     await memory(worker, record, 'after-cancel')
+                    if args.state_only:
+                        recovered = await collect(worker, state_request(state_base, args.predict, True),
+                                                  True, record, probe='state-after-cancel')
+                        compare_state(state_control, recovered, record, observations, 'after-cancel')
+                        fresh = await collect(worker, state_request(state_base, args.predict, False),
+                                              False, record, probe='state-after-cancel-cold')
+                        compare_state(state_control, fresh, record, observations, 'after-cancel-cold')
                     answer = await collect(worker, request('Reply exactly READY.', 16), False, record, probe='after-cancel')
                     # Compare identical requests before/after cancellation;
                     # punctuation chosen consistently by the model is harmless.
@@ -247,6 +321,7 @@ def main(argv=None):
     parser.add_argument('--ctx', type=int, default=4096)
     parser.add_argument('--predict', type=int, default=128)
     parser.add_argument('--draft', type=int, default=3)
+    parser.add_argument('--state-only', action='store_true', help='Replace the reference pair with prefix/branch/recovery probes')
     parser.add_argument('--load-timeout', type=float, default=600)
     parser.add_argument('--request-timeout', type=float, default=180)
     args = parser.parse_args(argv)

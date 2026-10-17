@@ -1,4 +1,4 @@
-# Embedded MTP configuration — 0049
+# Embedded MTP configuration and state checks — 0050
 
 Enable the embedded multi-token-prediction head only for a compatible model:
 
@@ -63,7 +63,25 @@ Actual early native cancellation and same-PID reuse were observed. The sole
 requests before/after cancellation, including content/reasoning and normal
 finish. It still flags changed or empty control responses.
 
-## Next hardware check: public API with production settings
+## Accepted public API check — 0049
+
+The maintainer enabled MTP in the registered model's TOML and confirmed 46
+focused tests. The public hardware archive used Vulkan0, context 4096, f16 K/V,
+flash attention off and draft limit 3, runtime b11552-3144c167ef. A separately
+labeled native probe measured 23 drafted / 23 accepted tokens. Public Ollama
+and OpenAI chat/generate result/stream, JSON Schema, cancellation/reuse and
+unload/cleanup completed. Thinking exhausted its explicit 64-token budget with
+`length`; that bounded probe is not an inference failure.
+
+The log confirms actual cancellation of task 82, release at n_tokens=25 and a
+successful next request on the same PID 2337782. Seven prompt checkpoint
+restores were logged. This does not cover every branch or prove that a
+speculative checkpoint restore happened; native recurrent rollback can also
+use its available sequence states. All sampled memory reports were known:
+16,120,734,364 total bytes, including 15,645,217,304 device and 475,517,060 host.
+One shared main/mtp model owner and two contexts remain correctly accounted.
+
+### Repeating the public check if needed
 
 Run the focused tests, then the existing public API matrix at an explicit 4096
 context. The inline environment enables MTP for this test process only; model
@@ -97,3 +115,58 @@ Optional draft counters currently remain in native diagnostic evidence. Existing
 public token counts retain their meanings; a public optional-counter extension
 is a separate integration step. Local subprocess tests use synthetic counters
 and do not replace this hardware check.
+
+## Next hardware check: cached state and Tools — 0050
+
+Keep the registered MTP TOML settings. First release any model loaded by the
+running service so the isolated diagnostic can use the device. No model download
+or native rebuild is needed. Run from the patched checkout:
+
+```bash
+pytest -q tests/test_native_mtp.py tests/test_mtp_smoke.py tests/test_tools_api_smoke.py
+
+export PYTHONPATH=src
+export TLLAMA_RUNTIME_DEVICE=Vulkan0
+mtp_results="/tmp/tllama-mtp-state-tools-$(date +%Y%m%d-%H%M%S)"
+mkdir "$mtp_results"
+python scripts/mtp-smoke.py --state-only \
+  --model unsloth/Qwen3.6-35B-A3B-MTP-GGUF/Qwen3.6-35B-A3B-UD-IQ3_S \
+  --output "$mtp_results/state"
+python scripts/tools-api-smoke.py \
+  --model unsloth/Qwen3.6-35B-A3B-MTP-GGUF/Qwen3.6-35B-A3B-UD-IQ3_S \
+  --output "$mtp_results/tools"
+python scripts/tools-api-smoke.py --clients-only \
+  --model unsloth/Qwen3.6-35B-A3B-MTP-GGUF/Qwen3.6-35B-A3B-UD-IQ3_S \
+  --output "$mtp_results/clients"
+tar -cJf "$mtp_results.tar.xz" -C "$mtp_results" .
+```
+
+The last command needs the already-used optional openai/ollama SDK packages;
+they remain diagnostic dependencies only. Return the complete archive even if
+a command fails. The state check deliberately selects off/on over the same MTP
+GGUF, overriding TOML speculation **only inside that diagnostic**. It now emits
+each speculative flag once, avoiding duplicate flags after enabling MTP in TOML.
+Other registered runtime settings remain inherited; context is 4096, batches
+512, draft limit 3 and generation limit 128.
+
+The state sequence checks repeated input, an extended conversation, a changed
+branch and return to a shorter history. Each is compared with its own
+cache-disabled control in the same worker, including exact content/reasoning,
+finish reason and generated-token count. After live cancellation the MTP worker
+must also reproduce both cached and cache-disabled controls. Cache reuse needs
+measured cache_n > 0; the native log is required to identify checkpoint/rollback
+paths. Missing reuse or changed output is retained as review evidence, not
+repaired. This is a state audit, not a new speed benchmark or coverage claim for
+all native branches. cache_prompt=false clears request reuse; it does not start
+a new OS process. Off and MTP profiles do use separate sequential workers.
+
+The existing Tools matrix exercises auto/required/none/named choices, parallel
+calls, arguments, result replay and cancellation through public endpoints. SDK
+cycles additionally check real client deserialization/replay. Both scripts
+inherit production MTP settings: verify draft-mtp and a positive draft limit in
+their saved argv, and actual native drafting in worker.log. Configuration alone
+is not activation evidence. Known escaped-newline model mismatches may recur;
+preserve their exact arguments. See [tools-api-smoke.md](../scripts/tools-api-smoke.md).
+
+Negative real-model behavior and a measured public statistics extension remain
+later MTP checkpoints; this patch changes diagnostic coverage only.

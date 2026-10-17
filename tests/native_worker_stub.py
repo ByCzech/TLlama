@@ -155,6 +155,20 @@ async def mtp_request(reader, writer, body):
     if enabled and mode != 'no-drafting':
         timings.update(draft_n=12, draft_n_accepted=6 if mode != 'bad-counts' else 13)
     finish = None if mode == 'no-finish' else 'stop'
+    state_mode = os.environ.get('STUB_MTP_STATE')
+    if state_mode:
+        cached = body.get('cache_prompt') is True
+        timings['cache_n'] = 19 if cached and state_mode != 'no-reuse' else 0
+        if state_mode == 'unknown-cache':
+            timings.pop('cache_n')
+        if enabled and cached and state_mode == 'stale-state':
+            content += ' STALE'
+        if enabled and cached and state_mode == 'wrong-finish':
+            finish = 'length'
+        if enabled and cached and state_mode == 'wrong-count':
+            timings['predicted_n'] += 1
+        if state_mode == 'unknown-count':
+            timings.pop('predicted_n')
     if not body['stream']:
         await json_response(writer, {'choices': [{'index': 0, 'message': {'role': 'assistant', 'content': content},
                                                   'finish_reason': finish}], 'timings': timings, 'usage': USAGE})

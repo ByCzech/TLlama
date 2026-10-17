@@ -88,3 +88,53 @@ def test_native_cli_off_on_cleanup_activation_and_cancellation(tmp_path, payload
     before = (root/'launch').read_bytes()
     repeat = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=5)
     assert repeat.returncode == 2 and (root/'launch').read_bytes() == before
+
+
+@pytest.mark.parametrize('mode,review', [('normal', False), ('no-reuse', True),
+    ('unknown-cache', True), ('stale-state', True), ('wrong-finish', True),
+    ('wrong-count', True), ('unknown-count', True)])
+def test_state_cli_cache_controls_branch_recovery_and_configured_mtp(tmp_path, payload, mode, review):
+    root = tmp_path/'stub'; root.mkdir()
+    (root/'memory-report').write_text(json.dumps(payload))
+    models = tmp_path/'models'/'Local'; models.mkdir(parents=True)
+    (models/'a.gguf').write_bytes(b'fake weights')
+    definition = ('[llm]\nmodel="Local/a.gguf"\n[runtime]\ndevice="none"\nn_ctx=8192\n'
+                  'spec_type="draft-mtp"\ndraft_n_max=8\n')
+    (models/'a.toml').write_text(definition)
+    executable = tmp_path/'native-stub'
+    executable.write_text(f'#!{sys.executable}\n'+Path(__file__).with_name('native_worker_stub.py').read_text())
+    executable.chmod(0o700)
+    output = tmp_path/'results'
+    run = subprocess.run([sys.executable, str(SCRIPT), '--state-only', '--model', 'a',
+        '--models-dir', str(models.parent), '--executable', str(executable), '--output', str(output)],
+        env={**os.environ, 'PYTHONPATH': str(SCRIPT.parents[1]/'src'), 'STUB_MTP': 'normal',
+             'STUB_MTP_STATE': mode, 'STUB_ROOT': str(root), 'STUB_BUILD': payload['runtime_fingerprint'],
+             'STUB_PUBLIC_CTX': '4096'}, capture_output=True, text=True, timeout=25)
+    assert run.returncode == 0, run.stdout + run.stderr
+    rows = [json.loads(line) for line in (output/'raw.jsonl').read_text().splitlines()]
+    assert rows[-1]['protocol_ok'] and rows[-1]['review_required'] is review
+    checks = [r for r in rows if r['stage'] == 'cache-comparison']
+    assert len(checks) == 10
+    assert all(r['exact_text_match'] for r in checks) is (mode != 'stale-state')
+    assert all(r['finish_match'] for r in checks) is (mode != 'wrong-finish')
+    assert all(r['output_tokens_match'] for r in checks) is (mode not in {'wrong-count', 'unknown-count'})
+    if mode == 'unknown-count':
+        assert all(r['output_tokens_match'] is None for r in checks)
+    assert (root/'cancelled').read_text().splitlines() == ['"mtp"']
+    assert (models/'a.toml').read_text() == definition
+    launches = [json.loads(line) for line in (root/'launch').read_text().splitlines()]
+    assert len(launches) == 2
+    for launch, strategy in zip(launches, ['none', 'draft-mtp']):
+        argv = launch['argv']
+        assert argv.count('--spec-type') == argv.count('--spec-draft-n-max') == 1
+        assert argv[argv.index('--spec-type')+1] == strategy
+        assert argv[argv.index('--spec-draft-n-max')+1] == '3'
+    requests = [r['body'] for r in map(json.loads, (root/'requests').read_text().splitlines())
+                if r.get('body', {}).get('messages')]
+    # Each cached comparison has a real independent cache-disabled request,
+    # not just an off/on comparison with a potentially shared stale state.
+    cold = [r for r in requests if r.get('cache_prompt') is False]
+    assert len({json.dumps(r['messages'], sort_keys=True) for r in cold}) >= 4
+    assert any(r.get('cache_prompt') and len(r['messages']) == 4 for r in requests)
+    assert all(r['clean'] for r in rows if r['stage'] == 'worker-closed')
+    assert all(r['residency'] == [] for r in rows if r['stage'] == 'profile-finished')
