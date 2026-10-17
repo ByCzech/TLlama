@@ -1,4 +1,4 @@
-# Embedded MTP configuration and state checks — 0050
+# Embedded MTP configuration, state and statistics — 0051
 
 Enable the embedded multi-token-prediction head only for a compatible model:
 
@@ -111,10 +111,9 @@ It does not certify Tools interaction or every prefix-cache branch; those remain
 the subsequent MTP checks. There is no need to repeat the accepted off/on native
 reference solely for its corrected READY comparison.
 
-Optional draft counters currently remain in native diagnostic evidence. Existing
-public token counts retain their meanings; a public optional-counter extension
-is a separate integration step. Local subprocess tests use synthetic counters
-and do not replace this hardware check.
+Existing public token counts retain their meanings. The optional counter
+extension added in 0051 is documented below. Local subprocess tests use
+synthetic counters and do not replace hardware checks.
 
 ## Next hardware check: cached state and Tools — 0050
 
@@ -168,5 +167,75 @@ their saved argv, and actual native drafting in worker.log. Configuration alone
 is not activation evidence. Known escaped-newline model mismatches may recur;
 preserve their exact arguments. See [tools-api-smoke.md](../scripts/tools-api-smoke.md).
 
-Negative real-model behavior and a measured public statistics extension remain
-later MTP checkpoints; this patch changes diagnostic coverage only.
+### Accepted 0050 hardware evidence
+
+The state/Tools/SDK archive from 2026-10-17 passed all 10 cache/control
+comparisons and all nine off/on text comparisons. Repeated input reused 324
+tokens, conversation extension 455, changed/shorter history 283, and the
+post-cancellation request 321. Content/reasoning, finish reason and output count
+matched the corresponding cache-disabled controls. The MTP process logged seven
+context checkpoint restores (off logged five); no speculative-checkpoint restore
+branch was observed. Actual native task 348 was cancelled after two generated
+tokens of a 512-token limit, then the same worker reproduced both cached and
+uncached controls.
+
+Tools passed 18/22 semantic checks and all 16 follow-ups. The four differences
+are the already-recorded escaped-newline model behavior, present in stream and
+non-stream on both APIs. Actual native cancellation of task 521 and same-worker
+reuse passed. Both SDKs passed all four call and four follow-up steps, including
+Ollama history without IDs. Saved commands and measured native draft acceptance
+confirm MTP in both Tools runs. All four processes exited zero, removed private
+directories and left empty residency.
+
+## Measured public speculative statistics — 0051
+
+When native request timings contain speculative counters, both API responses
+include this optional top-level TLlama extension:
+
+```json
+{"tllama":{"speculative":{"draft_tokens":12,"accepted_tokens":6,"acceptance":0.5}}}
+```
+
+`draft_tokens` comes from native `timings.draft_n`; `accepted_tokens` comes from
+`timings.draft_n_accepted`. They are cumulative counts for this request, not
+worker-lifetime totals or increments. `acceptance` is accepted/drafted only when
+both counts are known and drafted is positive. Each unknown field is omitted;
+when both counters are missing the entire extension is absent. Measured zeros
+are preserved, with no ratio for a zero denominator. Configuration, model name,
+MTP owner evidence and `completion_tokens` do not substitute for measurements.
+
+For Ollama chat/generate NDJSON, the extension occurs only on the `done=true`
+record. For OpenAI chat SSE, it occurs only on the chunk carrying
+`finish_reason`, independently of `stream_options.include_usage`. It is absent
+from text/tool deltas, the separate usage chunk, failed or unfinished streams,
+and load/unload acknowledgements. Client SDKs may ignore this custom field;
+clients needing it must preserve extras or use raw JSON.
+
+Standard Ollama `eval_count` and OpenAI usage retain the actual generated-output
+count. Accepted draft tokens are already part of that output: do not add them
+again or treat proposed/rejected drafts as output tokens. The extension does
+not use OpenAI `accepted_prediction_tokens` / `rejected_prediction_tokens`,
+which describe a different feature. Invalid native counter types, negatives or
+accepted > drafted are protocol errors, consistent with existing usage checks.
+
+After applying 0051, run:
+
+```bash
+pytest -q tests/test_speculative_stats.py tests/test_native_api.py
+
+mtp_results="/tmp/tllama-mtp-stats-$(date +%Y%m%d-%H%M%S)"
+mkdir "$mtp_results"
+PYTHONPATH=src TLLAMA_RUNTIME_DEVICE=Vulkan0 python scripts/api-smoke.py \
+  --model unsloth/Qwen3.6-35B-A3B-MTP-GGUF/Qwen3.6-35B-A3B-UD-IQ3_S \
+  --ctx 4096 --require-mtp --log "$mtp_results/worker.log" \
+  > "$mtp_results/summary.jsonl" 2> "$mtp_results/stderr.log"
+tar -cJf "$mtp_results.tar.xz" -C "$mtp_results" .
+```
+
+Keep the model's existing MTP TOML settings. The extended `--require-mtp` now
+requires measured public counters for eight longer result/stream requests:
+Ollama chat, rendered/raw generate and OpenAI chat (including a usage-enabled
+stream). It also retains the native probe and public cancellation/cleanup
+checks. Return the complete archive on failure. Do not rerun state or Tools.
+The remaining separate MTP checkpoint is explicit real-model behavior when
+MTP is requested for a model without a head; no native rebuild is needed here.

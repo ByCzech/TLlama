@@ -437,6 +437,10 @@ async def test_public_hardware_smoke_entry_point(public, valid, native_memory, m
             assert argv[argv.index('--ctx-size') + 1] == '4096'
             probe = next(stage for stage in stages if stage['stage'] == 'native-mtp-check')
             assert probe['draft_n'] == 12 and probe['draft_n_accepted'] == 6
+            public_probes = [stage for stage in stages if stage['stage'] == 'public-mtp-check']
+            assert len(public_probes) == 8
+            assert all(stage['stats'] == {'draft_tokens': 12, 'accepted_tokens': 6, 'acceptance': 0.5}
+                       for stage in public_probes)
         assert any(stage['stage'] == 'after-stream-cancel' for stage in stages)
         reports = {stage['stage']:stage['models'] for stage in stages if stage['stage'].startswith('ps-')}
         assert set(reports) == {'ps-ready', 'ps-during-stream', 'ps-after-stream-cancel', 'ps-draining', 'ps-empty'}

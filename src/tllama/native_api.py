@@ -83,6 +83,14 @@ class RequestStats:
     total_tokens: int | None = None
     prompt_duration_ns: int | None = None
     output_duration_ns: int | None = None
+    draft_tokens: int | None = None
+    accepted_draft_tokens: int | None = None
+
+    def __post_init__(self):
+        drafted = _count(self.draft_tokens, "draft token count")
+        accepted = _count(self.accepted_draft_tokens, "accepted draft token count")
+        if drafted is not None and accepted is not None and accepted > drafted:
+            raise WorkerProtocolError("Native accepted draft count exceeds drafted count")
 
     @classmethod
     def read(cls, payload):
@@ -102,7 +110,8 @@ class RequestStats:
         # tokens_cached is slot occupancy AFTER generation, not input reuse.
         return cls(input_tokens, evaluated, cached, output_tokens, total_tokens,
                    _nanoseconds(timings.get("prompt_ms"), "prompt_ms"),
-                   _nanoseconds(timings.get("predicted_ms"), "predicted_ms"))
+                   _nanoseconds(timings.get("predicted_ms"), "predicted_ms"),
+                   timings.get("draft_n"), timings.get("draft_n_accepted"))
 
     def merge(self, newer):
         return replace(self, **{f.name: getattr(newer, f.name) for f in fields(self)
@@ -125,6 +134,17 @@ class RequestStats:
         if self.cached_tokens is not None:
             result["prompt_tokens_details"] = {"cached_tokens": self.cached_tokens}
         return result
+
+    def extensions(self):
+        """Measured request counters, separate from either API's token usage."""
+        speculative = {key: value for key, value in {
+            "draft_tokens": self.draft_tokens, "accepted_tokens": self.accepted_draft_tokens,
+        }.items() if value is not None}
+        if not speculative:
+            return {}
+        if self.draft_tokens and self.accepted_draft_tokens is not None:
+            speculative["acceptance"] = self.accepted_draft_tokens / self.draft_tokens
+        return {"tllama": {"speculative": speculative}}
 
 
 @dataclass(frozen=True)
@@ -271,7 +291,8 @@ def ollama_response(result, context, *, kind="chat"):
         raise ValueError("Ollama response kind must be chat or completion")
     if result.terminal:
         reason = "stop" if result.finish_reason == "tool_calls" else result.finish_reason
-        payload.update(done_reason=reason, **context.durations(), **result.stats.ollama())
+        payload.update(done_reason=reason, **context.durations(), **result.stats.ollama(),
+                       **result.stats.extensions())
     return payload
 
 
@@ -279,7 +300,7 @@ def openai_response(result, context):
     return {"id": context.completion_id, "object": "chat.completion", "created": context.created,
             "model": context.model, "choices": [{"index": 0, "message": _message(result, ollama=False),
                                                   "finish_reason": result.finish_reason}],
-            "usage": result.stats.openai()}
+            "usage": result.stats.openai(), **result.stats.extensions()}
 
 
 @dataclass(frozen=True)
@@ -347,7 +368,8 @@ async def openai_stream(events, context, *, include_usage=False):
                 yield _sse(context, [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}])
                 role_sent = True
             if event.terminal:
-                yield _sse(context, [{"index": 0, "delta": {}, "finish_reason": event.finish_reason}])
+                yield _sse(context, [{"index": 0, "delta": {}, "finish_reason": event.finish_reason}],
+                           **event.stats.extensions())
                 if include_usage:
                     yield _sse(context, [], usage=event.stats.openai())
                 yield "data: [DONE]\n\n"

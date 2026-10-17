@@ -34,6 +34,15 @@ def require(condition, message):
         raise WorkerError(message)
 
 
+def public_mtp_stats(payload):
+    stats = payload.get('tllama', {}).get('speculative', {})
+    drafted, accepted = stats.get('draft_tokens'), stats.get('accepted_tokens')
+    require(type(drafted) is int and drafted > 0 and type(accepted) is int
+            and 0 <= accepted <= drafted, 'Public MTP drafting was not measured')
+    require(stats.get('acceptance') == accepted / drafted, 'Public MTP acceptance disagrees')
+    return stats
+
+
 async def exercise(args):
     from tllama import main
     from tllama.routers import ollama, openai
@@ -196,6 +205,7 @@ async def exercise(args):
                 report(path.replace('/', '-').strip('-') + '-stream', content=''.join(content),
                        reasoning=''.join(reasoning), final=final)
                 same_generation()
+                return final, frames
 
             await stream('/api/chat', {**chat, 'stream': True, 'think': True,
                                       'options': {'temperature': 0, 'num_predict': 64}})
@@ -215,6 +225,34 @@ async def exercise(args):
                 require(body['done'] and body['response'], 'Generate produced no answer')
                 report('generate-raw' if raw else 'generate-rendered', response=body)
                 await stream('/api/generate', {**generate, 'stream':True})
+
+            if args.require_mtp:
+                # A longer public request proves the exported counters, rather
+                # than inferring activation from the earlier native-only probe.
+                prompt = 'Write the integers from 1 to 100, separated by commas.'
+                for path, raw in [('/api/chat', False), ('/api/generate', False),
+                                  ('/api/generate', True), ('/v1/chat/completions', False)]:
+                    if path.startswith('/v1/'):
+                        payload = {**oa, 'messages': [{'role': 'user', 'content': prompt}], 'max_tokens': 32}
+                    elif path.endswith('chat'):
+                        payload = {**chat, 'messages': [{'role': 'user', 'content': prompt}]}
+                    else:
+                        payload = {'model': args.model, 'prompt': prompt, 'raw': raw, 'think': False,
+                                   'options': {'temperature': 0, 'num_predict': 32}}
+                    for streaming in (False, True):
+                        payload['stream'] = streaming
+                        if streaming:
+                            if path.startswith('/v1/'):
+                                payload['stream_options'] = {'include_usage': True}
+                            final, frames = await stream(path, payload)
+                            require(sum('tllama' in frame for frame in frames) == 1,
+                                    'Public MTP counters must occur once at stream completion')
+                        else:
+                            final = (await post(path, payload)).json()
+                        stats = public_mtp_stats(final)
+                        report('public-mtp-check', api=path, raw=raw, stream=streaming,
+                               stats=stats, response=final)
+                        same_generation()
 
             schema = {'type':'object', 'properties':{'answer':{'type':'integer', 'enum':[42]}},
                       'required':['answer'], 'additionalProperties':False}
@@ -278,7 +316,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--model', required=True, help='Registered TLlama reference; context comes from its TOML')
     parser.add_argument('--ctx', type=int, help='Override context for every diagnostic admission (0 = native model context)')
-    parser.add_argument('--require-mtp', action='store_true', help='Verify configured MTP with a measured native draft probe')
+    parser.add_argument('--require-mtp', action='store_true',
+                        help='Verify measured drafting through native and public result/stream probes')
     parser.add_argument('--models-dir', type=Path)
     parser.add_argument('--executable', type=Path)
     parser.add_argument('--load-timeout', type=float, default=600)
