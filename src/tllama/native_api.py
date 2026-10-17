@@ -20,8 +20,8 @@ from tllama.helpers.common import get_iso_time
 from tllama.helpers.model_toml import TomlModelError
 from tllama.helpers.reasoning_split import ReasoningStreamSplitter
 from tllama.native_config import _plain
-from tllama.native_params import freeze_values
 from tllama.native_requests import NativeRequest
+from tllama.native_tools import ToolCalls, full_calls, ollama_calls
 from tllama.residency import ResidencyClosed
 from tllama.worker import WorkerProtocolError, WorkerRequestError
 
@@ -56,14 +56,6 @@ def _text(value, label):
     if not isinstance(value, str):
         raise WorkerProtocolError(f"Native {label} must be a string or null")
     return value
-
-
-def _tools(value):
-    if value is None:
-        return ()
-    if not isinstance(value, list) or any(not isinstance(call, dict) for call in value):
-        raise WorkerProtocolError("Native tool_calls must be an array of objects")
-    return freeze_values(value)
 
 
 def _finish(value):
@@ -166,8 +158,9 @@ def read_result(payload, request: NativeRequest):
         message = _object(choice.get("message"), "message")
         content = _text(message.get("content"), "content")
         reasoning = _text(message.get("reasoning_content"), "reasoning_content")
-        return NativeResult(content, reasoning, _tools(message.get("tool_calls")),
-                            _finish(choice.get("finish_reason")), stats, True)
+        finish = _finish(choice.get("finish_reason"))
+        return NativeResult(content, reasoning, full_calls(message.get("tool_calls"), finish),
+                            finish, stats, True)
     content = _text(payload.get("content"), "completion content")
     splitter = ReasoningStreamSplitter(request.reasoning_format, think_value=request.think)
     pieces = splitter.push(content) + splitter.finish()
@@ -178,6 +171,7 @@ def read_result(payload, request: NativeRequest):
 
 async def _read_events(events, request):
     stats, finish = RequestStats(), None
+    tools = ToolCalls()
     splitter = ReasoningStreamSplitter(request.reasoning_format, think_value=request.think)
     async for payload in events:
         stats = stats.merge(RequestStats.read(payload))
@@ -188,9 +182,9 @@ async def _read_events(events, request):
             delta = _object(choice.get("delta"), "delta")
             content = _text(delta.get("content"), "delta content")
             reasoning = _text(delta.get("reasoning_content"), "delta reasoning_content")
-            calls = _tools(delta.get("tool_calls"))
             if finish is not None:
                 raise WorkerProtocolError("Native chat choice arrived after its finish_reason")
+            calls = tools.push(delta.get("tool_calls"))
             if choice.get("finish_reason") is not None:
                 finish = _finish(choice["finish_reason"])
             if content or reasoning or calls:
@@ -210,7 +204,8 @@ async def _read_events(events, request):
         for kind, piece in splitter.finish():
             yield NativeResult(content=piece if kind == "response" else "",
                                reasoning=piece if kind == "thinking" else "")
-    yield NativeResult(finish_reason=finish, stats=stats, terminal=True)
+    calls = tools.finish(finish) if request.kind == "chat" else ()
+    yield NativeResult(tool_calls=calls, finish_reason=finish, stats=stats, terminal=True)
 
 
 class NativeAPI:
@@ -255,7 +250,10 @@ def _message(result, *, ollama):
     if result.reasoning:
         message["thinking" if ollama else "reasoning_content"] = result.reasoning
     if result.tool_calls:
-        message["tool_calls"] = _plain(result.tool_calls)
+        if not ollama:
+            message["tool_calls"] = _plain(result.tool_calls)
+        elif result.finish_reason == "tool_calls":
+            message["tool_calls"] = ollama_calls(result.tool_calls)
     return message
 
 
@@ -272,7 +270,8 @@ def ollama_response(result, context, *, kind="chat"):
     else:
         raise ValueError("Ollama response kind must be chat or completion")
     if result.terminal:
-        payload.update(done_reason=result.finish_reason, **context.durations(), **result.stats.ollama())
+        reason = "stop" if result.finish_reason == "tool_calls" else result.finish_reason
+        payload.update(done_reason=reason, **context.durations(), **result.stats.ollama())
     return payload
 
 
@@ -320,6 +319,15 @@ def public_error(error, *, api, phase="inference"):
 async def ollama_stream(events, context, *, kind="chat"):
     try:
         async for event in events:
+            if kind == "chat" and event.tool_calls:
+                if event.terminal and event.finish_reason == "tool_calls":
+                    # The transport has now verified the complete native stream.
+                    # Deliver each object once, before the separate done/stats line.
+                    calls = replace(event, content="", reasoning="", terminal=False)
+                    yield json.dumps(ollama_response(calls, context), ensure_ascii=False) + "\n"
+                event = replace(event, tool_calls=())
+                if not event.terminal and not event.content and not event.reasoning:
+                    continue
             yield json.dumps(ollama_response(event, context, kind=kind), ensure_ascii=False) + "\n"
     except Exception as exc:
         yield ollama_stream_error_line(public_error(exc, api="ollama").message)

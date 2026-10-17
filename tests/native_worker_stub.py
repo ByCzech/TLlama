@@ -74,7 +74,7 @@ async def tools_request(reader, writer, body):
     calls, content = [], ''
     if outputs:
         content = ' '.join(outputs)
-    elif body['tool_choice'] == 'none':
+    elif body.get('tool_choice', 'auto') == 'none':
         content = 'NO_TOOL'
     else:
         prompt = next(m['content'] for m in reversed(messages) if m['role'] == 'user')

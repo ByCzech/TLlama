@@ -10,6 +10,8 @@ class ChatMessage(BaseModel):
     # OpenAI tool-call conversation support.
     tool_call_id: Optional[str] = None
     tool_calls: Optional[List[Dict[str, Any]]] = None
+    # Preserve the native reasoning field when callers replay an assistant turn.
+    reasoning_content: Optional[str] = None
 
     # Deprecated OpenAI compatibility path.
     function_call: Optional[Dict[str, Any]] = None
