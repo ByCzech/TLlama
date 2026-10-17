@@ -1,11 +1,13 @@
-# Embedded MTP native reference and state audit — 0050
+# Embedded MTP native reference, state audit and negative check — 0052
 
 This reference measures the native engine independently of production MTP TOML
 settings or public statistics. Its reference and basic public hardware results
-are accepted; for the next state/Tools check use
+are accepted; for the accepted state/Tools evidence and remaining negative check use
 [native-mtp.md](../docs/native-mtp.md). It uses the registered model containing
 embedded MTP tensors. No sidecar draft model, download or native rebuild is
 requested. The regular non-MTP GGUF is not an equivalent off baseline.
+It is used separately by `--negative-only` to verify missing-head rejection;
+the exact three-stage command is in [native-mtp.md](../docs/native-mtp.md).
 
 Run from the patched checkout:
 

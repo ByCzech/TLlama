@@ -1,4 +1,4 @@
-# Embedded MTP configuration, state and statistics — 0051
+# Embedded MTP configuration, state, statistics and rejection — 0052
 
 Enable the embedded multi-token-prediction head only for a compatible model:
 
@@ -239,3 +239,64 @@ stream). It also retains the native probe and public cancellation/cleanup
 checks. Return the complete archive on failure. Do not rerun state or Tools.
 The remaining separate MTP checkpoint is explicit real-model behavior when
 MTP is requested for a model without a head; no native rebuild is needed here.
+
+### Accepted 0051 public statistics evidence
+
+The maintainer confirmed 84 focused tests. The 2026-10-17 21:39:50 hardware run
+passed all eight public counter probes on runtime b11552-3144c167ef, Vulkan0,
+context 4096, f16 K/V, flash attention off and draft limit 3. Chat and rendered
+generate reported 23 accepted / 23 drafted tokens in both modes; raw generate
+reported 22/27 in both modes. Standard output counts remained 32. OpenAI
+completion chunks carried the extension with and without a public usage chunk.
+Native task 165 was cancelled at n_gen=2 of 512, released at n_tokens=25, and
+the same process answered the next request. Exit zero, removed private directory
+and empty final residency/ps passed. No repeat of this gate is needed for 0052.
+
+## Missing-head startup rejection — 0052
+
+Use the original registered **non-MTP** Qwen, already used by Tools. Release any
+model occupying the device first. Do not change either model's TOML, download
+another model or rebuild the native executable.
+
+```bash
+pytest -q tests/test_mtp_negative.py tests/test_mtp_smoke.py tests/test_native_mtp.py
+
+mtp_results="/tmp/tllama-mtp-negative-$(date +%Y%m%d-%H%M%S)"
+PYTHONPATH=src TLLAMA_RUNTIME_DEVICE=Vulkan0 python scripts/mtp-smoke.py \
+  --negative-only \
+  --model unsloth/Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-IQ3_S \
+  --output "$mtp_results"
+tar -cJf "$mtp_results.tar.xz" -C "$mtp_results" .
+```
+
+`--negative-only` selects three sequential fresh workers over that same GGUF:
+MTP explicitly disabled, MTP explicitly requested, then disabled again. The
+diagnostic overrides speculative flags in its own launch only (including any
+TOML/global setting), emits each switch once and keeps the registered device,
+KV, flash-attention and template settings; context is 4096 and batches 512.
+It checks definition identity throughout and native executable identity plus
+both control build fingerprints. Each stage must launch exactly once; an
+automatic disabled retry is a failure.
+
+Both disabled controls must answer the identical short request, finish normally
+and agree in content/reasoning and output count. The middle startup must fail,
+the process must exit, and the log must contain the pinned native reason:
+
+```text
+context type MTP requested but model doesn't contain MTP layers
+```
+
+A timeout, OOM, driver error, unknown flag or other generic failure does not
+prove a missing-head rejection. An unexpected ready worker also fails, including
+native silent fallback. All paths retain the complete load logs, argv, native
+diagnostics, process return codes, private-directory cleanup and final residency.
+The three process stages are owned and cleaned independently, including when
+one fails. The test exercises native startup/admission, not public HTTP error
+mapping; existing public/lifecycle tests cover error translation separately.
+
+The expected middle error is handled inside the diagnostic: a fully successful
+negative check exits **0**, with `protocol_ok=true`, `review_required=false` and
+no observations. A different native error message requires log review rather
+than automatic acceptance. Return the entire archive even on failure. Output
+directories must be new; existing evidence is never overwritten. State, Tools,
+SDK and public statistics smokes need not be repeated.

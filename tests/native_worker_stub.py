@@ -146,6 +146,9 @@ async def mtp_request(reader, writer, body):
         content += ' changed'
     if mode == 'punctuated-control' and 'READY' in prompt:
         content = 'READY.'
+    if (os.environ.get('STUB_MTP_NEGATIVE') == 'changed-recovery' and not enabled
+            and len((ROOT / 'launch').read_text().splitlines()) == 3):
+        content = 'CHANGED'
     if 'READY' in prompt:
         global MTP_CONTROL_READS
         MTP_CONTROL_READS = globals().get('MTP_CONTROL_READS', 0) + 1
@@ -503,6 +506,14 @@ async def main():
                             or k in ("CUDA_VISIBLE_DEVICES", "GGML_BACKEND_PATH", "MTMD_BACKEND_DEVICE")}})
     if MODE == "fatal":
         print("device kernel image is invalid", file=sys.stderr, flush=True)
+        return 23
+    negative = os.environ.get('STUB_MTP_NEGATIVE')
+    if negative and arg('--spec-type') == 'draft-mtp' and negative != 'unexpected-ready':
+        if negative == 'timeout':
+            await asyncio.Event().wait()
+        message = ('device kernel image is invalid' if negative == 'unrelated-error' else
+                   "llama_init_from_model: context type MTP requested but model doesn't contain MTP layers")
+        print(message, file=sys.stderr, flush=True)
         return 23
     print("E CUDA: no CUDA-capable device", file=sys.stderr, flush=True)
     if MODE == 'memory-full-offload':
