@@ -1,6 +1,11 @@
-# 08c: first hardware memory checks
+# 08c: hardware memory and allocation-locality checks
 
 Working test instructions; final user documentation remains deferred.
+
+Updated for native commit `3144c167ef703e93cee0b58d7236b6a28c6e50ad`
+(package `0.6.0~dev+b11552.3-1`). The complete contract remains native
+`tools/server/tllama-memory-v1.md`, installed under
+`/usr/share/doc/tllama-server-core/` (possibly compressed).
 
 Run from the repository root, using the same Python environment as pytest.
 The script launches its own private worker from **physical GGUF paths**.
@@ -13,23 +18,35 @@ export PYTHONPATH=src
 memory_model=/var/lib/tllama/models/HuggingFace/unsloth/Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-IQ3_S.gguf
 memory_projector=/var/lib/tllama/models/Local/qwen3.6-mmproj-Q8_0.gguf
 memory_results="/tmp/tllama-memory-08c-$(date +%Y%m%d-%H%M%S)"
+memory_expected=b11552-3144c167ef
 
-python scripts/memory-smoke.py --profile cpu \
+# Verify the originally ambiguous CPU input assignment first.
+python scripts/memory-smoke.py --locality --expected-fingerprint "$memory_expected" \
+  --profile no-mmap --device Vulkan0 \
+  --model "$memory_model" --output "$memory_results/no-mmap"
+
+python scripts/memory-smoke.py --locality --expected-fingerprint "$memory_expected" --profile cpu \
   --model "$memory_model" --output "$memory_results/cpu"
 
-python scripts/memory-smoke.py --profile partial --device Vulkan0 --gpu-layers 20 \
+python scripts/memory-smoke.py --locality --expected-fingerprint "$memory_expected" \
+  --profile partial --device Vulkan0 --gpu-layers 20 \
   --model "$memory_model" --output "$memory_results/partial"
 
-python scripts/memory-smoke.py --profile vision --device Vulkan0 \
+python scripts/memory-smoke.py --locality --expected-fingerprint "$memory_expected" \
+  --profile vision --device Vulkan0 \
   --model "$memory_model" --mmproj "$memory_projector" --output "$memory_results/vision"
 
-python scripts/memory-smoke.py --profile no-mmap --device Vulkan0 \
-  --model "$memory_model" --output "$memory_results/no-mmap"
+tar -cJf "$memory_results.tar.xz" -C "$memory_results" .
 ```
 
 Each output directory must be new; existing results are never overwritten.
 Add `--dry-run` to inspect the launch command without starting a worker or creating files.
 `TLLAMA_RUNTIME_EXECUTABLE` / `--executable` and the version policy are honored.
+`--expected-fingerprint` explicitly pins only this private diagnostic worker;
+it does not change TLlama's global supported-build list or warn/strict policy.
+A mismatch fails with cleanup before model inference. Omit it for a deliberately
+different experiment. `--locality` enables the new extension checks; omit it to
+retain the older V1 checkpoint requirements.
 The test fixes memory selection to `auto` with independent native/log comparison,
 regardless of `TLLAMA_MEMORY_SOURCE` / `TLLAMA_MEMORY_COMPARE`.
 Other model/global runtime and sampling defaults are deliberately bypassed.
@@ -54,11 +71,36 @@ Files in each profile directory:
 
 - `summary.jsonl`: concise snapshots, placement, backing totals, projector buffers,
   native-minus-log differences, inference responses and diagnostic check results.
-- `raw.jsonl`: full independent inventories and all summary records.
+- `raw.jsonl`: all summary records, existing filtered telemetry and **raw_native**:
+  the authenticated endpoint's HTTP status and complete JSON body before the
+  production V1 adapter filters optional fields. This retains assignment,
+  allocation_locality, unknown future fields and independently nullable ranges.
 - `worker.log`: redacted native/debug logs for analysis if a check fails.
 
-For initial review, send the four `summary.jsonl` files. Keep the raw files/logs
-for any discrepancy. The stdout output is the same as the summary file.
+Send the complete archive for this checkpoint; raw JSON is essential. The stdout
+output is the same as the summary file.
+
+Raw reads use the owned memory HTTP client/poller lock and a bounded timeout;
+they do not acquire an inference slot. They and filtered telemetry are separate
+HTTP observations and may have different sequences. `summary.locality.snapshot`
+belongs to raw_native; `summary.snapshot` belongs to filtered telemetry. Never
+join IDs between these observations. HTTP error bodies/status are retained too;
+401/503 must not be interpreted as proof the endpoint is unsupported.
+
+The locality summary checks extension presence, assignment/allocation/binding
+references within that response, coverage vocabulary and CPU input assignment
+in no-mmap. It is a diagnostic subset, not the future production adapter's full
+validation or final ps policy. Malformed extension data remains in raw evidence
+and fails these diagnostic checks without invalidating otherwise valid core
+buffer totals.
+
+CPU and other unsupported exporters may legitimately have unavailable locality,
+and Vulkan mixed with unsupported buffers may have partial locality. These
+statuses are accepted independently of known capacities/placement. The current
+native series implements the Vulkan exporter; CUDA/HIP/SYCL/CPU have the generic
+optional interface but not yet their concrete exporters. Zero native attribute
+values are valid, null ranges are unknown, and DEVICE_LOCAL + HOST_VISIBLE may
+coexist. No allocation or binding span is added to buffer totals.
 
 Exit code 0 means inference, profile checks and cleanup passed. Exit code 1 means
 a diagnostic failed, including unavailable/partial native inventory; the files

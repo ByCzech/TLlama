@@ -16,8 +16,8 @@ import signal
 
 from tllama.config import load_backend_config_from_env
 from tllama.native_reporting import ollama_memory_sizes, public_memory
-from tllama.worker import NativeWorker, WorkerError
-from tllama.worker_config import WorkerLaunchSpec
+from tllama.worker import NativeWorker, WorkerError, WorkerRequestError
+from tllama.worker_config import RUNTIME_FINGERPRINT, WorkerLaunchSpec
 
 
 def launch_spec(args):
@@ -30,10 +30,13 @@ def launch_spec(args):
         raise ValueError("--ctx and --gpu-layers must be positive")
     if args.device == "none" and not cpu:
         raise ValueError("Accelerator profiles require --device other than none")
+    if args.expected_fingerprint is not None and not args.expected_fingerprint.strip():
+        raise ValueError("--expected-fingerprint must be nonempty")
     return WorkerLaunchSpec(
         model=args.model.expanduser().resolve(),
         executable=args.executable.expanduser().resolve() if args.executable else config.runtime_executable,
         version_policy=config.runtime_version_policy,
+        runtime_fingerprint=args.expected_fingerprint or RUNTIME_FINGERPRINT,
         device="none" if cpu else args.device,
         n_gpu_layers=0 if cpu else args.gpu_layers if args.profile == "partial" else -1,
         n_ctx=args.ctx, mmproj=args.mmproj.expanduser().resolve() if vision else None,
@@ -44,6 +47,87 @@ def launch_spec(args):
                          "op_offload": not cpu, "offload_kqv": not cpu},
         load_timeout=args.load_timeout, request_timeout=args.request_timeout,
     )
+
+
+async def raw_memory(worker):
+    """Read the authenticated endpoint before the production V1 field filter.
+
+    This is independent evidence, not a replacement for selected telemetry.
+    Serialize with its HTTP poller, never with the inference slot. IDs from
+    this response must not be joined with another telemetry snapshot.
+    """
+    result = {"http_status": None}
+
+    async def read():
+        async with worker._memory_lock:
+            if worker._memory_client is None:
+                raise WorkerError("Native memory client is unavailable")
+            async with worker._memory_client.stream("GET", "/tllama/memory") as response:
+                result["http_status"] = response.status_code
+                try:
+                    result["body"] = await worker._json_body(response)
+                except WorkerRequestError as exc:
+                    result.update(body=exc.payload, error=str(exc)[:2048])
+    try:
+        await asyncio.wait_for(read(), timeout=5)
+    except Exception as exc:
+        result["error"] = f"{type(exc).__name__}: {exc}"[:2048]
+    return result
+
+
+def locality_summary(raw, fingerprint, profile):
+    """Inspect extension evidence without adding allocation spans to totals.
+
+    This diagnostic checks presence and snapshot-local references, not the
+    complete future production adapter's validation/public display policy.
+    Unknown fields and nullable ranges remain untouched in raw_native.body.
+    """
+    report = raw.get("body") or {}
+    extension = report.get("allocation_locality")
+    checks = {"raw_api_ready": raw.get("http_status") == 200 and "error" not in raw,
+              "raw_schema_v1": type(report.get("schema_version")) is int and report["schema_version"] == 1,
+              "raw_fingerprint_matches": report.get("runtime_fingerprint") == fingerprint,
+              "locality_extension_present": isinstance(extension, dict)}
+    result = {"checks": checks, "snapshot": {key:report.get(key) for key in
+              ("snapshot_sequence", "snapshot_stage", "snapshot_age_ms")}}
+    if not isinstance(extension, dict):
+        return result
+    allocations = extension.get("allocations")
+    bindings = extension.get("bindings")
+    if (not isinstance(allocations, list) or not isinstance(bindings, list)
+            or any(not isinstance(value, dict) for value in allocations + bindings)):
+        checks["locality_relationship_arrays"] = False
+        return result
+    allocation_ids = [a.get("id") for a in allocations]
+    buffers = {b["id"] for b in report.get("buffers", [])}
+    devices = {d["id"]:d for d in report.get("devices", [])}
+    checks["locality_scope"] = extension.get("scope") == "backend_buffer_allocations"
+    checks["physical_aliasing_unknown"] = extension.get("physical_aliasing") == "unknown"
+    # Unsupported CPU/CUDA/HIP/SYCL exporters are legitimate observations;
+    # their independent coverage must not invalidate buffer accounting.
+    checks["locality_coverage_reported"] = extension.get("status") in {"known", "partial", "unavailable"}
+    checks["allocation_ids"] = (all(isinstance(value, str) and value for value in allocation_ids)
+                                and len(set(allocation_ids)) == len(allocation_ids))
+    checks["allocation_references"] = all(set(a.get("device_ids", [])) <= devices.keys() for a in allocations)
+    checks["binding_references"] = all(b.get("buffer_id") in buffers
+        and b.get("allocation_id") in allocation_ids for b in bindings)
+    assignments = [{key:g.get(key) for key in
+                   ("owner_id", "component", "layer_indices", "location", "device_ids", "assignment")}
+                   for g in report.get("placement", {}).get("layer_groups", [])]
+    checks["assignment_inventory_present"] = bool(assignments) and all(
+        isinstance(g["assignment"], dict) for g in assignments)
+    checks["assignment_references"] = all(set(g["assignment"].get("device_ids", [])) <= devices.keys()
+        for g in assignments if isinstance(g["assignment"], dict))
+    if profile == "no-mmap":
+        inputs = [g for g in assignments if g["component"] == "input_weights"]
+        checks["input_cpu_assignment"] = bool(inputs) and all(
+            g["location"] == "cpu" and isinstance(g["assignment"], dict)
+            and g["assignment"].get("status") == "known" and g["assignment"].get("device_ids")
+            and all(devices.get(device, {}).get("type") == "cpu" for device in g["assignment"]["device_ids"])
+            for g in inputs)
+    result.update(status=extension.get("status"), missing_components=extension.get("missing_components"),
+                  allocation_count=len(allocations), binding_count=len(bindings), assignments=assignments)
+    return result
 
 
 def summarize(telemetry, profile):
@@ -110,17 +194,29 @@ async def exercise(args, spec, emit):
     checks = []
 
     async def capture(stage):
+        raw = await raw_memory(worker)
         await worker.refresh_memory()
         telemetry = worker.memory_snapshot()
         summary = summarize(telemetry, args.profile)
+        if args.locality:
+            try:
+                evidence = locality_summary(raw, worker.runtime_fingerprint, args.profile)
+            except Exception as exc:
+                # Even malformed extension data must survive in raw evidence.
+                evidence = {"checks": {"locality_shape": False},
+                            "error": f"{type(exc).__name__}: {exc}"[:2048]}
+            summary["locality"] = evidence
+            summary["checks"].update(evidence["checks"])
         checks.append(all(summary["checks"].values()))
-        emit(stage, telemetry=telemetry, summary=summary)
+        emit(stage, raw_native=raw, telemetry=telemetry, summary=summary)
 
     try:
         await worker.start()
         emit("ready", pid=worker.pid, fingerprint=worker.runtime_fingerprint, argv=worker.command,
              context=worker.props["default_generation_settings"]["n_ctx"],
              modalities=worker.props.get("modalities"))
+        if args.expected_fingerprint is not None and worker.runtime_fingerprint != args.expected_fingerprint:
+            raise WorkerError(f"Expected runtime {args.expected_fingerprint}, got {worker.runtime_fingerprint}")
         await capture("memory-ready")
         response = await worker.chat({"messages": [{"role": "user", "content": "Say hello briefly."}],
                                      "reasoning_effort": "none", "max_tokens": 32, "temperature": 0})
@@ -159,6 +255,8 @@ def main(argv=None):
     parser.add_argument("--type-v", default="q4_0")
     parser.add_argument("--flash-attn", choices=("on", "off"), default="on")
     parser.add_argument("--executable", type=Path)
+    parser.add_argument("--expected-fingerprint", help="Pin this diagnostic worker to an exact build; no global policy change")
+    parser.add_argument("--locality", action="store_true", help="Check the optional assignment/locality extension in raw endpoint replies")
     parser.add_argument("--load-timeout", type=float, default=600)
     parser.add_argument("--request-timeout", type=float, default=600)
     parser.add_argument("--dry-run", action="store_true", help="Show launch command without starting a worker or writing output")
@@ -183,6 +281,7 @@ def main(argv=None):
                 raw.write(json.dumps(record, ensure_ascii=False) + "\n")
                 raw.flush()
                 record.pop("telemetry", None)
+                record.pop("raw_native", None)
                 line = json.dumps(record, ensure_ascii=False)
                 concise.write(line + "\n")
                 concise.flush()
