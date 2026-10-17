@@ -130,6 +130,41 @@ async def stream_bytes(writer, value):
         await asyncio.sleep(0)
 
 
+async def mtp_request(reader, writer, body):
+    """Synthetic MTP counters/transport only, never a model or speed benchmark."""
+    mode = os.environ['STUB_MTP']
+    enabled = arg('--spec-type') == 'draft-mtp'
+    if mode == 'http500':
+        await json_response(writer, {'error': 'synthetic MTP failure'}, 500)
+        return
+    prompt = body['messages'][-1]['content']
+    content = ('READY' if 'READY' in prompt else '1, 2, 3' if 'sequence' in prompt else
+               'def merge_sorted(a, b):\n    return a + b  # synthetic only')
+    if mode == 'different-text' and enabled:
+        content += ' changed'
+    timings = {**TIMINGS, 'predicted_per_second': 90.0 if enabled else 45.0}
+    if enabled and mode != 'no-drafting':
+        timings.update(draft_n=12, draft_n_accepted=6 if mode != 'bad-counts' else 13)
+    finish = None if mode == 'no-finish' else 'stop'
+    if not body['stream']:
+        await json_response(writer, {'choices': [{'index': 0, 'message': {'role': 'assistant', 'content': content},
+                                                  'finish_reason': finish}], 'timings': timings, 'usage': USAGE})
+        return
+    writer.write(b'HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n')
+    await writer.drain()
+    for piece in content:
+        await stream_bytes(writer, event({'choices': [{'index': 0, 'delta': {'content': piece}, 'finish_reason': None}]}))
+        if '10000' in prompt:
+            mark('started', 'mtp')
+            await reader.read()
+            mark('cancelled', 'mtp')
+            return
+    await stream_bytes(writer, event({'choices': [{'index': 0, 'delta': {}, 'finish_reason': finish}]}))
+    await stream_bytes(writer, event({'choices': [], 'timings': timings, 'usage': USAGE}))
+    if mode != 'no-done':
+        await stream_bytes(writer, b'data: [DONE]\r\n\r\n')
+
+
 def event(value):
     data = json.dumps(value, ensure_ascii=False)
     split, quoted, escaped = -1, False, False
@@ -334,6 +369,10 @@ async def handle(reader, writer):
         if os.environ.get('STUB_TOOLS') and path == '/v1/chat/completions':
             async with LOCK:
                 await tools_request(reader,writer,body)
+            return
+        if os.environ.get('STUB_MTP') and path == '/v1/chat/completions':
+            async with LOCK:
+                await mtp_request(reader, writer, body)
             return
         if path == "/tokenize":
             # Deterministic IDs expose exact render text in the request log.
