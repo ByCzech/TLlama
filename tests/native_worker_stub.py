@@ -22,6 +22,8 @@ LOCK = asyncio.Lock()
 HEALTH_READS = 0
 TIMINGS = {"cache_n": 19, "prompt_n": 6, "prompt_ms": 2.5,
            "predicted_n": 10, "predicted_ms": 200.1}
+if os.environ.get('STUB_PUBLIC_MTP') and arg('--spec-type') == 'draft-mtp':
+    TIMINGS.update(draft_n=12, draft_n_accepted=6)
 USAGE = {"prompt_tokens": 25, "completion_tokens": 10, "total_tokens": 35,
          "prompt_tokens_details": {"cached_tokens": 19}}
 
@@ -142,6 +144,13 @@ async def mtp_request(reader, writer, body):
                'def merge_sorted(a, b):\n    return a + b  # synthetic only')
     if mode == 'different-text' and enabled:
         content += ' changed'
+    if mode == 'punctuated-control' and 'READY' in prompt:
+        content = 'READY.'
+    if 'READY' in prompt:
+        global MTP_CONTROL_READS
+        MTP_CONTROL_READS = globals().get('MTP_CONTROL_READS', 0) + 1
+        if mode == 'changed-control' and enabled and MTP_CONTROL_READS > 1:
+            content = 'CHANGED'
     timings = {**TIMINGS, 'predicted_per_second': 90.0 if enabled else 45.0}
     if enabled and mode != 'no-drafting':
         timings.update(draft_n=12, draft_n_accepted=6 if mode != 'bad-counts' else 13)

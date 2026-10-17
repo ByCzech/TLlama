@@ -72,6 +72,8 @@ a shell; paths and serialized values stay individual argv elements.
 | `kv_overrides` | Typed CSV `--override-kv` entries | TOML-only; bool/int64/finite float/string |
 | `lora_path`, `lora_scale` | `--lora` / `--lora-scaled` | Resolved inside model store; no new `[lora]` section |
 | `verbose` | Only true accepted; supervisor log policy stays enabled | Diagnostics |
+| `spec_type` | Omitted when unset; `--spec-type none/draft-mtp` when explicit | Load; embedded MTP is opt-in |
+| `draft_n_max` | `--spec-draft-n-max` only with MTP; default 3 when enabled | Load; see [native-mtp.md](native-mtp.md) |
 | `[template].jinja` | `--jinja --chat-template-file` | Private 0600 file owned and removed by worker |
 | `[mmproj].image_min_tokens/max_tokens/batch_max_tokens` | `--image-min-tokens`, `--image-max-tokens`, `--mtmd-batch-max-tokens` | Projector load |
 | `[mmproj].warmup` | `--warmup` / `--no-warmup` | **Whole worker**, replacing projector-only scope |
@@ -101,7 +103,7 @@ integration milestones. Merely storing system_prompt does not insert it twice.
 | `tfs_z`, even 1.0 | No native tail-free equivalent; no silent emulation |
 | Negative temperature | Native would clamp to greedy; refuse the semantic change |
 | `chat_format`, `chat_handler` | Python handler registry is not native; use `[template]` / `[mmproj]` |
-| `draft_model`, `tokenizer` | Python objects cannot be serialized; speculative integration is later |
+| `draft_model`, `tokenizer` | Python objects cannot be serialized; embedded MTP uses `spec_type`, external drafts remain unintegrated |
 | `vocab_only` | Metadata reads do not need a worker |
 | `logits_all` | Public logprobs require separate integration |
 | `embedding`, `pooling_type`, `attention_type` | Non-causal/embedding workers and APIs are later work |

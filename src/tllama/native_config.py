@@ -18,7 +18,7 @@ from tllama.helpers.model_toml import VirtualModelSpec
 from tllama.helpers.runtime_params import coerce_runtime_overrides
 from tllama.helpers.sampling_params import coerce_sampling_overrides
 from tllama.native_cli import RUNTIME_OPTION_NAMES
-from tllama.native_params import freeze_values, kv_type_name, runtime_problem
+from tllama.native_params import freeze_values, kv_type_name, runtime_problem, MTP_DRAFT_N_MAX_DEFAULT
 from tllama.worker_config import WorkerLaunchSpec
 
 
@@ -96,6 +96,9 @@ def resolve_worker_config(
         overlay(virtual_spec.runtime, "TOML")
     if num_ctx is not None:
         overlay({"n_ctx": num_ctx}, "request")
+    if runtime.get("spec_type") == "draft-mtp" and "draft_n_max" not in runtime:
+        runtime["draft_n_max"] = MTP_DRAFT_N_MAX_DEFAULT
+        sources["draft_n_max"] = "MTP default"
     device = runtime.get("device")
     if device is None:
         raise ConfigError("Set [runtime].device or TLLAMA_RUNTIME_DEVICE before loading a native model")

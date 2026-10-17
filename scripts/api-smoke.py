@@ -40,7 +40,16 @@ async def exercise(args):
     config = load_backend_config_from_env()
     if args.models_dir:
         config = replace(config, models_dir=str(args.models_dir.expanduser().resolve()))
-    manager = ModelManager(config, native_launch_options={
+    class SmokeManager(ModelManager):
+        def acquire_native_model(self, model_name, num_ctx=None, keep_alive=None):
+            return super().acquire_native_model(model_name, num_ctx=args.ctx if args.ctx is not None else num_ctx,
+                                                keep_alive=keep_alive)
+
+        async def preload_native_model(self, model_name, num_ctx=None, keep_alive=None):
+            return await super().preload_native_model(model_name, num_ctx=args.ctx if args.ctx is not None else num_ctx,
+                                                      keep_alive=keep_alive)
+
+    manager = SmokeManager(config, native_launch_options={
         'executable': args.executable.expanduser().resolve() if args.executable else None,
         'load_timeout': args.load_timeout,
         'request_timeout': args.request_timeout})
@@ -80,6 +89,19 @@ async def exercise(args):
                 report('ready', pid=worker.pid, generation=generation, public_address=address,
                        fingerprint=worker.props['build_info'], context=worker.props['default_generation_settings']['n_ctx'],
                        residency=snapshot, argv=worker.command)
+                if args.require_mtp:
+                    require(worker.spec.runtime_options.get('spec_type') == 'draft-mtp',
+                            'MTP check needs effective spec_type=draft-mtp; TOML overrides environment')
+                    probe = await worker.chat({'messages': [{'role': 'user', 'content':
+                        'Write the integers from 1 to 100, separated by commas.'}], 'temperature': 0,
+                        'seed': 42, 'max_tokens': 32, 'reasoning_effort': 'none',
+                        'chat_template_kwargs': {'enable_thinking': False}})
+                    timings = probe.get('timings', {})
+                    drafted, accepted = timings.get('draft_n'), timings.get('draft_n_accepted')
+                    require(type(drafted) is int and drafted > 0 and type(accepted) is int
+                            and 0 <= accepted <= drafted, 'Native MTP drafting was not measured')
+                    report('native-mtp-check', response=probe, draft_n=drafted, draft_n_accepted=accepted,
+                           acceptance=accepted / drafted)
 
             def same_generation():
                 current = manager.native_snapshot()
@@ -255,12 +277,16 @@ async def exercise(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--model', required=True, help='Registered TLlama reference; context comes from its TOML')
+    parser.add_argument('--ctx', type=int, help='Override context for every diagnostic admission (0 = native model context)')
+    parser.add_argument('--require-mtp', action='store_true', help='Verify configured MTP with a measured native draft probe')
     parser.add_argument('--models-dir', type=Path)
     parser.add_argument('--executable', type=Path)
     parser.add_argument('--load-timeout', type=float, default=600)
     parser.add_argument('--request-timeout', type=float, default=600)
     parser.add_argument('--log', type=Path)
     args = parser.parse_args()
+    if args.ctx is not None and args.ctx < 0:
+        parser.error('--ctx must be nonnegative')
     logging.basicConfig(level=logging.DEBUG if args.log else logging.WARNING, filename=args.log,
                         format='%(asctime)s %(name)s %(levelname)s %(message)s')
     logging.getLogger('httpx').setLevel(logging.WARNING)

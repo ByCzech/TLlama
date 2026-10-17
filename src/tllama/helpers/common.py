@@ -112,6 +112,9 @@ def sampling_value_problem(name: str, value) -> str | None:
 
 def validate_sampling_options(opts: dict) -> None:
     """Reject unsupported requested samplers before loading/unloading a model."""
+    for name in ("spec_type", "draft_n_max"):
+        if name in opts:
+            raise ValueError(f"{name} is a worker load setting; use [runtime] or TLLAMA_RUNTIME_{name.upper()}")
     if "tfs_z" in opts:
         raise ValueError(sampling_problem("tfs_z", opts["tfs_z"]))
     for client_name, value in opts.items():

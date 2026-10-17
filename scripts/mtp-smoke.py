@@ -166,7 +166,7 @@ async def exercise(args, emit):
                        model_path=str(worker.spec.model), model_size_bytes=worker.spec.model.stat().st_size,
                        load_elapsed_ms=(time.perf_counter() - started) * 1000)
                 await memory(worker, record, 'after-load')
-                await collect(worker, request('Reply exactly READY.', 8), False, record, probe='warmup')
+                control = await collect(worker, request('Reply exactly READY.', 16), False, record, probe='warmup')
                 for probe, prompt in PROMPTS.items():
                     for stream in (False, True):
                         result = await collect(worker, request(prompt, args.predict), stream, record, probe=probe)
@@ -199,7 +199,10 @@ async def exercise(args, emit):
                         observations.append('mtp:no_live_cancel_delta')
                     await memory(worker, record, 'after-cancel')
                     answer = await collect(worker, request('Reply exactly READY.', 16), False, record, probe='after-cancel')
-                    if answer['content'].strip() != 'READY':
+                    # Compare identical requests before/after cancellation;
+                    # punctuation chosen consistently by the model is harmless.
+                    if (not control['content'].strip() or control['finish_reason'] != 'stop'
+                            or answer['finish_reason'] != 'stop' or answer['text_sha256'] != control['text_sha256']):
                         observations.append('mtp:after_cancel_reply_differs')
                     record('after-cancel', pid=worker.pid, generation=lease.generation)
         except Exception as exc:

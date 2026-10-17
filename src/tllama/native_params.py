@@ -1,4 +1,4 @@
-"""TLlama configuration vocabulary for native runtime b11552-ec2797836f.
+"""TLlama configuration vocabulary; embedded MTP verified at b11552-3144c167ef.
 
 These are TLlama contracts, not a reflection of a Python binding or every
 option the native CLI happens to expose. Update with the compatibility matrix.
@@ -25,12 +25,15 @@ RUNTIME_TYPES = {
     "lora_path": "str", "lora_scale": "float", "numa": "Union[bool,int]",
     "type_k": "Union[str,int]", "type_v": "Union[str,int]", "type_kv": "Union[str,int]",
     "spm_infill": "bool", "verbose": "bool",
+    "spec_type": "str", "draft_n_max": "int",
 }
+
+MTP_DRAFT_N_MAX_DEFAULT = 3
 
 REMOVED_RUNTIME = {
     "chat_format": "Python chat handlers have no native name mapping; use [template].jinja",
     "chat_handler": "Python objects are not native configuration; use [mmproj] or [template] in the .toml",
-    "draft_model": "Python objects are not native configuration; speculative decoding is a later milestone",
+    "draft_model": "Python objects are not native configuration; use spec_type for embedded MTP; external drafts are not integrated",
     "tokenizer": "Python tokenizer objects are not native configuration",
     "vocab_only": "metadata reads do not need an inference worker",
     "logits_all": "public logprobs require their own API integration",
@@ -143,6 +146,10 @@ def runtime_problem(name: str, value: Any) -> str | None:
         return "'seed' must be -1 (random) or uint32"
     if name == "device":
         return device_problem(value)
+    if name == "spec_type" and value not in {"none", "draft-mtp"}:
+        return "'spec_type' must be none or draft-mtp; other speculative strategies are not integrated"
+    if name == "draft_n_max" and value < 0:
+        return "'draft_n_max' must be nonnegative (zero retains the MTP context but disables drafting)"
     if name.startswith("type_"):
         try:
             kv_type_name(value)

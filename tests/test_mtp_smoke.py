@@ -45,6 +45,7 @@ def test_probe_owns_only_pinned_diagnostic_flags(kind, tmp_path):
 
 @pytest.mark.parametrize('mode,ok,review', [
     ('normal', True, False), ('no-drafting', True, True), ('different-text', True, True),
+    ('punctuated-control', True, False), ('changed-control', True, True),
     ('bad-counts', False, True), ('no-done', False, True), ('no-finish', False, True), ('http500', False, True),
 ])
 def test_native_cli_off_on_cleanup_activation_and_cancellation(tmp_path, payload, mode, ok, review):
@@ -75,7 +76,7 @@ def test_native_cli_off_on_cleanup_activation_and_cancellation(tmp_path, payload
     launches = [json.loads(line) for line in (root/'launch').read_text().splitlines()]
     assert [row['argv'][row['argv'].index('--spec-type') + 1] for row in launches] == ['none', 'draft-mtp']
     assert all(row['argv'][row['argv'].index('--ctx-size') + 1] == '4096' for row in launches)
-    if mode in {'normal', 'no-drafting', 'different-text'}:
+    if mode in {'normal', 'no-drafting', 'different-text', 'punctuated-control', 'changed-control'}:
         assert (root/'cancelled').read_text().splitlines() == ['"mtp"']
         assert next(r for r in rows if r['stage'] == 'after-cancel')['pid'] == closed[1]['pid']
         comparisons = [row for row in rows if row['stage'] == 'comparison']

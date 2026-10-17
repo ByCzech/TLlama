@@ -4,7 +4,7 @@ import csv
 import io
 from pathlib import Path
 
-from tllama.native_params import NUMA_MODES, ROPE_MODES, SPLIT_MODES, runtime_problem
+from tllama.native_params import NUMA_MODES, ROPE_MODES, SPLIT_MODES, MTP_DRAFT_N_MAX_DEFAULT, runtime_problem
 
 
 VALUE_FLAGS = {
@@ -27,6 +27,7 @@ ENUM_FLAGS = {"split_mode": ("--split-mode", SPLIT_MODES),
 RUNTIME_OPTION_NAMES = frozenset(VALUE_FLAGS) | frozenset(BOOL_FLAGS) | frozenset(ENUM_FLAGS) | {
     "use_mmap", "use_mlock", "tensor_split", "swa_full", "kv_overrides",
     "lora_path", "lora_scale", "spm_infill", "verbose",
+    "spec_type", "draft_n_max",
 }
 MMPROJ_FLAGS = {"image_min_tokens": "--image-min-tokens", "image_max_tokens": "--image-max-tokens",
                 "batch_max_tokens": "--mtmd-batch-max-tokens"}
@@ -46,6 +47,12 @@ def runtime_cli_args(options) -> tuple[str, ...]:
         if problem:
             raise ValueError(problem)
     args = []
+    # Omit speculative flags entirely unless selected. Existing/experimental
+    # engines need not understand a new flag for ordinary inference to work.
+    if "spec_type" in options:
+        args += ["--spec-type", options["spec_type"]]
+    if options.get("spec_type") == "draft-mtp":
+        args += ["--spec-draft-n-max", str(options.get("draft_n_max", MTP_DRAFT_N_MAX_DEFAULT))]
     for name, flag in VALUE_FLAGS.items():
         if name in options:
             args += [flag, str(options[name])]

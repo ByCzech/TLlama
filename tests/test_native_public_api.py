@@ -397,7 +397,8 @@ async def test_public_crash_is_not_replayed_and_next_independent_request_can_rel
 
 @pytest.mark.parametrize('valid', [False, True])
 @pytest.mark.parametrize('native_memory', [False, True])
-async def test_public_hardware_smoke_entry_point(public, valid, native_memory, memory_payload):
+@pytest.mark.parametrize('mtp', [False, True])
+async def test_public_hardware_smoke_entry_point(public, valid, native_memory, memory_payload, mtp):
     manager, _, name, _ = public
     root = manager.models_dir.parent / 'cli-worker'
     root.mkdir()
@@ -408,9 +409,15 @@ async def test_public_hardware_smoke_entry_point(public, valid, native_memory, m
     script = Path(__file__).resolve().parents[1] / 'scripts' / 'api-smoke.py'
     env = {**os.environ, 'PYTHONPATH':str(script.parent.parent / 'src'),
            'STUB_ROOT':str(root), 'TLLAMA_RUNTIME_DEVICE':'none', 'TLLAMA_MEMORY_SOURCE':'auto'}
+    extra = []
+    if mtp:
+        env.update(TLLAMA_RUNTIME_SPEC_TYPE='draft-mtp', TLLAMA_RUNTIME_DRAFT_N_MAX='3',
+                   STUB_PUBLIC_CTX='4096', STUB_PUBLIC_MTP='1')
+        extra = ['--ctx', '4096', '--require-mtp']
     process = await asyncio.create_subprocess_exec(sys.executable, str(script),
         '--model', name if valid else 'missing', '--models-dir', str(manager.models_dir),
         '--executable', str(manager._native_launch_options['executable']), '--load-timeout', '5', '--request-timeout','5',
+        *extra,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=env)
     try:
         output, error = await asyncio.wait_for(process.communicate(), timeout=20)
@@ -419,10 +426,17 @@ async def test_public_hardware_smoke_entry_point(public, valid, native_memory, m
             process.kill()
             await process.wait()
     stages = [json.loads(line) for line in output.decode().splitlines() if line.startswith('{')]
-    assert process.returncode == (0 if valid else 1), (output.decode(), error.decode())
+    assert process.returncode == (0 if valid else 1), ([s for s in stages if s['stage'] == 'error'], error.decode())
     assert stages[-1]['stage'] == ('manager-closed' if valid else 'error')
     if valid:
         assert len(records(root, 'launch')) == 1
+        if mtp:
+            argv = records(root, 'launch')[0]['argv']
+            assert argv[argv.index('--spec-type') + 1] == 'draft-mtp'
+            assert argv[argv.index('--spec-draft-n-max') + 1] == '3'
+            assert argv[argv.index('--ctx-size') + 1] == '4096'
+            probe = next(stage for stage in stages if stage['stage'] == 'native-mtp-check')
+            assert probe['draft_n'] == 12 and probe['draft_n_accepted'] == 6
         assert any(stage['stage'] == 'after-stream-cancel' for stage in stages)
         reports = {stage['stage']:stage['models'] for stage in stages if stage['stage'].startswith('ps-')}
         assert set(reports) == {'ps-ready', 'ps-during-stream', 'ps-after-stream-cancel', 'ps-draining', 'ps-empty'}

@@ -1,7 +1,8 @@
 # Embedded MTP native reference — 0048
 
-This checkpoint measures the native engine before adding production MTP TOML
-settings or public statistics. It uses the already registered model containing
+This reference measures the native engine independently of production MTP TOML
+settings or public statistics. Its hardware result is accepted; for the next
+public check use [native-mtp.md](../docs/native-mtp.md). It uses the registered model containing
 embedded MTP tensors. No sidecar draft model, download or native rebuild is
 requested. The regular non-MTP GGUF is not an equivalent off baseline.
 
@@ -82,6 +83,12 @@ Review actual early native cancellation in `worker.log`. Connection closure and
 a successful follow-up alone do not prove the long task stopped before its
 512-token budget. The local synthetic subprocess test proves harness ownership,
 transport, counter validation and cleanup, not real model quality or GPU speed.
+
+0049 corrects the control check to compare the same request's actual reply
+before/after cancellation, including reasoning and normal completion. A stable
+`READY.` response is valid evidence; punctuation is not stripped or repaired.
+The accepted 0048 archive already contains identical control replies, so that
+original review flag needs no repeated hardware run.
 
 ## Source baseline and next gate
 
