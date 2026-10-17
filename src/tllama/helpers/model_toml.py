@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 
 import tomlkit
 import tomlkit.exceptions
+from tllama.helpers.fim import FIM_ORDERS
 
 
 __all__ = (
@@ -53,6 +54,7 @@ class VirtualModelSpec:
     template: Optional[str] = None
     system_prompt: Optional[str] = None
     document: Any = field(default=None, repr=False, compare=False)
+    fim_order: str = "auto"
 
 
 def _require_xor(section: str, model_value: Any, from_value: Any, source: str) -> None:
@@ -155,6 +157,14 @@ def parse_model_toml(text: str, *, source: str = "<toml>") -> VirtualModelSpec:
         _reject_unknown_keys(system_table, "system", _SYSTEM_KEYS, source)
         system_prompt = _as_optional_str(system_table.get("prompt"), field_name="system.prompt", source=source)
 
+    fim = document.get("fim", {})
+    if not isinstance(fim, dict):
+        raise TomlModelError(f"{source}: [fim] must be a table")
+    _reject_unknown_keys(fim, "fim", {"order"}, source)
+    fim_order = fim.get("order", "auto")
+    if not isinstance(fim_order, str) or fim_order not in FIM_ORDERS:
+        raise TomlModelError(f"{source}: [fim] order must be one of {', '.join(sorted(FIM_ORDERS))}")
+
     return VirtualModelSpec(
         llm_model=llm_model,
         llm_from=llm_from,
@@ -166,6 +176,7 @@ def parse_model_toml(text: str, *, source: str = "<toml>") -> VirtualModelSpec:
         stop=stop,
         template=template,
         system_prompt=system_prompt,
+        fim_order=str(fim_order),
         document=document,
     )
 
@@ -177,7 +188,7 @@ def parse_model_toml(text: str, *, source: str = "<toml>") -> VirtualModelSpec:
 # missing feature. The cost is that a .toml written for a later TLlama is
 # refused by an earlier one, which is the intended outcome.
 _KNOWN_SECTIONS = frozenset({
-    "llm", "mmproj", "runtime", "sampling", "template", "system",
+    "llm", "mmproj", "runtime", "sampling", "template", "system", "fim",
 })
 
 # The vocabularies parse_model_toml reads out of the three sections that

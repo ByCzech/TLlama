@@ -51,7 +51,7 @@ def test_cli_reference_comparison_negative_errors_and_cleanup(tmp_path, mode, ne
     summaries = [json.loads(line) for line in (output / 'summary.jsonl').read_text().splitlines()]
     assert run.stdout == (output / 'summary.jsonl').read_text()
     assert all('full_tokens' not in record and 'final' not in record for record in summaries)
-    assert records[-1]['transport_ok'] is ok and records[-1]['public_suffix'] == 'not_implemented'
+    assert records[-1]['transport_ok'] is ok and records[-1]['public_suffix'] == 'not_exercised'
     assert records[-1]['review_required'] is (not ok or mode in {'semantic-bad', 'codestral'})
     closed = [record for record in records if record['stage'] == 'worker-closed']
     assert len(closed) == (1 if negative or mode == 'codestral' else 2)

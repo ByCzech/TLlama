@@ -9,8 +9,10 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 """Layout version of the GGUF metadata cache document.
+
+Bumped to 3 for the compact FIM inventory. Digest caches remain valid.
 
 Bumped to 2 when build_model_metadata_payload() gained is_projector,
 the shard position and recommended_sampling. A cached document written

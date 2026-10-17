@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import gguf
+from tllama.helpers.fim import read_fim_metadata
 from typing import Any, Dict, Iterable, Mapping, Optional
 from enum import IntEnum
 
@@ -266,12 +267,14 @@ def read_gguf_metadata(model_path: str) -> Dict[str, Any]:
     """
     Read TLlama-relevant GGUF metadata without initializing llama.cpp inference.
 
-    This function intentionally reads only a small whitelist of keys. It avoids
-    returning large tokenizer metadata such as tokens, token types and merges.
+    Return a small whitelist plus a compact FIM inventory from the vocabulary.
+    Never return large tokenizer arrays such as tokens, token types or merges.
     """
     reader = gguf.GGUFReader(model_path)
     keys = _build_metadata_key_set(reader)
-    return _read_selected_fields(reader, keys)
+    metadata = _read_selected_fields(reader, keys)
+    metadata["fim"] = read_fim_metadata(reader)
+    return metadata
 
 
 def _first_present(meta: Mapping[str, Any], keys: Iterable[str], default: Any = None) -> Any:
@@ -366,7 +369,7 @@ def build_model_metadata_payload(meta: Dict[str, Any]) -> Dict[str, Any]:
     metadata_raw = {
         key: value
         for key, value in meta.items()
-        if isinstance(value, (str, int, float, bool)) or value is None
+        if key != "fim" and (isinstance(value, (str, int, float, bool)) or value is None)
     }
 
     shard_index, shard_count = _shard_position(meta)
@@ -381,6 +384,7 @@ def build_model_metadata_payload(meta: Dict[str, Any]) -> Dict[str, Any]:
         "context_length": context_length,
         "display_name": display_name,
         "metadata_raw": metadata_raw,
+        "fim": meta.get("fim"),
 
         # A projector is not a model and a continuation shard is not a
         # separate model. Reported here so callers that build or list

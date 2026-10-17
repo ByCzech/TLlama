@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Measure native FIM before implementing public /api/generate suffix support.
+"""Measure native FIM formatting independently of public suffix support.
 
 Resolves registered TLlama models, but calls only the owned native worker.
 See fim-smoke.md for evidence, deliberate launch overrides and interpretation.
@@ -499,7 +499,7 @@ async def exercise(args, emit):
                        review_required=bool(observations) or not ok, observations=sorted(set(observations)))
             review_profiles += bool(observations) or not ok
             all_ok &= ok
-    emit("finished", transport_ok=all_ok, public_suffix="not_implemented",
+    emit("finished", transport_ok=all_ok, public_suffix="not_exercised",
          semantic_matches=semantic_matches, semantic_total=semantic_total, review_profiles=review_profiles,
          review_required=bool(review_profiles),
          note="Semantic matches and reference differences require review; exit status covers harness/protocol/cleanup only.")

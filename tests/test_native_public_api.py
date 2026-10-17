@@ -106,7 +106,7 @@ async def test_zero_keep_alive_inference_closes_after_public_result(public, path
     assert worker.process.returncode is not None and not worker.runtime_directory.exists()
 
 
-@pytest.mark.parametrize('path,extra,status', [('/api/generate', {'suffix': 'suffix'}, 501),
+@pytest.mark.parametrize('path,extra,status', [('/api/generate', {'suffix': 'suffix', 'raw': True}, 400),
     ('/api/generate', {'context': [1, 2]}, 400), ('/api/generate', {'raw': True, 'system': ''}, 400),
     ('/api/generate', {'images': ['not decoded']}, 400), ('/v1/chat/completions', {'functions': []}, 400),
     ('/v1/chat/completions', {'function_call': 'auto'}, 400), ('/api/chat', {'format': 'bad'}, 400),

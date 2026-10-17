@@ -19,6 +19,7 @@ from tllama.helpers.vision import content_carries_images, request_carries_images
 from tllama.native_api import (NativeAPI, ReplyContext, ollama_response, openai_response,
                               ollama_stream, openai_stream, public_error)
 from tllama.native_config import _plain
+from tllama.native_fim import prepare_fim, validate_fim_input
 from tllama.native_requests import (NativeRequest, prepare_ollama_chat, prepare_openai_chat,
                                    prepare_completion, prepare_ollama_generate_images,
                                    _response_format, normalize_chat_input)
@@ -73,8 +74,8 @@ def _validate(request, api, kind):
         validate_format(request.format)
         validate_sampling_options(request.options)
         if kind == "completion":
-            if request.suffix:
-                raise HTTPException(501, "FIM suffix is not implemented in this native checkpoint")
+            if request.suffix is not None:
+                validate_fim_input(request)
             if request.context:
                 raise ValueError("Nonempty generate context is unsupported; supply explicit messages instead")
             if request.raw and any(value is not None for value in (request.template, request.system, request.context)):
@@ -121,6 +122,8 @@ def lease_metadata(lease):
 
 
 async def _completion_request(request, lease, metadata) -> NativeRequest:
+    if request.suffix is not None:
+        return await prepare_fim(request, lease, metadata)
     props = lease.worker.props or {}
     bos, eos = props.get("bos_token", ""), props.get("eos_token", "")
     if not isinstance(bos, str) or not isinstance(eos, str):
@@ -151,7 +154,8 @@ async def serve_native(manager, request, *, api, kind="chat"):
         keep_alive = request.keep_alive if api == "ollama" else None
         if api == "ollama":
             seconds = manager.resolve_keep_alive(keep_alive)
-            empty = not request.messages if kind == "chat" else not request.prompt and not normalized
+            empty = (not request.messages if kind == "chat" else
+                     not request.prompt and request.suffix is None and not normalized)
             if empty:
                 phase = "load"
                 if seconds == 0:

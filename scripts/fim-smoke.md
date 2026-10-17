@@ -1,6 +1,7 @@
 # Native FIM reference smoke
 
-This is a measurement checkpoint, before implementing Ollama `suffix` in TLlama.
+This reference diagnostic measures native formatting independently of TLlama's
+public suffix mapping. For public-route acceptance, see [fim-api-smoke.md](fim-api-smoke.md).
 It resolves registered models through `ModelManager`, holds a lease for all
 requests, and uses only its own authenticated loopback worker. It does not call
 the public `/api/generate` route, change model TOML, or contact a running service.

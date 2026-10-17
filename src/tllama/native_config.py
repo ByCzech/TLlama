@@ -13,6 +13,7 @@ from typing import Mapping
 
 from tllama.config import BackendConfig, ConfigError
 from tllama.helpers.common import build_sampling_kwargs
+from tllama.helpers.fim import FIM_ORDERS
 from tllama.helpers.model_toml import VirtualModelSpec
 from tllama.helpers.runtime_params import coerce_runtime_overrides
 from tllama.helpers.sampling_params import coerce_sampling_overrides
@@ -35,6 +36,7 @@ class ResolvedWorkerConfig:
     model_sampling: Mapping | None
     model_stop: tuple[str, ...] | None
     system_prompt: str | None
+    fim_order: str = "auto"
 
 
 def _plain(value):
@@ -61,6 +63,9 @@ def resolve_worker_config(
     alias: str = "tllama-worker", load_timeout: float = 600,
     request_timeout: float | None = None,
 ) -> ResolvedWorkerConfig:
+    if virtual_spec is not None and (not isinstance(virtual_spec.fim_order, str)
+                                     or virtual_spec.fim_order not in FIM_ORDERS):
+        raise ConfigError("Invalid FIM order in model configuration")
     runtime = dict(_DEFAULTS)
     sources = {key: "baseline" for key in runtime}
     runtime["n_ctx"] = config.context_length
@@ -136,7 +141,8 @@ def resolve_worker_config(
     return ResolvedWorkerConfig(launch, freeze_values(runtime), MappingProxyType(sources),
                                 freeze_values(sampling), freeze_values(virtual_spec.sampling) if virtual_spec else None,
                                 tuple(virtual_spec.stop) if virtual_spec else None,
-                                virtual_spec.system_prompt if virtual_spec else None)
+                                virtual_spec.system_prompt if virtual_spec else None,
+                                virtual_spec.fim_order if virtual_spec else "auto")
 
 
 def build_native_sampling(opts: dict, metadata_info: dict | None = None, *,

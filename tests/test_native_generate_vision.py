@@ -90,7 +90,7 @@ async def test_image_only_is_inference_and_keep_alive_zero_retires_after_reply(v
 
 
 @pytest.mark.parametrize("extra,status", [({"raw": True}, 400), ({"template": "{{ Prompt }}"}, 400),
-    ({"template": ""}, 400), ({"suffix": "tail"}, 501), ({"context": [1]}, 400),
+    ({"template": ""}, 400), ({"suffix": "tail"}, 400), ({"context": [1]}, 400),
     ({"format": "invalid"}, 400)])
 async def test_unsupported_combinations_fail_before_model_load(public, extra, status):
     manager, client, name, _ = public

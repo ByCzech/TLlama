@@ -470,17 +470,32 @@ class NativeWorker:
         async with self._response("/completion", self._body(payload, chat=False, stream=False)) as response:
             return await self._json_body(response)
 
-    async def tokenize(self, content: str, *, add_special: bool = True) -> list[int]:
+    async def tokenize(self, content: str, *, add_special: bool = True, parse_special: bool = True) -> list[int]:
         """Use this loaded worker's tokenizer, without evaluating the prompt."""
-        if not isinstance(content, str) or type(add_special) is not bool:
-            raise ValueError("Tokenization needs text and a boolean add_special")
+        if not isinstance(content, str) or type(add_special) is not bool or type(parse_special) is not bool:
+            raise ValueError("Tokenization needs text and boolean special-token flags")
         async with self._response("/tokenize", {"content": content, "add_special": add_special,
-                                                "parse_special": True}) as response:
+                                                "parse_special": parse_special}) as response:
             payload = await self._json_body(response)
         tokens = payload.get("tokens")
         if not isinstance(tokens, list) or any(type(token) is not int or token < 0 for token in tokens):
             raise WorkerProtocolError("Native tokenizer must return nonnegative integer tokens")
         return tokens
+
+    async def token_pieces(self, tokens: list[int]) -> list[str]:
+        """Verify exact vocabulary entries without re-tokenizing their spellings."""
+        if any(type(token) is not int or token < 0 for token in tokens):
+            raise ValueError("Token pieces need nonnegative integer tokens")
+        async with self._response("/tokenize", {"content": tokens, "add_special": False,
+                                                "with_pieces": True}) as response:
+            payload = await self._json_body(response)
+        entries = payload.get("tokens")
+        if (not isinstance(entries, list) or len(entries) != len(tokens)
+                or any(not isinstance(entry, dict) or type(entry.get("id")) is not int
+                       or entry["id"] != token or not isinstance(entry.get("piece"), str)
+                       for token, entry in zip(tokens, entries))):
+            raise WorkerProtocolError("Native token pieces must preserve requested IDs and string pieces")
+        return [entry["piece"] for entry in entries]
 
     @asynccontextmanager
     async def chat_stream(self, payload: Mapping[str, Any]):

@@ -66,8 +66,8 @@ async def exercise(args):
             # No model loads for the agreed checkpoint limitations.
             empty_ps = await client.get('/api/ps')
             require(empty_ps.status_code == 200 and empty_ps.json() == {'models':[]}, 'Expected an empty native /api/ps')
-            require((await client.post('/api/generate', json={'model': args.model, 'prompt':'x', 'suffix':'x'})).status_code == 501,
-                    'Expected explicit suffix checkpoint 501')
+            require((await client.post('/api/generate', json={'model': args.model, 'prompt':'x', 'suffix':'x', 'raw':True})).status_code == 400,
+                    'Expected explicit raw/suffix incompatibility')
             require(not manager.native_snapshot(), 'Validation unexpectedly loaded a model')
 
             loaded = (await post('/api/chat', {'model': args.model, 'messages': [], 'keep_alive': -1})).json()

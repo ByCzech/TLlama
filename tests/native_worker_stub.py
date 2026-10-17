@@ -94,7 +94,14 @@ FIM_TOKENS = {"[PRE]": 1100001, "[SUF]": 1100002, "[MID]": 1100003,
               "<|fim_prefix|>": 1100011, "<|fim_suffix|>": 1100012, "<|fim_middle|>": 1100013,
               "<|file_separator|>": 70, "<fim_prefix>": 1100021,
               "<fim_suffix>": 1100022, "<fim_middle>": 1100023, "<file_sep>": 1100024,
-              "[PREFIX]": 1100031, "[SUFFIX]": 1100032, "[MIDDLE]": 1100033}
+              "[PREFIX]": 1100031, "[SUFFIX]": 1100032, "[MIDDLE]": 1100033,
+              "<｜fim▁begin｜>": 1100041, "<｜fim▁hole｜>": 1100042, "<｜fim▁end｜>": 1100043,
+              "<|file_sep|>": 1100051, "<|repo_name|>": 1100052, "<|fim_pad|>": 1100053}
+
+# Small IDs permit real, compact GGUF headers in public-route tests. Reference
+# diagnostic fixtures retain their independent historical token assignments.
+if os.environ.get('STUB_PUBLIC_FIM'):
+    FIM_TOKENS = {piece: index for index, piece in enumerate(FIM_TOKENS, 1)}
 
 
 def fim_selected():
@@ -130,11 +137,12 @@ async def fim_request(reader, writer, path, body):
             tokens = fim_tokenize(' <|file_separator|>', special=False)
         if mode == 'codegemma' and body['content'] == '<|file_separator|>':
             tokens = [1032] + tokens
-        tokens = ([7] if body.get('add_special') else []) + tokens
+        tokens = ([FIM_TOKENS['<bos>']] if body.get('add_special') else []) + tokens
         if body.get('with_pieces'):
             reverse = {value: key for key, value in FIM_TOKENS.items()}
             tokens = [{'id': token, 'piece': reverse[token] if token in reverse else chr(token - 1000)} for token in tokens]
-            if mode == 'codegemma-bad-piece' and body['content'] == [70]:
+            if (mode == 'codegemma-bad-piece' and isinstance(body['content'], list)
+                    and FIM_TOKENS['<|file_separator|>'] in body['content']):
                 tokens[0]['piece'] = 'WRONG'
         await json_response(writer, {'tokens': tokens})
         return
@@ -161,12 +169,15 @@ async def fim_request(reader, writer, path, body):
             content = 'amber' if 'Read the amber' in text or 'Read the "amber"' in text else 'violet'
         else:
             content = 'a * b' if '== 14' in text else 'a + b'
+        if (ROOT / 'fim-content').exists():
+            content = (ROOT / 'fim-content').read_text()
         if mode == 'semantic-bad':
             content = 'a - b'
         stopping_word = ''
         generated = fim_tokenize(content)
         if body.get('logit_bias'):
-            forced = body['logit_bias'][0][0]
+            forced = (int(next(iter(body['logit_bias']))) if isinstance(body['logit_bias'], dict)
+                      else body['logit_bias'][0][0])
             piece = reverse[forced]
             generated = [forced]
             if piece in body.get('stop', []) and piece in body.get('preserved_tokens', []) and mode != 'ignored-stops':
@@ -190,7 +201,7 @@ async def fim_request(reader, writer, path, body):
         writer.write(b'HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n')
         await writer.drain()
         await stream_bytes(writer, event({'content': content, 'stop': False}))
-        if body.get('ignore_eos') and not body.get('logit_bias'):
+        if (body.get('ignore_eos') or body.get('stub') == 'hold') and not body.get('logit_bias'):
             mark('started', 'fim-stream')
             await reader.read()
             mark('cancelled', 'fim-stream')
@@ -232,7 +243,7 @@ async def handle(reader, writer):
                 "model_alias": "wrong" if MODE == "wrong-alias" else arg("--alias"),
                 "total_slots": 4 if MODE == "wrong-slots" else 1,
                 "model_path": arg("--model"),
-                "default_generation_settings": {"n_ctx": 0 if MODE == "bad-context" else 2048},
+                "default_generation_settings": {"n_ctx": 0 if MODE == "bad-context" else int(os.environ.get('STUB_PUBLIC_CTX',2048))},
                 "modalities": {"vision": "--mmproj" in sys.argv and MODE != 'no-vision'},
                 "bos_token": "<bos>", "eos_token": "<eos>",
                 "chat_template": (Path(arg("--chat-template-file")).read_text() if "--chat-template-file" in sys.argv
