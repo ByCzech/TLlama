@@ -62,6 +62,66 @@ async def json_response(writer, value, status=200):
     await writer.drain()
 
 
+async def tools_request(reader, writer, body):
+    """Synthetic Tools protocol only; does not simulate real model quality."""
+    mode = os.environ['STUB_TOOLS']
+    if mode in {'http400','http500'}:
+        await json_response(writer,{'error':{'message':'template does not support this request'}},
+                            400 if mode == 'http400' else 500)
+        return
+    messages = body['messages']
+    outputs = [json.loads(m['content'])['marker'] for m in messages if m['role'] == 'tool']
+    calls, content = [], ''
+    if outputs:
+        content = ' '.join(outputs)
+    elif body['tool_choice'] == 'none':
+        content = 'NO_TOOL'
+    else:
+        prompt = next(m['content'] for m in reversed(messages) if m['role'] == 'user')
+        keys = json.loads(prompt.split(': ',1)[1])
+        if isinstance(keys,str):
+            keys = [keys]
+        for index,key in enumerate(keys):
+            calls.append({'id':f'call-{index}','type':'function','function':{
+                'name':'lookup_record','arguments':json.dumps({'key':'wrong' if mode == 'semantic-bad' else key},ensure_ascii=False)}})
+    finish = 'tool_calls' if calls else 'stop'
+    if not body['stream']:
+        await json_response(writer,{'choices':[{'index':0,'message':{'role':'assistant','content':content,'tool_calls':calls},
+                                               'finish_reason':finish}],'usage':USAGE,'timings':TIMINGS})
+        return
+    writer.write(b'HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n')
+    await writer.drain()
+    def frame(delta, reason=None):
+        return event({'choices':[{'index':0,'delta':delta,'finish_reason':reason}]})
+    if calls:
+        for index,call in enumerate(calls):
+            await stream_bytes(writer,frame({'tool_calls':[{'index':index,'id':call['id'],'type':'function',
+                'function':{'name':'lookup' if mode == 'growing-name' else call['function']['name']}}]}))
+            if mode == 'growing-name':
+                await stream_bytes(writer,frame({'tool_calls':[{'index':index,'id':call['id'],
+                    'function':{'name':call['function']['name']}}]}))
+        # Interleave calls; split JSON strings and escapes independently of TCP.
+        arguments = [call['function']['arguments'] for call in calls]
+        for offset in range(0,max(map(len,arguments)),3):
+            for index,text in enumerate(arguments):
+                if offset < len(text):
+                    part = 'not-json' if mode == 'malformed-json' else text[offset:offset+3]
+                    await stream_bytes(writer,frame({'tool_calls':[{'index':index,'function':{'arguments':part}}]}))
+            if 'cancel_' in messages[-1]['content']:
+                mark('started','tools')
+                await reader.read()
+                mark('cancelled','tools')
+                return
+        if mode == 'truncated':
+            return
+    else:
+        await stream_bytes(writer,frame({'content':content}))
+    await stream_bytes(writer,frame({},finish))
+    await stream_bytes(writer,event({'choices':[],'usage':USAGE,'timings':TIMINGS}))
+    if mode != 'no-done':
+        await stream_bytes(writer,b'data: [DONE]\r\n\r\n')
+
+
 async def stream_bytes(writer, value):
     # Split UTF-8 code points, delimiters and JSON across writes.
     for offset in range(0, len(value), 3):
@@ -270,6 +330,10 @@ async def handle(reader, writer):
             return
         if os.environ.get('STUB_FIM') and path in {'/tokenize', '/completion', '/infill'}:
             await fim_request(reader, writer, path, body)
+            return
+        if os.environ.get('STUB_TOOLS') and path == '/v1/chat/completions':
+            async with LOCK:
+                await tools_request(reader,writer,body)
             return
         if path == "/tokenize":
             # Deterministic IDs expose exact render text in the request log.
