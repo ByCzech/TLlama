@@ -50,6 +50,13 @@ class OllamaGenerateRequest(BaseModel):
     images: Optional[List[str]] = None
     suffix: Optional[str] = None
 
+    @field_validator("suffix", mode="before")
+    @classmethod
+    def normalize_empty_suffix(cls, value):
+        # Ollama's Go client serializes the zero-value suffix even for
+        # preload/unload requests. Only nonempty suffixes select FIM.
+        return None if value == "" else value
+
     @field_validator("options", mode="before")
     @classmethod
     def prevent_none_options(cls, v):

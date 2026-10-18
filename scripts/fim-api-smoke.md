@@ -64,9 +64,12 @@ tar -C /tmp -cJf /tmp/tllama-fim-public-v1.tar.xz tllama-fim-public-v1
 
 ## Public suffix policy
 
-The presence of `suffix`, including `""`, selects FIM. An omitted/null suffix
-keeps ordinary generate semantics. Empty prefix and/or suffix are valid FIM
-inputs, including with `keep_alive=0` (infer, then retire).
+A nonempty `suffix` selects FIM. An omitted, null or empty-string suffix keeps
+ordinary generate semantics, matching Ollama's Go client, which serializes an
+empty suffix even for preload/unload requests. With no prompt or images, that
+request is load/unload control rather than FIM inference. An empty prefix with
+a nonempty suffix remains valid FIM, including with `keep_alive=0` (infer, then
+retire). Since 0055, an empty suffix no longer selects prefix-only FIM.
 
 Capability comes from a compact snapshot of exact, unique GGUF vocabulary
 entries, checked against the live worker tokenizer. It does not depend on model

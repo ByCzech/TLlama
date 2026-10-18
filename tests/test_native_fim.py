@@ -120,10 +120,9 @@ async def test_toml_selects_explicit_order_without_native_infill(fim, order, exp
     assert completions(manager)[0]['stop'][0] == 'MODEL STOP'
 
 
-@pytest.mark.parametrize('prefix,suffix', [('', ''), ('x',''), ('','y')])
-async def test_empty_sides_are_inference_and_keep_alive_zero_closes(fim, prefix, suffix):
+async def test_empty_prefix_is_inference_and_keep_alive_zero_closes(fim):
     manager, client, name, _, _, _ = fim
-    response = await client.post('/api/generate', json=body(name, prompt=prefix, suffix=suffix, keep_alive=0))
+    response = await client.post('/api/generate', json=body(name, prompt='', suffix='y', keep_alive=0))
     assert response.status_code == 200 and response.json()['done_reason'] == 'stop'
     assert len(completions(manager)) == 1
     await wait_until(lambda: not manager.native_snapshot())
@@ -157,8 +156,8 @@ async def test_unsupported_recipe_is_501_before_inference_and_worker_stays_usabl
 
 async def test_exact_effective_context_boundary_never_silently_clips(fim):
     manager, client, name, _, _, _ = fim
-    for count, status in [(2043,200), (2044,400), (2100,400)]:
-        response = await client.post('/api/generate', json=body(name, prompt='x'*count, suffix='',
+    for count, status in [(2042,200), (2043,400), (2100,400)]:
+        response = await client.post('/api/generate', json=body(name, prompt='x'*count, suffix='y',
             options={'num_ctx':8192, 'num_predict':8}))
         assert response.status_code == status, response.text
         if status == 400:
