@@ -14,6 +14,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Any, Mapping, Callable, Awaitable
 
 from tllama.native_config import ResolvedWorkerConfig, _plain
+from tllama.embedding_contract import embedding_contract
 from tllama.helpers.common import never_expires_at, NEVER_EXPIRES_SECONDS
 from tllama.native_params import freeze_values
 from tllama.worker import NativeWorker, WorkerError, WorkerExited
@@ -324,8 +325,10 @@ class NativeResidency:
                 raise
             if definition.name != name:
                 raise ValueError("Resolver returned a different public model name")
-            if operation is not None and definition.resolved.launch.embedding != (operation == "embedding"):
+            if operation is not None and definition.resolved.launch.embedding != (operation != "generation"):
                 raise ValueError(f"Model {name!r} is not configured for {operation}")
+            if operation == 'text_embedding':
+                embedding_contract(definition.metadata, definition.resolved.launch.pooling_type)
             async with self._condition:
                 self._ensure_open()
                 if intent.aborted:
@@ -391,8 +394,8 @@ class NativeResidency:
     @asynccontextmanager
     async def lease(self, name: str, *, num_ctx: int | None = None, keep_alive_seconds: float | None = 300,
                     operation: str | None = None):
-        if operation not in (None, "generation", "embedding"):
-            raise ValueError("operation must be generation, embedding or unset for load control")
+        if operation not in (None, "generation", "embedding", "text_embedding"):
+            raise ValueError("operation must be generation, embedding, text_embedding or unset for load control")
         if keep_alive_seconds is not None and (
             isinstance(keep_alive_seconds, bool) or not isinstance(keep_alive_seconds, (int, float))
             or not math.isfinite(keep_alive_seconds) or keep_alive_seconds < 0

@@ -260,6 +260,7 @@ def _build_metadata_key_set(reader: Any) -> tuple[str, ...]:
         arch = _field_to_python_value(arch_field)
         if isinstance(arch, str) and arch:
             keys.add(f"{arch}.context_length")
+            keys.update(f"{arch}.{suffix}" for suffix in ("pooling_type", "embedding_length", "decision.type"))
 
     return tuple(sorted(keys))
 
@@ -274,6 +275,8 @@ def read_gguf_metadata(model_path: str) -> Dict[str, Any]:
     reader = gguf.GGUFReader(model_path)
     keys = _build_metadata_key_set(reader)
     metadata = _read_selected_fields(reader, keys)
+    vocab = reader.fields.get("tokenizer.ggml.tokens")
+    metadata["embedding"] = {"vocab_size": len(vocab.data)} if vocab is not None else {}
     metadata["fim"] = read_fim_metadata(reader)
     return metadata
 
@@ -388,6 +391,7 @@ def build_model_metadata_payload(meta: Dict[str, Any]) -> Dict[str, Any]:
         "display_name": display_name,
         "metadata_raw": metadata_raw,
         "fim": meta.get("fim"),
+        "embedding": meta.get("embedding", {}),
 
         # A projector is not a model and a continuation shard is not a
         # separate model. Reported here so callers that build or list

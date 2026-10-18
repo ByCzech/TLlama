@@ -69,7 +69,10 @@ async def json_response(writer, value, status=200):
 async def embeddings_request(reader, writer, body):
     """Synthetic embeddings only; no model or numerical-quality simulation."""
     mode = os.environ.get('STUB_EMBEDDINGS', 'normal')
+    if (ROOT / 'embedding-behavior').exists():
+        mode = (ROOT / 'embedding-behavior').read_text()
     texts = body.get('input')
+    token_rows = isinstance(texts, list) and texts and all(isinstance(row, list) for row in texts)
     token_input = isinstance(texts, list) and texts and type(texts[0]) is int
     if not texts or token_input and len(texts) > int(arg('--ctx-size', '256')):
         await json_response(writer, {'error': {'message': 'empty input or context exceeded'}}, 400)
@@ -78,14 +81,17 @@ async def embeddings_request(reader, writer, body):
         await json_response(writer, {'error': {'message': 'invalid encoding'}}, 500 if mode == 'error500' else 400)
         return
     token_count = len(texts) if token_input else None
-    if token_input:
+    if token_rows:
+        token_count = sum(map(len, texts))
+        texts = [json.dumps(row) for row in texts]
+    elif token_input:
         texts = ['token ids']
     elif isinstance(texts, str):
         texts = [texts]
-    if mode == 'http500':
-        await json_response(writer, {'error': {'message': 'inference failed'}}, 500)
+    if mode in {'http400', 'http500'}:
+        await json_response(writer, {'error': {'message': 'inference failed'}}, 400 if mode == 'http400' else 500)
         return
-    if len(texts) == 32 and mode != 'fast':
+    if mode == 'hold' or len(texts) == 32 and mode != 'fast':
         mark('started', 'embeddings')
         await reader.read()
         mark('cancelled', 'embeddings')
@@ -96,7 +102,8 @@ async def embeddings_request(reader, writer, body):
         if mode == 'drift' and len(texts) > 1:
             vector[0] += 100
         norm = math.sqrt(sum(value * value for value in vector))
-        vector = [value / norm for value in vector]
+        if body.get('embd_normalize') != -1:
+            vector = [value / norm for value in vector]
         if mode == 'wrong-dimension' and index:
             vector = vector[:-1]
         if mode == 'bad-norm':
@@ -109,6 +116,10 @@ async def embeddings_request(reader, writer, body):
                'usage': {'prompt_tokens': tokens, 'total_tokens': tokens}}
     if mode == 'no-usage':
         del payload['usage']
+    if mode == 'bad-usage':
+        payload['usage']['prompt_tokens'] += 1
+    if mode == 'reverse':
+        payload['data'].reverse()
     await json_response(writer, payload)
 
 
@@ -450,6 +461,12 @@ async def handle(reader, writer):
             return
         if (os.environ.get('STUB_EMBEDDINGS') or '--embeddings' in sys.argv) and path == '/v1/embeddings':
             await embeddings_request(reader, writer, body)
+            return
+        if path == '/tokenize' and os.environ.get('STUB_PUBLIC_EMBEDDINGS'):
+            tokens = [value + 10 for value in body['content'].encode('utf-8')]
+            if body.get('add_special'):
+                tokens = [1, *tokens, 2]
+            await json_response(writer, {'tokens': tokens})
             return
         if path == "/tokenize":
             # Deterministic IDs expose exact render text in the request log.

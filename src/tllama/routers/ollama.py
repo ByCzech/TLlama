@@ -15,6 +15,9 @@ from tllama.helpers.tool_capability import template_accepts_tools
 from tllama.native_routes import serve_native
 from tllama.native_reporting import ollama_processes
 from tllama.errors import ollama_stream_error_line
+from tllama.embedding_contract import embedding_capable
+from tllama.native_embeddings import embedding_response
+from tllama.schemas.embeddings import OllamaEmbedRequest, OllamaLegacyEmbeddingRequest
 
 router = APIRouter(
     prefix="/api",
@@ -79,6 +82,18 @@ async def ollama_generate(request: OllamaGenerateRequest):
     return await serve_native(model_manager, request, api="ollama", kind="completion")
 
 
+@router.post("/embed")
+async def ollama_embed(request: OllamaEmbedRequest, http_request: Request):
+    _validate_runner(request.runner)
+    return await embedding_response(http_request, model_manager, request, api='ollama')
+
+
+@router.post("/embeddings")
+async def ollama_embeddings(request: OllamaLegacyEmbeddingRequest, http_request: Request):
+    _validate_runner(request.runner)
+    return await embedding_response(http_request, model_manager, request, api='ollama', legacy=True)
+
+
 @router.post("/show")
 async def show_model_info(request: dict):
     _validate_runner(request.get("runner"))
@@ -116,8 +131,7 @@ async def show_model_info(request: dict):
     if metadata_info.get('vision_configured', metadata_info.get('has_projector')) is True:
         capabilities.append('vision')
     if metadata_info.get("embedding_configured") is True:
-        # Public embedding adapters are a separate integration checkpoint.
-        capabilities = []
+        capabilities = ["embedding"] if embedding_capable(metadata_info) else []
     # Ollama's own `show --modelfile` hands back the definition a model
     # was built from, and the workflow that makes it worth having is
     # fetching it, editing it and putting it back. So this is the .toml

@@ -217,7 +217,7 @@ async def test_public_empty_generate_can_preload_and_unload_embedding_mode(publi
 
 @pytest.mark.parametrize('global_mode,local_mode,expected', [('true', None, True), ('true', False, False),
                                                          ('false', True, True)])
-async def test_show_does_not_advertise_generation_or_unimplemented_embedding_apis(
+async def test_show_requires_known_pooled_output_metadata(
         public, monkeypatch, global_mode, local_mode, expected):
     manager, client, name, toml = public
     writer = gguf.GGUFWriter(str(manager.local_models_dir / 'a.gguf'), arch='bert')

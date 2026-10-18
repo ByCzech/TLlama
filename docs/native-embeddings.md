@@ -1,5 +1,9 @@
 # Native text embedding workers — 0057
 
+Public adapters were added in 0058; see [embedding-api.md](embedding-api.md)
+for the current public contract and remaining hardware gate. The sections
+below describe the 0057 worker checkpoint.
+
 This checkpoint integrates explicit text embedding workers with ModelManager.
 The accepted independent reference used MiniLM Q8_0 and Qwen3-Embedding 0.6B
 Q8_0 on native b11552-3144c167ef. Public `/api/embed`, legacy `/api/embeddings`

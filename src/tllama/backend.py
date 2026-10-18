@@ -641,6 +641,7 @@ class ModelManager:
             overrides = {}
             global_runtime = coerce_runtime_overrides(self.config.runtime_overrides)
             overrides["embedding_configured"] = virtual_spec.runtime.get("embedding", global_runtime.get("embedding", False))
+            overrides["embedding_pooling_type"] = int(virtual_spec.runtime.get("pooling_type", global_runtime.get("pooling_type", -1)))
             if virtual_spec.template is not None:
                 overrides["template"] = virtual_spec.template
                 # A nonempty native override replaces both GGUF variants.

@@ -9,9 +9,10 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 """Layout version of the GGUF metadata cache document.
 
+Bumped to 5 for embedding pooling/dimensions, decision type and compact vocab size.
 Bumped to 4 for the named tool-use template. Digest caches remain valid.
 Bumped to 3 for the compact FIM inventory.
 
