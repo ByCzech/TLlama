@@ -24,8 +24,15 @@ def _inputs(value):
     return value or []
 
 
-def _token_limit(lease):
-    limits = [lease.worker.props['default_generation_settings']['n_ctx'],
+def _token_limit(lease, contract):
+    context = lease.worker.props['default_generation_settings']['n_ctx']
+    # Pinned server can_split() uses an exclusive context bound for LAST
+    # pooling with memory. Props do not expose memory presence, so reserve
+    # one slot for LAST conservatively, without guessing from architecture.
+    # Batch/ubatch and trained-context bounds remain inclusive.
+    if contract.pooling == 3:
+        context -= 1
+    limits = [context,
               lease.resolved.runtime['n_batch'], lease.resolved.runtime['n_ubatch']]
     trained = lease.definition.metadata.get('context_length')
     if type(trained) is int and trained > 0:
@@ -50,7 +57,7 @@ async def _truncate_text(worker, text, full, limit):
 
 
 async def _prepare_inputs(lease, inputs, contract, *, truncate):
-    limit, prepared, total = _token_limit(lease), [], 0
+    limit, prepared, total = _token_limit(lease, contract), [], 0
     for value in inputs:
         if isinstance(value, str):
             tokens = await lease.worker.tokenize(value, add_special=True, parse_special=True)

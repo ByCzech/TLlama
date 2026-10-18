@@ -40,6 +40,16 @@ The current per-item limit is the minimum of the effective worker context,
 the trained context when known, configured n_batch and n_ubatch. This is a
 deliberately conservative bound for all pooled models: native does not expose
 whether this loaded model can split a sequence across physical batches.
+For LAST pooling, the effective worker context contributes `n_ctx - 1`: the
+pinned server's memory-backed splitting path rejects `n_tokens >= n_ctx`.
+Mean/CLS retain the inclusive context bound. Native props do not expose memory
+presence, so the one-token reserve is conservative for any configured LAST
+output. It is selected from the verified pooling contract, never a family name.
+Only the worker context is reduced; a smaller trained/batch/ubatch bound stays
+inclusive. Thus context 256 permits 255 LAST tokens or 256 mean/CLS tokens when
+the other bounds allow it. Ollama truncation and reported usage use that exact
+submitted limit; token-array, OpenAI text and legacy inputs above it get 400
+before native inference. This corrects the boundary found in hardware run 0059.
 A causal decoder may support more than this bound natively. Increase the
 configured physical batches when appropriate; no silent launch tuning or
 architecture-name heuristic is used here.

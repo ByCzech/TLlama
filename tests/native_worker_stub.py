@@ -74,7 +74,7 @@ async def embeddings_request(reader, writer, body):
     texts = body.get('input')
     token_rows = isinstance(texts, list) and texts and all(isinstance(row, list) for row in texts)
     token_input = isinstance(texts, list) and texts and type(texts[0]) is int
-    if not texts or token_input and len(texts) > int(arg('--ctx-size', '256')):
+    if not texts:
         await json_response(writer, {'error': {'message': 'empty input or context exceeded'}}, 400)
         return
     if body.get('encoding_format', 'float') not in {'float', 'base64'}:
@@ -90,6 +90,12 @@ async def embeddings_request(reader, writer, body):
             items = [texts] if isinstance(texts, str) else texts
             texts = [[1, *(value + 10 for value in text.encode('utf-8')), 2] for text in items]
             token_rows = True
+    lengths = list(map(len, texts)) if token_rows else [len(texts)] if token_input else []
+    context = int(arg('--ctx-size', '256'))
+    exclusive = os.environ.get('STUB_EMBEDDING_POOLING') == '3'
+    if any(n > context or exclusive and n == context for n in lengths):
+        await json_response(writer, {'error': {'message': 'context exceeded'}}, 400)
+        return
     if token_rows:
         token_count = sum(map(len, texts))
         texts = [json.dumps(row) for row in texts]

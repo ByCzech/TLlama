@@ -382,14 +382,22 @@ async def exercise_model(args, model, profile, sdks, emit):
                 raw_metadata = metadata['metadata_raw']
                 arch = raw_metadata['general.architecture']
                 dimension = raw_metadata[f'{arch}.embedding_length']
-                limit = min(worker.props['default_generation_settings']['n_ctx'], args.ctx,
+                pooling = lease.resolved.launch.pooling_type
+                if pooling == -1:
+                    pooling = raw_metadata[f'{arch}.pooling_type']
+                # Independent native boundary: LAST with memory rejects
+                # n_tokens >= n_ctx; mean/CLS allow the full context.
+                context = worker.props['default_generation_settings']['n_ctx']
+                context_reserve = 1 if pooling == 3 else 0
+                limit = min(context - context_reserve, args.ctx,
                             metadata.get('context_length') or args.ctx)
                 require(1 < dimension <= 65536 and 32 <= limit <= args.ctx, 'Unexpected bounded diagnostic contract')
                 emit('ready', pid=pid, generation=generation, argv=worker.command,
                      fingerprint=worker.runtime_fingerprint, props=worker.props, metadata=metadata,
                      runtime=_plain(lease.resolved.runtime), sources=_plain(lease.resolved.sources),
                      model_path=str(worker.spec.model), model_size_bytes=worker.spec.model.stat().st_size,
-                     dimension=dimension, token_limit=limit)
+                     dimension=dimension, token_limit=limit, pooling=pooling,
+                     context_reserve=context_reserve)
             await reference.memory(worker, emit, observations, 'after-load')
             audit = Audit(args, model, worker, dimension, emit, observations)
             rows = [await audit.tokenize(text) for text in TEXTS]
@@ -438,7 +446,7 @@ async def exercise_model(args, model, profile, sdks, emit):
 
 
 async def exercise(args, emit, sdks):
-    emit('diagnostic-version', version=1, checkpoint='0059', models=args.model, public_api='tcp',
+    emit('diagnostic-version', version=2, checkpoint='0060', models=args.model, public_api='tcp',
          mode='text_only', native_cancellation='early_compute_stop_not_proven',
          sdk_versions={name: version(name) for name in ('ollama', 'openai')})
     ok, observations = True, []

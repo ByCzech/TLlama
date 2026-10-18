@@ -176,6 +176,61 @@ async def test_physical_ubatch_is_a_conservative_limit_without_architecture_gues
     assert calls(manager)[0]['input'][0] == [1, *([130] * 6), 2]
 
 
+@pytest.mark.parametrize('pooling,override,limit', [(1, None, 16), (2, None, 16),
+                                                (3, None, 15), (1, 3, 15)])
+async def test_native_context_boundary_and_default_truncation(embeddings, monkeypatch, pooling, override, limit):
+    manager, client, name, toml, header = embeddings
+    header(pooling=pooling)
+    effective_pooling = pooling if override is None else override
+    monkeypatch.setenv('STUB_EMBEDDING_POOLING', str(effective_pooling))
+    if override is not None:
+        toml.write_text(toml.read_text() + f'pooling_type={override}\n')
+    # A native-owned strict LAST boundary, independent of public preflight.
+    async with manager.acquire_native_model(name, keep_alive=-1, operation='text_embedding') as lease:
+        from tllama.worker import WorkerRequestError
+        native_body = {'input': [[1] * 16], 'encoding_format': 'float'}
+        if effective_pooling == 3:
+            with pytest.raises(WorkerRequestError) as error:
+                await lease.worker.embeddings(native_body)
+            assert error.value.http_status == 400
+        else:
+            assert len((await lease.worker.embeddings(native_body))['data']) == 1
+    for path in PATHS:
+        extra = {'truncate': False} if path == '/api/embed' else {}
+        good = await client.post(path, json=body(name, path, 'x' * (limit - 2), **extra))
+        assert good.status_code == 200, good.text
+        count = len(calls(manager))
+        bad = await client.post(path, json=body(name, path, 'x' * (limit - 1), **extra))
+        assert bad.status_code == 400 and len(calls(manager)) == count
+    for value in ([1] * limit, [[1] * limit, [1] * limit]):
+        assert (await client.post('/v1/embeddings', json=body(name, '/v1/embeddings', value))).status_code == 200
+    count = len(calls(manager))
+    bad = await client.post('/v1/embeddings', json=body(name, '/v1/embeddings', [1] * (limit + 1)))
+    assert bad.status_code == 400 and len(calls(manager)) == count
+    truncated = await client.post('/api/embed', json=body(name, '/api/embed', 'x' * 20))
+    assert truncated.status_code == 200 and truncated.json()['prompt_eval_count'] == limit
+    assert calls(manager)[-1]['input'] == [[1, *([130] * (limit - 2)), 2]]
+    assert len(manager.test.ledger) == 1 and manager.native_snapshot()[0]['leases'] == 0
+
+
+@pytest.mark.parametrize('bound', ['n_batch', 'n_ubatch', 'trained'])
+async def test_last_context_reserve_does_not_reduce_other_bounds(embeddings, monkeypatch, bound):
+    manager, client, name, toml, header = embeddings
+    header(pooling=3)
+    monkeypatch.setenv('STUB_EMBEDDING_POOLING', '3')
+    if bound == 'trained':
+        # Effective native context is larger than the model's trained bound.
+        monkeypatch.setenv('STUB_PUBLIC_CTX', '32')
+        toml.write_text(toml.read_text().replace('n_ctx=16', 'n_ctx=32'))
+        limit = 16
+    else:
+        toml.write_text(toml.read_text() + f'{bound}=8\n')
+        limit = 8
+    response = await client.post('/api/embed', json=body(name, '/api/embed', 'x' * 40))
+    assert response.status_code == 200 and response.json()['prompt_eval_count'] == limit
+    assert len(calls(manager)[-1]['input'][0]) == limit
+
+
 @pytest.mark.parametrize('value', [[1, 17, 2], [[1, 17, 2], [1, 18, 19, 2]]])
 async def test_openai_token_arrays_are_exact_final_tokens_and_usage(embeddings, value):
     manager, client, name, _, _ = embeddings

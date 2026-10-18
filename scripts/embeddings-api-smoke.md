@@ -1,6 +1,6 @@
-# Public text embedding / SDK comparison — 0059
+# Public text embedding / SDK comparison — 0059 / 0060
 
-Run from the checkout after 0058 and 0059. This gate compares real loopback TCP
+Run from the checkout after applying 0060 on top of 0058/0059. This gate compares real loopback TCP
 requests and the official Ollama/OpenAI Python SDKs against independent private
 native requests. The default models are the existing MiniLM Q8_0 and Qwen3
 Embedding 0.6B Q8_0 references, sequentially, each with one fresh managed worker.
@@ -61,6 +61,27 @@ pooling fix if the supplied artifact reports something else.
 are at least 512 and at least that context. The default 256 matches 0054.
 All successful public calls, direct native controls and SDK calls must retain
 one PID and generation per model. The preload/unload paths are public too.
+
+After boundary correction 0060, a LAST output reserves one token against the
+effective native context (255 submitted tokens for context 256); mean/CLS keep
+the inclusive context boundary (256). This follows the pinned server's
+memory-backed `can_split()` path, which rejects `n_tokens >= n_ctx`. Native props
+do not expose memory presence, so the LAST reserve is deliberately conservative.
+The ready record includes pooling and context reserve. The smaller trained
+limit remains inclusive. Context and physical batch sizes are not increased
+to hide the boundary.
+
+The 0059 hardware result already accepts MiniLM's full public/SDK run. Repeat
+only Qwen after 0060; the original Qwen run stopped before SDK and recovery
+probes at a direct native 256-token request:
+
+```bash
+result_dir=/tmp/tllama-embeddings-api-qwen-$(date +%Y%m%d-%H%M%S)
+PYTHONPATH=src python3 scripts/embeddings-api-smoke.py \
+  --model Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0 \
+  --output "$result_dir"
+tar -C "$(dirname "$result_dir")" -cJf "$result_dir.tar.xz" "$(basename "$result_dir")"
+```
 
 ## Comparisons
 

@@ -77,17 +77,17 @@ def test_missing_sdk_stops_before_creating_output_or_loading(monkeypatch, tmp_pa
     assert error.value.code == 2 and not output.exists()
 
 
-@pytest.mark.parametrize('mode,ok,review', [('normal', True, False), ('fast', True, False),
-    ('drift', True, True), ('no-usage', True, True), ('bad-usage', False, True),
-    ('wrong-dimension', False, True)])
-def test_public_native_sdk_comparison_and_owned_cleanup(tmp_path, payload, mode, ok, review):
+@pytest.mark.parametrize('mode,ok,review,pooling', [('normal', True, False, 1), ('fast', True, False, 1),
+    ('drift', True, True, 1), ('no-usage', True, True, 1), ('bad-usage', False, True, 1),
+    ('wrong-dimension', False, True, 1), ('normal', True, False, 3)])
+def test_public_native_sdk_comparison_and_owned_cleanup(tmp_path, payload, mode, ok, review, pooling):
     root = tmp_path / 'stub'
     root.mkdir()
     (root / 'memory-report').write_text(json.dumps(payload))
     models = tmp_path / 'models' / 'Local'
     models.mkdir(parents=True)
     writer = gguf.GGUFWriter(str(models / 'a.gguf'), arch='bert')
-    writer.add_uint32('bert.pooling_type', 1)
+    writer.add_uint32('bert.pooling_type', pooling)
     writer.add_uint32('bert.embedding_length', 8)
     writer.add_uint32('bert.context_length', 256)
     writer.add_token_list([f'token{i}' for i in range(512)])
@@ -106,6 +106,7 @@ def test_public_native_sdk_comparison_and_owned_cleanup(tmp_path, payload, mode,
     environment.update(PYTHONPATH=str(SCRIPT.parents[1] / 'src'), STUB_EMBEDDINGS=mode,
                        STUB_ROOT=str(root), STUB_BUILD=payload['runtime_fingerprint'],
                        STUB_PUBLIC_EMBEDDINGS='1', STUB_PUBLIC_CTX='256',
+                       STUB_EMBEDDING_POOLING=str(pooling),
                        TLLAMA_RUNTIME_DRAFT_N_MAX='3', TLLAMA_RUNTIME_SPEC_TYPE='draft-mtp')
     # Imports are optional for the project, mandatory for this hardware gate.
     try:
@@ -125,6 +126,8 @@ def test_public_native_sdk_comparison_and_owned_cleanup(tmp_path, payload, mode,
     ready = next(row for row in rows if row['stage'] == 'ready')
     assert ready['runtime']['embedding'] is True
     assert ready['runtime']['n_ctx'] == 256 and ready['runtime']['spec_type'] == 'none'
+    assert ready['pooling'] == pooling and ready['context_reserve'] == (pooling == 3)
+    assert ready['token_limit'] == 256 - (pooling == 3)
     assert '--embeddings' in ready['argv'] and '--pooling' not in ready['argv']
     if ok:
         checks = [row for row in rows if row['stage'] == 'comparison']
@@ -145,7 +148,7 @@ def test_public_native_sdk_comparison_and_owned_cleanup(tmp_path, payload, mode,
         assert any(r.get('embd_normalize') == 2 for r in native_requests)
         truncation = next(row for row in rows if row['stage'] == 'truncation-reference')
         assert truncation['prefix'] == [1] and truncation['suffix'] == [2]
-        assert len(truncation['submitted_tokens']) == 256
+        assert len(truncation['submitted_tokens']) == ready['token_limit']
     launches = (root / 'launch').read_bytes()
     repeat = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=5)
     assert repeat.returncode == 2 and (root / 'launch').read_bytes() == launches
