@@ -95,19 +95,44 @@ class PullProgress:
 def _hf_tqdm_class_for(progress: "PullProgress"):
     """Build a tqdm-compatible class that reports into `progress` instead of drawing a bar.
 
-    `hf_hub_download` only ever calls `cls(total=..., initial=..., ...)`, then
-    `.update(n)` per chunk, and uses the instance as a context manager. It
-    does not require a `tqdm` subclass -- see huggingface_hub's
-    `_create_progress_bar`, which calls a non-tqdm class with plain kwargs.
+    HTTP and Xet update reconstructed file bytes through `update`. Xet can
+    also report a separate network-byte stream and mutate the bar's total.
+    Only reconstructed bytes belong in Ollama's completed/total counters;
+    transfer bytes may differ through compression/deduplication.
     """
 
     class _HfTqdmProgressAdapter:
         def __init__(self, *args, total: int | None = None, initial: int = 0, **kwargs):
-            progress.set_total(total)
+            self.n = initial
+            self.total = total
             progress.add(initial)
 
+        @property
+        def total(self):
+            return self._total
+
+        @total.setter
+        def total(self, value):
+            self._total = value
+            progress.set_total(value)
+
         def update(self, n: int = 1) -> None:
+            self.n += n
             progress.add(n)
+
+        def update_transfer(self, n: int = 1) -> None:
+            # Declaring this hook routes both Xet streams into this one bar.
+            # Network bytes must not be added to reconstructed file bytes.
+            pass
+
+        def set_postfix_str(self, s: str = "", refresh: bool = True) -> None:
+            pass  # Speed/formatting belongs to the client displaying progress.
+
+        def set_transfer_postfix_str(self, s: str = "", refresh: bool = True) -> None:
+            pass
+
+        def refresh(self) -> None:
+            pass
 
         def close(self) -> None:
             pass
@@ -116,6 +141,7 @@ def _hf_tqdm_class_for(progress: "PullProgress"):
             return self
 
         def __exit__(self, exc_type, exc, tb) -> bool:
+            self.close()
             return False
 
     return _HfTqdmProgressAdapter
@@ -1345,7 +1371,6 @@ class ModelManager:
                 revision=revision,
                 token=token,
                 local_dir=target_root,
-                local_dir_use_symlinks=False,
                 tqdm_class=tqdm_class,
             )
         except ValueError as e:
