@@ -81,6 +81,15 @@ async def embeddings_request(reader, writer, body):
         await json_response(writer, {'error': {'message': 'invalid encoding'}}, 500 if mode == 'error500' else 400)
         return
     token_count = len(texts) if token_input else None
+    if os.environ.get('STUB_PUBLIC_EMBEDDINGS'):
+        # The public diagnostic compares native text with final token arrays.
+        # Use the same synthetic tokenizer for both independent input paths.
+        if token_input:
+            texts, token_rows = [texts], True
+        elif not token_rows:
+            items = [texts] if isinstance(texts, str) else texts
+            texts = [[1, *(value + 10 for value in text.encode('utf-8')), 2] for text in items]
+            token_rows = True
     if token_rows:
         token_count = sum(map(len, texts))
         texts = [json.dumps(row) for row in texts]

@@ -117,9 +117,12 @@ contracts, normalization differences, error integrity, order/duplicates,
 metadata cache refresh, admission, queue cancellation and actual disconnects.
 They certify protocol/lifecycle behavior, not embedding-model quality.
 
-0059 will compare the public API and SDK paths against the independent MiniLM/
-Qwen native reference on the maintainer's hardware. Keep those two models;
-additional architectures and multimodal/projector inputs have later gates.
+0059 supplies [the public TCP/SDK diagnostic](../scripts/embeddings-api-smoke.md)
+against independent MiniLM/Qwen native calls on the maintainer's hardware.
+It uses temporary definitions with ordinary production resolution and checks
+registered TOMLs unchanged. Keep those two models; additional architectures
+and multimodal/projector inputs have later gates. Hardware acceptance remains
+pending until the actual result is reviewed.
 
 Primary API references checked 2026-10-18:
 
