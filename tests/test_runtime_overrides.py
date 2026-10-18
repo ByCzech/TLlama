@@ -12,6 +12,9 @@ from tllama.helpers.runtime_params import (
 )
 
 
+pytestmark = pytest.mark.usefixtures("clean_tllama_config_environment")
+
+
 def llm_toml(model_ref: str, extra: str = "") -> str:
     return f'[llm]\nmodel = "{model_ref}"\n{extra}'
 

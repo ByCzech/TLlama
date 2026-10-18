@@ -13,6 +13,15 @@ from tllama.config import BackendConfig
 
 
 @pytest.fixture
+def clean_tllama_config_environment(monkeypatch):
+    """Give opt-in config tests only the settings they explicitly supply."""
+    for name in tuple(os.environ):
+        # Keep the test-owned store in place for application imports.
+        if name.startswith("TLLAMA_") and name != "TLLAMA_MODELS":
+            monkeypatch.delenv(name)
+
+
+@pytest.fixture
 def models_root(tmp_path):
     """An empty model store that never touches the real one."""
     return tmp_path / "models"
