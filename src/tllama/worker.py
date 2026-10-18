@@ -462,11 +462,25 @@ class NativeWorker:
                 body["stream_options"] = {**options, "include_usage": True}
         return body
 
+    def _require_mode(self, *, embedding):
+        if self.spec.embedding is not embedding:
+            operation = "Embeddings" if embedding else "Generation"
+            raise WorkerRequestError(400, f"{operation} is incompatible with this worker's configured mode")
+
+    async def embeddings(self, payload: Mapping[str, Any]) -> dict:
+        """Raw pooled embedding protocol; the caller owns validation and its lease."""
+        self._require_mode(embedding=True)
+        body = {**payload, "model": self.spec.alias}
+        async with self._response("/v1/embeddings", body) as response:
+            return await self._json_body(response)
+
     async def chat(self, payload: Mapping[str, Any]) -> dict:
+        self._require_mode(embedding=False)
         async with self._response("/v1/chat/completions", self._body(payload, chat=True, stream=False)) as response:
             return await self._json_body(response)
 
     async def completion(self, payload: Mapping[str, Any]) -> dict:
+        self._require_mode(embedding=False)
         async with self._response("/completion", self._body(payload, chat=False, stream=False)) as response:
             return await self._json_body(response)
 
@@ -499,6 +513,7 @@ class NativeWorker:
 
     @asynccontextmanager
     async def chat_stream(self, payload: Mapping[str, Any]):
+        self._require_mode(embedding=False)
         async with self._response("/v1/chat/completions", self._body(payload, chat=True, stream=True)) as response:
             events = self._events(response, chat=True)
             try:
@@ -508,6 +523,7 @@ class NativeWorker:
 
     @asynccontextmanager
     async def completion_stream(self, payload: Mapping[str, Any]):
+        self._require_mode(embedding=False)
         async with self._response("/completion", self._body(payload, chat=False, stream=True)) as response:
             events = self._events(response, chat=False)
             try:

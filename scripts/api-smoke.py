@@ -50,9 +50,9 @@ async def exercise(args):
     if args.models_dir:
         config = replace(config, models_dir=str(args.models_dir.expanduser().resolve()))
     class SmokeManager(ModelManager):
-        def acquire_native_model(self, model_name, num_ctx=None, keep_alive=None):
+        def acquire_native_model(self, model_name, num_ctx=None, keep_alive=None, *, operation=None):
             return super().acquire_native_model(model_name, num_ctx=args.ctx if args.ctx is not None else num_ctx,
-                                                keep_alive=keep_alive)
+                                                keep_alive=keep_alive, operation=operation)
 
         async def preload_native_model(self, model_name, num_ctx=None, keep_alive=None):
             return await super().preload_native_model(model_name, num_ctx=args.ctx if args.ctx is not None else num_ctx,

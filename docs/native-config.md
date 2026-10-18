@@ -74,6 +74,8 @@ a shell; paths and serialized values stay individual argv elements.
 | `verbose` | Only true accepted; supervisor log policy stays enabled | Diagnostics |
 | `spec_type` | Omitted when unset; `--spec-type none/draft-mtp` when explicit | Load; embedded MTP is opt-in |
 | `draft_n_max` | `--spec-draft-n-max` only with MTP; default 3 when enabled | Load; see [native-mtp.md](native-mtp.md) |
+| `embedding` | `--embeddings` when true; speculation explicitly disabled | Load mode; see [native-embeddings.md](native-embeddings.md) |
+| `pooling_type` -1/1/2/3 | Omit / `--pooling mean/cls/last` | Embedding load only; -1 retains the model default |
 | `[template].jinja` | `--jinja --chat-template-file` | Private 0600 file owned and removed by worker |
 | `[mmproj].image_min_tokens/max_tokens/batch_max_tokens` | `--image-min-tokens`, `--image-max-tokens`, `--mtmd-batch-max-tokens` | Projector load |
 | `[mmproj].warmup` | `--warmup` / `--no-warmup` | **Whole worker**, replacing projector-only scope |
@@ -106,7 +108,7 @@ integration milestones. Merely storing system_prompt does not insert it twice.
 | `draft_model`, `tokenizer` | Python objects cannot be serialized; embedded MTP uses `spec_type`, external drafts remain unintegrated |
 | `vocab_only` | Metadata reads do not need a worker |
 | `logits_all` | Public logprobs require separate integration |
-| `embedding`, `pooling_type`, `attention_type` | Non-causal/embedding workers and APIs are later work |
+| `attention_type` | Pinned server CLI has no override; attention stays the model default |
 | `lora_base` | No equivalent in pinned parser |
 | Unknown names, unsupported KV/enum values, nonfinite values | Explicit configuration/request errors rather than a silent drop/clamp |
 

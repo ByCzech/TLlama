@@ -268,12 +268,13 @@ class ModelManager:
 
     @asynccontextmanager
     async def acquire_native_model(self, model_name: str, num_ctx: int | None = None,
-                                   keep_alive: str | int | float | None = None):
+                                   keep_alive: str | int | float | None = None, *, operation: str | None = None):
         """Hold one resolved worker generation through slot wait and inference."""
         self._check_running()
         self._ensure_janitor_running()
         seconds = self.resolve_keep_alive(keep_alive)
-        async with self._native.lease(model_name, num_ctx=num_ctx, keep_alive_seconds=seconds) as lease:
+        async with self._native.lease(model_name, num_ctx=num_ctx, keep_alive_seconds=seconds,
+                                      operation=operation) as lease:
             yield lease
 
     async def preload_native_model(self, model_name: str, num_ctx: int | None = None,
@@ -638,6 +639,8 @@ class ModelManager:
 
         if virtual_spec is not None:
             overrides = {}
+            global_runtime = coerce_runtime_overrides(self.config.runtime_overrides)
+            overrides["embedding_configured"] = virtual_spec.runtime.get("embedding", global_runtime.get("embedding", False))
             if virtual_spec.template is not None:
                 overrides["template"] = virtual_spec.template
                 # A nonempty native override replaces both GGUF variants.

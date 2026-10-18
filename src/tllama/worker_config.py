@@ -9,7 +9,7 @@ from types import MappingProxyType
 from typing import Mapping, Any
 
 from tllama.native_cli import runtime_cli_args, mmproj_cli_args
-from tllama.native_params import freeze_values, kv_type_name
+from tllama.native_params import POOLING_TYPES, freeze_values, kv_type_name
 
 
 RUNTIME_FINGERPRINT = "b11552-ec2797836f"
@@ -36,6 +36,8 @@ class WorkerLaunchSpec:
     type_k: str | None = None
     type_v: str | None = None
     flash_attn: bool | None = None
+    embedding: bool = False
+    pooling_type: int = -1
     port: int = 0
     environment: Mapping[str, str] = field(default_factory=dict, repr=False)
     runtime_options: Mapping[str, Any] = field(default_factory=dict)
@@ -99,6 +101,18 @@ class WorkerLaunchSpec:
                 object.__setattr__(self, name, kv_type_name(value))
         runtime_cli_args(self.runtime_options)
         mmproj_cli_args(self.mmproj_options)
+        if type(self.embedding) is not bool:
+            raise ValueError("embedding must be a boolean")
+        if type(self.pooling_type) is not int or self.pooling_type not in POOLING_TYPES:
+            raise ValueError("pooling_type must be -1, 1, 2 or 3 for pooled embeddings")
+        if not self.embedding and self.pooling_type != -1:
+            raise ValueError("pooling_type requires embedding=true")
+        if self.embedding:
+            if self.mmproj is not None or self.mmproj_options or self.template is not None:
+                raise ValueError("Text embedding workers do not accept a projector or template override")
+            if (self.runtime_options.get("spec_type", "none") != "none"
+                    or "draft_n_max" in self.runtime_options or self.runtime_options.get("spm_infill")):
+                raise ValueError("Embedding workers do not accept speculative decoding or FIM settings")
         if self.mmproj_options and self.mmproj is None:
             raise ValueError("Projector options require a resolved mmproj path")
         if self.device == "none" and any(self.runtime_options.get(key) is True for key in ("op_offload", "offload_kqv")):
@@ -156,6 +170,12 @@ class WorkerLaunchSpec:
                 args += [flag, value]
         args += runtime_cli_args(self.runtime_options)
         args += mmproj_cli_args(self.mmproj_options)
+        if self.embedding:
+            args.append("--embeddings")
+            if "spec_type" not in self.runtime_options:
+                args += ["--spec-type", "none"]
+            if POOLING_TYPES[self.pooling_type] is not None:
+                args += ["--pooling", POOLING_TYPES[self.pooling_type]]
         if self.template is not None:
             if template_file is None or not template_file.is_absolute():
                 raise ValueError("A private absolute template_file is required for a template override")

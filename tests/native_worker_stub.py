@@ -68,7 +68,7 @@ async def json_response(writer, value, status=200):
 
 async def embeddings_request(reader, writer, body):
     """Synthetic embeddings only; no model or numerical-quality simulation."""
-    mode = os.environ['STUB_EMBEDDINGS']
+    mode = os.environ.get('STUB_EMBEDDINGS', 'normal')
     texts = body.get('input')
     token_input = isinstance(texts, list) and texts and type(texts[0]) is int
     if not texts or token_input and len(texts) > int(arg('--ctx-size', '256')):
@@ -448,7 +448,7 @@ async def handle(reader, writer):
             async with LOCK:
                 await mtp_request(reader, writer, body)
             return
-        if os.environ.get('STUB_EMBEDDINGS') and path == '/v1/embeddings':
+        if (os.environ.get('STUB_EMBEDDINGS') or '--embeddings' in sys.argv) and path == '/v1/embeddings':
             await embeddings_request(reader, writer, body)
             return
         if path == "/tokenize":

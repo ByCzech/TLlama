@@ -171,7 +171,8 @@ async def serve_native(manager, request, *, api, kind="chat"):
         started = time.monotonic_ns()
         phase = "load"
         lease = await stack.enter_async_context(manager.acquire_native_model(
-            request.model, num_ctx=request.options.get("num_ctx") if api == "ollama" else None, keep_alive=keep_alive))
+            request.model, num_ctx=request.options.get("num_ctx") if api == "ollama" else None,
+            keep_alive=keep_alive, operation="generation"))
         context = ReplyContext(request.model, started_ns=started, acquired_ns=time.monotonic_ns())
         metadata = lease_metadata(lease)
         phase = "prepare"

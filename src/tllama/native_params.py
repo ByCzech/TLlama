@@ -26,6 +26,7 @@ RUNTIME_TYPES = {
     "type_k": "Union[str,int]", "type_v": "Union[str,int]", "type_kv": "Union[str,int]",
     "spm_infill": "bool", "verbose": "bool",
     "spec_type": "str", "draft_n_max": "int",
+    "embedding": "bool", "pooling_type": "int",
 }
 
 MTP_DRAFT_N_MAX_DEFAULT = 3
@@ -37,9 +38,7 @@ REMOVED_RUNTIME = {
     "tokenizer": "Python tokenizer objects are not native configuration",
     "vocab_only": "metadata reads do not need an inference worker",
     "logits_all": "public logprobs require their own API integration",
-    "embedding": "embedding workers and APIs are a later milestone",
-    "pooling_type": "embedding workers and APIs are a later milestone",
-    "attention_type": "non-causal workers require their own API integration",
+    "attention_type": "the pinned server CLI has no attention override; use the model default",
     "lora_base": "the pinned native parser has no lora_base equivalent",
 }
 
@@ -58,6 +57,7 @@ KV_TYPES = {"f32": 0, "f16": 1, "bf16": 30, "q8_0": 8, "q4_0": 2,
 SPLIT_MODES = {0: "none", 1: "layer", 2: "row"}
 ROPE_MODES = {-1: None, 0: "none", 1: "linear", 2: "yarn"}
 NUMA_MODES = {0: None, 1: "distribute", 2: "isolate", 3: "numactl"}
+POOLING_TYPES = {-1: None, 1: "mean", 2: "cls", 3: "last"}
 
 
 def freeze_values(value):
@@ -146,6 +146,8 @@ def runtime_problem(name: str, value: Any) -> str | None:
         return "'seed' must be -1 (random) or uint32"
     if name == "device":
         return device_problem(value)
+    if name == "pooling_type" and value not in POOLING_TYPES:
+        return "'pooling_type' must be -1 (model default), 1 (mean), 2 (cls) or 3 (last); token vectors and reranking are separate tasks"
     if name == "spec_type" and value not in {"none", "draft-mtp"}:
         return "'spec_type' must be none or draft-mtp; other speculative strategies are not integrated"
     if name == "draft_n_max" and value < 0:

@@ -101,7 +101,7 @@ async def show_model_info(request: dict):
     # clients built against it (any bot using the ollama Python client, for
     # instance) act on it directly -- an absent or empty list reads as "this
     # model can't do any of that", including things TLlama actually
-    # supports. "completion" always holds; "thinking" is reported only when
+    # supports. "completion" holds for generation mode; "thinking" only when
     # the model's own template is one detect_reasoning_format recognizes as
     # having a thinking format, so a plain non-reasoning model is not
     # claimed to think just because it exists.
@@ -115,6 +115,9 @@ async def show_model_info(request: dict):
         capabilities.append("thinking")
     if metadata_info.get('vision_configured', metadata_info.get('has_projector')) is True:
         capabilities.append('vision')
+    if metadata_info.get("embedding_configured") is True:
+        # Public embedding adapters are a separate integration checkpoint.
+        capabilities = []
     # Ollama's own `show --modelfile` hands back the definition a model
     # was built from, and the workflow that makes it worth having is
     # fetching it, editing it and putting it back. So this is the .toml

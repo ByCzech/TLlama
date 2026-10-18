@@ -31,7 +31,7 @@ assert 'llama_cpp' not in sys.modules
 
 
 @pytest.mark.parametrize("name,value", [("chat_format", '"chatml"'), ("vocab_only", "true"),
-                                      ("embedding", "true"), ("logits_all", "false"),
+                                      ("attention_type", "1"), ("logits_all", "false"),
                                       ("lora_base", '"Local/base.gguf"')])
 def test_removed_runtime_option_is_reported_in_toml_and_environment(name, value):
     with pytest.raises(TomlModelError, match=name):

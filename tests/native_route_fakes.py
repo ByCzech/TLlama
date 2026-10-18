@@ -89,7 +89,8 @@ def install_reply(monkeypatch, manager, *, metadata=None, **values):
     state = SimpleNamespace(worker=worker, manager=manager, refs=0, actions=[], load_delay=0, load_error=None)
 
     @asynccontextmanager
-    async def acquire(name, num_ctx=None, keep_alive=None):
+    async def acquire(name, num_ctx=None, keep_alive=None, *, operation=None):
+        assert operation in (None, "generation")
         if state.load_delay:
             await asyncio.sleep(state.load_delay)
         if state.load_error:

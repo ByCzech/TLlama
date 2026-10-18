@@ -290,14 +290,14 @@ class NativeResidency:
                         entry.expires_at = None if entry.keep_alive is None else self._clock() + entry.keep_alive
             self._condition.notify_all()
 
-    async def _claim(self, name, num_ctx, keep_alive):
+    async def _claim(self, name, num_ctx, keep_alive, operation):
         intent = _Intent(name)
         claimed = None
         async with self._condition:
             self._ensure_open()
             self._intents.add(intent)
         try:
-            claimed = await self._claim_intent(intent, num_ctx, keep_alive)
+            claimed = await self._claim_intent(intent, num_ctx, keep_alive, operation)
             return claimed
         finally:
             try:
@@ -313,7 +313,7 @@ class NativeResidency:
         async with self._condition:
             self._intents.discard(intent)
 
-    async def _claim_intent(self, intent, num_ctx, keep_alive):
+    async def _claim_intent(self, intent, num_ctx, keep_alive, operation):
         name = intent.name
         while True:
             self._ensure_open()
@@ -324,6 +324,8 @@ class NativeResidency:
                 raise
             if definition.name != name:
                 raise ValueError("Resolver returned a different public model name")
+            if operation is not None and definition.resolved.launch.embedding != (operation == "embedding"):
+                raise ValueError(f"Model {name!r} is not configured for {operation}")
             async with self._condition:
                 self._ensure_open()
                 if intent.aborted:
@@ -387,13 +389,16 @@ class NativeResidency:
                 raise
 
     @asynccontextmanager
-    async def lease(self, name: str, *, num_ctx: int | None = None, keep_alive_seconds: float | None = 300):
+    async def lease(self, name: str, *, num_ctx: int | None = None, keep_alive_seconds: float | None = 300,
+                    operation: str | None = None):
+        if operation not in (None, "generation", "embedding"):
+            raise ValueError("operation must be generation, embedding or unset for load control")
         if keep_alive_seconds is not None and (
             isinstance(keep_alive_seconds, bool) or not isinstance(keep_alive_seconds, (int, float))
             or not math.isfinite(keep_alive_seconds) or keep_alive_seconds < 0
         ):
             raise ValueError("keep_alive_seconds must be nonnegative and finite, or None for pinned")
-        entry = await self._claim(name, num_ctx, keep_alive_seconds)
+        entry = await self._claim(name, num_ctx, keep_alive_seconds, operation)
         try:
             yield ModelLease(entry.number, entry.definition, entry.worker)
         finally:
