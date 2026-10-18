@@ -80,6 +80,15 @@ those exact submitted IDs, never character estimates.
 ## Dimensions and encoding
 
 `dimensions`, when supplied, must equal the full GGUF output dimension.
+Use a positive architecture-specific `embedding_length_out` when declared;
+otherwise absent/zero uses `embedding_length`, matching native n_embd_out().
+These can differ: the supplied EmbeddingGemma 2 has hidden width 512 and a
+learned projection to 768 output values. Positive explicit output width is
+authoritative across preflight, vector validation, chunk sizing and base64;
+the hidden width is not an alternative supported `dimensions` value.
+Malformed explicit output metadata is rejected rather than ignored. Metadata
+cache schema 6 refreshes older snapshots missing this key; digest caches stay
+valid. This is declared full native output, with no response-based size guessing.
 Reduction is explicitly unsupported at this checkpoint: no arbitrary vector
 slicing, padding or unverified Matryoshka claim. Other positive dimensions
 receive 400 before embedding inference. A mismatched native output dimension
@@ -105,7 +114,7 @@ TOML pooling selection can supply it. None/rank pooling is outside this API.
 unknown or incompatible output metadata gets no embedding capability. The GGUF
 reader adds architecture-specific pooling, width and decision keys, plus a
 compact vocabulary count. It does not expose the token array. Metadata cache
-schema advances to 5 so older header snapshots are rebuilt automatically;
+schema advances to 6 so older header snapshots are rebuilt automatically;
 content digest caches stay valid.
 
 Real ASGI disconnects cancel in-flight calls and slot waiters, close private

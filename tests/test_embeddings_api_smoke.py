@@ -77,10 +77,10 @@ def test_missing_sdk_stops_before_creating_output_or_loading(monkeypatch, tmp_pa
     assert error.value.code == 2 and not output.exists()
 
 
-@pytest.mark.parametrize('mode,ok,review,pooling', [('normal', True, False, 1), ('fast', True, False, 1),
-    ('drift', True, True, 1), ('no-usage', True, True, 1), ('bad-usage', False, True, 1),
-    ('wrong-dimension', False, True, 1), ('normal', True, False, 3)])
-def test_public_native_sdk_comparison_and_owned_cleanup(tmp_path, payload, mode, ok, review, pooling):
+@pytest.mark.parametrize('mode,ok,review,pooling,projected', [('normal', True, False, 1, False), ('fast', True, False, 1, False),
+    ('drift', True, True, 1, False), ('no-usage', True, True, 1, False), ('bad-usage', False, True, 1, False),
+    ('wrong-dimension', False, True, 1, False), ('normal', True, False, 3, False), ('fast', True, False, 1, True)])
+def test_public_native_sdk_comparison_and_owned_cleanup(tmp_path, payload, mode, ok, review, pooling, projected):
     root = tmp_path / 'stub'
     root.mkdir()
     (root / 'memory-report').write_text(json.dumps(payload))
@@ -88,7 +88,9 @@ def test_public_native_sdk_comparison_and_owned_cleanup(tmp_path, payload, mode,
     models.mkdir(parents=True)
     writer = gguf.GGUFWriter(str(models / 'a.gguf'), arch='bert')
     writer.add_uint32('bert.pooling_type', pooling)
-    writer.add_uint32('bert.embedding_length', 8)
+    writer.add_uint32('bert.embedding_length', 512 if projected else 8)
+    if projected:
+        writer.add_uint32('bert.embedding_length_out', 8)
     writer.add_uint32('bert.context_length', 256)
     writer.add_token_list([f'token{i}' for i in range(512)])
     writer.write_header_to_file()
@@ -128,6 +130,7 @@ def test_public_native_sdk_comparison_and_owned_cleanup(tmp_path, payload, mode,
     assert ready['runtime']['n_ctx'] == 256 and ready['runtime']['spec_type'] == 'none'
     assert ready['pooling'] == pooling and ready['context_reserve'] == (pooling == 3)
     assert ready['token_limit'] == 256 - (pooling == 3)
+    assert ready['dimension'] == 8 and ready['hidden_width'] == (512 if projected else 8)
     assert '--embeddings' in ready['argv'] and '--pooling' not in ready['argv']
     if ok:
         checks = [row for row in rows if row['stage'] == 'comparison']

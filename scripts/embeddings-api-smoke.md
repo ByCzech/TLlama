@@ -1,6 +1,6 @@
-# Public text embedding / SDK comparison — 0059 / 0060
+# Public text embedding / SDK comparison — 0059 / 0060 / 0061
 
-Run from the checkout after applying 0060 on top of 0058/0059. This gate compares real loopback TCP
+Run from the checkout after applying 0061 on top of 0058–0060. This gate compares real loopback TCP
 requests and the official Ollama/OpenAI Python SDKs against independent private
 native requests. The default models are the existing MiniLM Q8_0 and Qwen3
 Embedding 0.6B Q8_0 references, sequentially, each with one fresh managed worker.
@@ -84,6 +84,19 @@ tar -C "$(dirname "$result_dir")" -cJf "$result_dir.tar.xz" "$(basename "$result
 ```
 
 ## Comparisons
+
+Diagnostic version 3 / checkpoint 0061 reads explicit `embedding_length_out`
+independently of hidden `embedding_length`, following native n_embd_out(). A
+positive output value wins; absent/zero falls back to hidden width. Ready rows
+record both hidden_width and output dimension. Metadata cache schema 6 exposes
+this key even for a GGUF previously scanned under schema 5. This corrects the
+EmbeddingGemma 2 reference (512 hidden -> 768 output) without resizing vectors.
+
+The inventory run already accepts EmbeddingGemma 300M and Qwen8B completely.
+After 0061, repeat only the existing EmbeddingGemma 2 text path. The Nomic name
+from that run did not resolve to an imported definition; use its actual local
+registered reference once established, without guessing a quantization/name.
+No completed MiniLM/Qwen0.6B/EmbeddingGemma300M/Qwen8B repeat is needed.
 
 - Native text versus independently measured exact final token arrays, then
   public scalar/batch/repeat/reordered/duplicate inputs, Unicode, real newlines,

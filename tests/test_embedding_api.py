@@ -34,10 +34,12 @@ async def embeddings(public, monkeypatch):
     monkeypatch.setenv('STUB_PUBLIC_CTX', '16')
     weights = manager.local_models_dir / 'a.gguf'
 
-    def header(*, pooling=1, dimension=8, decision=None):
+    def header(*, pooling=1, dimension=8, output_dimension=None, decision=None):
         writer = gguf.GGUFWriter(str(weights), arch='bert')
         writer.add_uint32('bert.pooling_type', pooling)
         writer.add_uint32('bert.embedding_length', dimension)
+        if output_dimension is not None:
+            writer.add_uint32('bert.embedding_length_out', output_dimension)
         writer.add_uint32('bert.context_length', 16)
         if decision is not None:
             writer.add_string('bert.decision.type', decision)
@@ -322,6 +324,67 @@ async def test_real_gguf_metadata_and_show_support_embedding_without_loading(emb
     assert response.json()['capabilities'] == ['embedding'] and not manager.test.ledger
 
 
+@pytest.mark.parametrize('path', PATHS)
+async def test_projected_output_width_overrides_hidden_width_and_refreshes_old_cache(embeddings, path):
+    from tllama.helpers.metadata_cache import get_metadata_cache_path, save_metadata_cache
+    from tllama.helpers.gguf_metadata import build_model_metadata_payload
+    manager, client, name, _, header = embeddings
+    header(dimension=512, output_dimension=8)
+    weights = manager.local_models_dir / 'a.gguf'
+    metadata = read_gguf_metadata(str(weights))
+    assert metadata['bert.embedding_length'] == 512 and metadata['bert.embedding_length_out'] == 8
+    # Schema 5 could have already cached the same GGUF without its output key.
+    old = build_model_metadata_payload({k: v for k, v in metadata.items() if k != 'bert.embedding_length_out'})
+    save_metadata_cache(manager.metadata_cache_dir, name, weights, old)
+    cache = get_metadata_cache_path(manager.metadata_cache_dir, weights)
+    document = json.loads(cache.read_text())
+    document['schema_version'] = 5
+    cache.write_text(json.dumps(document))
+    extra = {} if path == '/api/embeddings' else {'dimensions': 8}
+    response = await client.post(path, json=body(name, path, 'hello', **extra))
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    if path == '/api/embed':
+        vectors = payload['embeddings']
+    elif path == '/api/embeddings':
+        vectors = [payload['embedding']]
+    else:
+        vectors = [r['embedding'] for r in payload['data']]
+    assert len(vectors[0]) == 8
+    assert json.loads(cache.read_text())['schema_version'] == 6
+    show = (await client.post('/api/show', json={'model': name})).json()
+    assert show['model_info']['bert.embedding_length'] == 512
+    assert show['model_info']['bert.embedding_length_out'] == 8
+    assert show['capabilities'] == ['embedding']
+    if path != '/api/embeddings':
+        before = len(calls(manager))
+        bad = await client.post(path, json=body(name, path, dimensions=512))
+        assert bad.status_code == 400 and len(calls(manager)) == before
+    if path == '/v1/embeddings':
+        encoded = await client.post(path, json=body(name, path, encoding_format='base64'))
+        decoded = struct.unpack('<8f', base64.b64decode(encoded.json()['data'][0]['embedding'], validate=True))
+        assert decoded == pytest.approx(vectors[0], rel=1e-7)
+
+
+@pytest.mark.parametrize('width,expected', [(None, 512), (0, 512), (768, 768)])
+def test_output_dimension_contract_uses_native_zero_default(width, expected):
+    from tllama.embedding_contract import embedding_contract
+    raw = {'general.architecture': 'gemma-embedding2', 'gemma-embedding2.pooling_type': 1,
+           'gemma-embedding2.embedding_length': 512}
+    if width is not None:
+        raw['gemma-embedding2.embedding_length_out'] = width
+    assert embedding_contract({'metadata_raw': raw}).dimension == expected
+
+
+@pytest.mark.parametrize('width', [None, True, -1, 8.0, '768'])
+def test_invalid_explicit_output_width_is_not_hidden_by_fallback(width):
+    from tllama.embedding_contract import embedding_contract
+    raw = {'general.architecture': 'bert', 'bert.pooling_type': 1, 'bert.embedding_length': 512,
+           'bert.embedding_length_out': width}
+    with pytest.raises(ValueError, match='embedding_length_out'):
+        embedding_contract({'metadata_raw': raw})
+
+
 async def test_explicit_toml_pooling_override_is_plain_integer_in_offline_capabilities(embeddings):
     manager, client, name, toml, header = embeddings
     header(pooling=0)
@@ -339,7 +402,7 @@ async def test_pre_embedding_metadata_cache_is_invalidated_before_capability_adv
     save_metadata_cache(manager.metadata_cache_dir, name, weights, {'arch': 'bert'})
     cache = get_metadata_cache_path(manager.metadata_cache_dir, weights)
     document = json.loads(cache.read_text())
-    document['schema_version'] = 4
+    document['schema_version'] = 5
     cache.write_text(json.dumps(document))
     assert load_metadata_cache(manager.metadata_cache_dir, weights) is None
     response = await client.post('/api/show', json={'model': name})

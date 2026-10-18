@@ -260,7 +260,8 @@ def _build_metadata_key_set(reader: Any) -> tuple[str, ...]:
         arch = _field_to_python_value(arch_field)
         if isinstance(arch, str) and arch:
             keys.add(f"{arch}.context_length")
-            keys.update(f"{arch}.{suffix}" for suffix in ("pooling_type", "embedding_length", "decision.type"))
+            keys.update(f"{arch}.{suffix}" for suffix in (
+                "pooling_type", "embedding_length", "embedding_length_out", "decision.type"))
 
     return tuple(sorted(keys))
 

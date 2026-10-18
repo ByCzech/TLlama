@@ -381,7 +381,12 @@ async def exercise_model(args, model, profile, sdks, emit):
                 metadata = _plain(lease.definition.metadata)
                 raw_metadata = metadata['metadata_raw']
                 arch = raw_metadata['general.architecture']
-                dimension = raw_metadata[f'{arch}.embedding_length']
+                # Independently follow native n_embd_out(): explicit positive
+                # output width, or hidden width for absent/zero metadata.
+                hidden_width = raw_metadata[f'{arch}.embedding_length']
+                output_width = raw_metadata.get(f'{arch}.embedding_length_out', 0)
+                require(type(output_width) is int and output_width >= 0, 'Invalid native output width metadata')
+                dimension = output_width or hidden_width
                 pooling = lease.resolved.launch.pooling_type
                 if pooling == -1:
                     pooling = raw_metadata[f'{arch}.pooling_type']
@@ -396,7 +401,7 @@ async def exercise_model(args, model, profile, sdks, emit):
                      fingerprint=worker.runtime_fingerprint, props=worker.props, metadata=metadata,
                      runtime=_plain(lease.resolved.runtime), sources=_plain(lease.resolved.sources),
                      model_path=str(worker.spec.model), model_size_bytes=worker.spec.model.stat().st_size,
-                     dimension=dimension, token_limit=limit, pooling=pooling,
+                     dimension=dimension, hidden_width=hidden_width, token_limit=limit, pooling=pooling,
                      context_reserve=context_reserve)
             await reference.memory(worker, emit, observations, 'after-load')
             audit = Audit(args, model, worker, dimension, emit, observations)
@@ -446,7 +451,7 @@ async def exercise_model(args, model, profile, sdks, emit):
 
 
 async def exercise(args, emit, sdks):
-    emit('diagnostic-version', version=2, checkpoint='0060', models=args.model, public_api='tcp',
+    emit('diagnostic-version', version=3, checkpoint='0061', models=args.model, public_api='tcp',
          mode='text_only', native_cancellation='early_compute_stop_not_proven',
          sdk_versions={name: version(name) for name in ('ollama', 'openai')})
     ok, observations = True, []
