@@ -108,8 +108,8 @@ class WorkerLaunchSpec:
         if not self.embedding and self.pooling_type != -1:
             raise ValueError("pooling_type requires embedding=true")
         if self.embedding:
-            if self.mmproj is not None or self.mmproj_options or self.template is not None:
-                raise ValueError("Text embedding workers do not accept a projector or template override")
+            if self.template is not None:
+                raise ValueError("Embedding workers do not accept a template override")
             if (self.runtime_options.get("spec_type", "none") != "none"
                     or "draft_n_max" in self.runtime_options or self.runtime_options.get("spm_infill")):
                 raise ValueError("Embedding workers do not accept speculative decoding or FIM settings")

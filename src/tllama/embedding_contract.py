@@ -38,7 +38,9 @@ def embedding_contract(metadata: Mapping, pooling: int = -1) -> EmbeddingContrac
 
 
 def embedding_capable(metadata: Mapping) -> bool:
-    if metadata.get('embedding_configured') is not True or metadata.get('has_projector'):
+    # A configured projector does not prevent text embeddings. Public image
+    # input remains a separate contract and is not advertised by this flag.
+    if metadata.get('embedding_configured') is not True:
         return False
     try:
         embedding_contract(metadata, metadata.get('embedding_pooling_type', -1))

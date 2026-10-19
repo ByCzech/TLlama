@@ -5,6 +5,14 @@ Requires an explicitly configured embedding worker from
 managed lifecycle; native build b11552-3144c167ef remains the hardware reference.
 No native patch, rebuild, download or automatic TOML edit is included.
 
+0063 also permits text requests on explicitly configured embedding workers with
+an attached projector. Known pooled semantic output is still required; a
+projector does not select mode/pooling or bypass Decision-head rejection.
+`/api/show` reports `embedding` for their text contract. All public input shapes
+below remain text/token-only; typed media and image fields are rejected before
+inference. See [native-embeddings.md](native-embeddings.md) for configuration and
+the separate managed native image reference. Public image support is a later gate.
+
 ## Public contracts
 
 | Endpoint | Input | Output | Length handling |

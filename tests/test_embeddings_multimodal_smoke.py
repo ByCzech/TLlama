@@ -39,8 +39,11 @@ def test_diagnostic_preserves_resolved_projector_and_production_guards(tmp_path)
     assert launch.type_k == launch.type_v == 'f16' and launch.flash_attn is False
     assert spec.n_ctx == 262144 and spec.template == 'configured template'
     assert spec.runtime_options['spec_type'] == 'draft-mtp'
-    with pytest.raises(ValueError, match='projector'):
-        WorkerLaunchSpec(model=spec.model, device='none', embedding=True, mmproj=spec.mmproj)
+    production = WorkerLaunchSpec(model=spec.model, device='none', embedding=True, mmproj=spec.mmproj)
+    assert '--mmproj' in production.command(tmp_path / 'key')
+    with pytest.raises(ValueError, match='template'):
+        WorkerLaunchSpec(model=spec.model, device='none', embedding=True, mmproj=spec.mmproj,
+                         template='generation template')
     with pytest.raises(WorkerError, match='projector'):
         smoke.probe_launch(WorkerLaunchSpec(model=spec.model, device='none'), SimpleNamespace(ctx=1024))
 
@@ -51,7 +54,8 @@ def test_diagnostic_preserves_resolved_projector_and_production_guards(tmp_path)
     ('wrong-dimension', False, True), ('bad-index', False, True), ('nan', False, True),
     ('no-vision', False, True), ('decoder-error', True, True),
 ])
-def test_multimodal_reference_and_cleanup(tmp_path, payload, mode, ok, review):
+@pytest.mark.parametrize('managed', [False, True])
+def test_multimodal_reference_and_cleanup(tmp_path, payload, mode, ok, review, managed):
     root = tmp_path / 'stub'
     root.mkdir()
     (root / 'memory-report').write_text(json.dumps(payload))
@@ -77,6 +81,8 @@ def test_multimodal_reference_and_cleanup(tmp_path, payload, mode, ok, review):
     output = tmp_path / 'results'
     command = [sys.executable, str(SCRIPT), '--model', 'a', '--models-dir', str(models.parent),
                '--executable', str(executable), '--output', str(output)]
+    if managed:
+        command.append('--managed')
     environment = {**os.environ, 'PYTHONPATH': str(SCRIPT.parents[1] / 'src'),
                    'STUB_MULTIMODAL_EMBEDDINGS': mode, 'STUB_ROOT': str(root),
                    'STUB_BUILD': payload['runtime_fingerprint'], 'STUB_PUBLIC_CTX': '1024',
@@ -86,6 +92,12 @@ def test_multimodal_reference_and_cleanup(tmp_path, payload, mode, ok, review):
     rows = [json.loads(line) for line in (output / 'raw.jsonl').read_text().splitlines()]
     assert rows[-1]['protocol_ok'] is ok and rows[-1]['review_required'] is review, rows[-1]
     assert rows[-1]['public_api'] == 'not_exercised' and rows[-1]['residency'] == []
+    assert rows[0]['launch_path'] == ('production' if managed else 'independent_reference')
+    if managed:
+        probe = smoke.tomlkit.parse((output / 'managed-model.toml').read_text())
+        assert probe['runtime']['embedding'] is True and probe['runtime']['pooling_type'] == 3
+        assert probe['mmproj']['model'] == 'Local/vision.gguf'
+        assert not [row for row in rows if row['stage'] == 'diagnostic-overrides']
     assert run.stdout == (output / 'summary.jsonl').read_text()
     assert (models / 'a.toml').read_bytes() == definition
     assert next(row for row in rows if row['stage'] == 'registered-definition' and row['phase'] == 'after')['unchanged']
@@ -94,6 +106,7 @@ def test_multimodal_reference_and_cleanup(tmp_path, payload, mode, ok, review):
     if ok:
         ready = next(row for row in rows if row['stage'] == 'ready')
         assert ready['dimension'] == 8 and ready['projector_path'] == str(models / 'vision.gguf')
+        assert ready['argv'].count('--embeddings') == 1 and ready['argv'].count('--pooling') == 1
         assert next(row for row in rows if row['stage'] == 'recovery')['pid'] == ready['pid'] == closed['pid']
         checks = [row for row in rows if row['stage'] == 'comparison']
         assert len(checks) == 16

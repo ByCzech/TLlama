@@ -74,7 +74,6 @@ def test_generation_only_settings_cannot_enter_an_embedding_launch(extra):
 @pytest.mark.parametrize('values', [{'embedding': 1}, {'embedding': 'true'},
                                   {'embedding': True, 'pooling_type': True},
                                   {'embedding': True, 'pooling_type': 0},
-                                  {'embedding': True, 'mmproj': Path('/models/projector.gguf')},
                                   {'embedding': True, 'template': '{{ Prompt }}'},
                                   {'pooling_type': 3}])
 def test_direct_launch_cannot_bypass_mode_validation(values):

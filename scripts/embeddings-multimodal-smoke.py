@@ -14,6 +14,8 @@ import signal
 import struct
 import zlib
 
+import tomlkit
+
 from tllama.backend import ModelManager
 from tllama.config import load_backend_config_from_env
 from tllama.embedding_contract import embedding_contract
@@ -56,6 +58,28 @@ class ProbeWorker(NativeWorker):
         # Use the owned authentication, slot, timeout, body bound and cleanup.
         async with self._response('/v1/embeddings', {**body, 'model': self.spec.alias}) as response:
             return await self._json_body(response)
+
+
+def managed_definition(source, ctx):
+    """Explicit production mode without editing the registered model definition."""
+    require(source is not None and source.llm_model is not None and source.mmproj_model is not None,
+            'Managed diagnostic needs an imported model and registered projector')
+    runtime = _plain(source.runtime)
+    for key in ('draft_n_max', 'spm_infill'):
+        runtime.pop(key, None)
+    runtime.update(embedding=True, pooling_type=3, n_ctx=ctx, n_batch=ctx, n_ubatch=ctx,
+                   type_k='f16', type_v='f16', flash_attn=False, spec_type='none')
+    return tomlkit.dumps({'llm': {'model': source.llm_model}, 'runtime': runtime,
+                         'mmproj': {'model': source.mmproj_model, **_plain(source.mmproj_context)}})
+
+
+class ManagedProbeManager(ModelManager):
+    def __init__(self, config, model, definition, **kwargs):
+        self.probe_model, self.probe_definition = model, definition
+        super().__init__(config, **kwargs)
+
+    def _toml_path_for_reference(self, model_ref):
+        return self.probe_definition if model_ref == self.probe_model else None
 
 
 def png(swapped=False):
@@ -148,7 +172,9 @@ async def memory(worker, emit, notes, phase):
 
 
 async def exercise(args, emit):
-    emit('diagnostic-version', version=1, checkpoint='0062', model=args.model,
+    emit('diagnostic-version', version=2 if args.managed else 1,
+         checkpoint='0063' if args.managed else '0062', model=args.model,
+         launch_path='production' if args.managed else 'independent_reference',
          public_api='not_exercised', mode='native_multimodal_embeddings', pooling='last',
          prompt_policy='literal_content_no_implicit_template_or_instruction',
          native_cancellation='early_compute_stop_not_proven')
@@ -158,6 +184,11 @@ async def exercise(args, emit):
     workers, notes, ok = [], [], True
 
     def factory(spec):
+        if args.managed:
+            # The resolved production launch and transport are used unchanged.
+            worker = NativeWorker(spec)
+            workers.append(worker)
+            return worker
         launch = probe_launch(spec, args)
         emit('diagnostic-overrides', configured_context=spec.n_ctx, effective_context=launch.n_ctx,
              projector=str(launch.mmproj), projector_options=_plain(launch.mmproj_options),
@@ -166,17 +197,30 @@ async def exercise(args, emit):
         workers.append(worker)
         return worker
 
-    manager = ModelManager(config, native_worker_factory=factory, native_launch_options={
+    source = ModelManager(config)
+    definition = source._toml_path_for_reference(args.model)
+    before = definition.read_bytes() if definition is not None and definition.is_file() else None
+    options = dict(native_worker_factory=factory, native_launch_options={
         'executable': args.executable.expanduser().resolve() if args.executable else None,
         'load_timeout': args.load_timeout, 'request_timeout': args.request_timeout})
+    if args.managed:
+        probe = args.output / 'managed-model.toml'
+        contents = managed_definition(source._resolve_virtual_model_spec(args.model), args.ctx)
+        probe.write_text(contents, encoding='utf-8')
+        emit('managed-definition', path=probe.name, toml=contents,
+             omitted_sections=['template', 'sampling', 'system', 'fim'])
+        globals_ = {k: v for k, v in config.runtime_overrides.items() if k not in {'draft_n_max', 'spm_infill'}}
+        config = replace(config, runtime_overrides=globals_, memory_source='native', memory_compare=False)
+        manager = ManagedProbeManager(config, args.model, probe, **options)
+    else:
+        manager = ModelManager(config, **options)
     manager.metadata_cache_dir = args.output / 'metadata-cache'
-    definition = manager._toml_path_for_reference(args.model)
-    before = definition.read_bytes() if definition is not None and definition.is_file() else None
     try:
         require(before is not None, 'Registered model definition not found')
         emit('registered-definition', phase='before', path=str(definition), toml=before.decode('utf-8'),
              sha256=hashlib.sha256(before).hexdigest())
-        async with manager.acquire_native_model(args.model, num_ctx=args.ctx, keep_alive=-1) as lease:
+        async with manager.acquire_native_model(args.model, num_ctx=args.ctx, keep_alive=-1,
+                                                operation='text_embedding' if args.managed else None) as lease:
             worker, pid, generation = lease.worker, lease.worker.pid, lease.generation
             contract = embedding_contract(lease.definition.metadata, 3)
             require((worker.props.get('modalities') or {}).get('vision') is True,
@@ -320,6 +364,7 @@ async def exercise(args, emit):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--model', default=MODEL)
+    parser.add_argument('--managed', action='store_true', help='Use production resolution and NativeWorker unchanged')
     parser.add_argument('--models-dir', type=Path)
     parser.add_argument('--executable', type=Path)
     parser.add_argument('--output', type=Path, required=True)

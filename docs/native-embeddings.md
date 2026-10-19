@@ -1,4 +1,42 @@
-# Native text embedding workers — 0057
+# Native embedding workers — 0063
+
+0063 permits an explicitly configured embedding worker to retain its registered
+projector and projector options. The accepted Qwen3-VL native reference0062
+proved literal text/image inputs with LAST pooling. A projector alone does not
+select embedding mode or a pooling type. For that exact registered model use:
+
+```toml
+[runtime]
+embedding = true
+pooling_type = 3
+```
+
+Keep the existing `[llm]` and `[mmproj]` references. Normal configuration
+precedence still controls context, batches, placement, K/V, FA and projector
+options; production does not inherit the diagnostic's capacity settings.
+The model's pooled semantic contract must still be known before public text
+admission. Decision heads, per-token/rank pooling and generation settings are
+not enabled by attaching a projector.
+
+Existing public text routes also work on this worker, with the same exact-token,
+limit, normalization and usage checks. `/api/show` advertises `embedding`, without
+claiming public image input or generation/vision routes. Public embedding
+schemas still refuse images/typed media. The internal embedding transport
+retains its authenticated bounded slot and raw protocol; its caller owns media
+validation and must check the admitted generation's live capabilities.
+
+Projector path, file fingerprint and options already participate in the frozen
+definition identity. Changes replace the generation through ordinary draining;
+admitted requests retain their old worker. Memory telemetry retains projector
+ownership and unknown/partial accounting as reported; it does not reuse the
+text-only memory estimate or invent physical residency. Generation requests
+continue to fail operation admission before replacing an embedding worker.
+
+Use the [managed reference recipe](../scripts/embeddings-multimodal-smoke.md)
+to exercise production resolution, `WorkerLaunchSpec` and `NativeWorker` without
+editing the registered TOML. Public media contracts are the next checkpoint.
+
+## Original worker foundation — 0057
 
 Public adapters were added in 0058; see [embedding-api.md](embedding-api.md)
 for the current public contract and remaining hardware gate. The sections
@@ -61,7 +99,7 @@ server flag. No generation parameter is used to guess attention or pooling.
 The usual global environment coercion also accepts `TLLAMA_RUNTIME_EMBEDDING`
 and `TLLAMA_RUNTIME_POOLING_TYPE`; per-model TOML wins. For a mixed generation
 and embedding inventory, prefer per-model settings. A non-default pooling
-requires embedding=true. Projectors, template overrides, model system/sampling/
+requires embedding=true. Template overrides, model system/sampling/
 FIM settings and speculative decoding/draft settings are rejected in embedding
 mode. Configure MTP per generation model when sharing a server with embeddings.
 The launch explicitly disables speculation. Batch, ubatch, context, K/V and

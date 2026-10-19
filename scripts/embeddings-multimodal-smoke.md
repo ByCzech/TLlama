@@ -1,9 +1,10 @@
-# Native multimodal embedding reference — 0062
+# Native multimodal embedding reference — 0062 / managed 0063
 
 This is the independent native gate before public multimodal embedding support.
-The six accepted text-model runs remain valid. Production embedding workers
-still refuse projectors; this diagnostic uses an owned launch subclass and the
-existing private authenticated, bounded worker transport. It opens no public
+The six accepted text-model runs remain valid. The default0062 reference uses
+an owned launch subclass and the existing private authenticated, bounded worker
+transport. After0063, `--managed` exercises the normal production embedding
+configuration and NativeWorker instead. The diagnostic opens no public
 listener and changes no production API, registered TOML or native binary.
 
 The maintainer's registered reference is:
@@ -102,3 +103,47 @@ Owned TCP stubs independently decode PNG pixels and both native request forms.
 They test missing vision, ignored images, drift, malformed output, missing usage,
 normalization, recovery and cleanup. Synthetic vectors do not certify hardware
 or model quality. Return pytest and the complete hardware tarball for review.
+
+## Production resolution and transport — 0063
+
+The accepted independent0062 result has16/16 equality comparisons with zero
+difference and three distinct image-sensitivity observations. After applying
+0063, verify the same controls through production admission and transport:
+
+```bash
+result_dir=/tmp/tllama-embeddings-managed-qwen3vl-$(date +%Y%m%d-%H%M%S)
+TLLAMA_RUNTIME_DEVICE=Vulkan0 PYTHONPATH=src \
+  python3 scripts/embeddings-multimodal-smoke.py --managed --output "$result_dir"
+tar -C "$(dirname "$result_dir")" -cJf "$result_dir.tar.xz" "$(basename "$result_dir")"
+```
+
+The default exact model reference is the maintainer's Qwen3-VL Q8_0 above.
+`--managed` writes `managed-model.toml` in the new results directory, preserving
+the registered model/projector references and projector options. Its explicit
+runtime uses embedding=true, pooling_type=3, ctx/batch/ubatch1024, F16KV,
+FAoff and speculationnone. Generation sections and draft/FIM companions are
+omitted. Device/placement precedence is unchanged. Native memory reporting is
+selected explicitly for this diagnostic; no native compute/capacity tuning is
+performed to hide the accepted projector CPU fallback.
+
+The temporary definition is resolved and fingerprinted through ordinary
+ModelManager admission. The worker factory creates `NativeWorker(spec)` without
+changing the resolved spec, command or embedding method. The admitted semantic
+contract is checked before loading, then the live vision capability before media
+requests. `raw.jsonl` records diagnostic version2/checkpoint0063 and
+launch_path=production; it also retains the temporary definition. The registered
+TOML's original bytes/hash and final unchanged check remain separate evidence.
+The default independent recipe stays available as0062; compare retained vectors
+and lifecycle evidence after the managed run. This gate still makes no public
+multimodal API or SDK claim.
+
+Focused checks for the production integration:
+
+```bash
+pytest -q tests/test_native_embedding_projector.py \
+  tests/test_embeddings_multimodal_smoke.py tests/test_native_embeddings.py \
+  tests/test_embedding_api.py tests/test_native_config.py
+```
+
+`tests/native_worker_stub.py` is an executable fixture launched by these tests,
+not a pytest module. Its subprocess environment is supplied by the fixtures.
