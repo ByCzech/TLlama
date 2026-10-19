@@ -214,8 +214,11 @@ def test_cli_captures_without_models_listener_or_registered_file_writes(tmp_path
     ['--env', 'LLAMA_ARG_MODEL=x'], ['--env', 'CUDA_VISIBLE_DEVICES=1', '--env', 'CUDA_VISIBLE_DEVICES=2']])
 def test_invalid_cli_does_not_create_output_or_spawn(tmp_path, arguments):
     output = tmp_path / 'result'
-    run = subprocess.run([sys.executable, str(SCRIPT), '--output', str(output), *arguments], capture_output=True, text=True, timeout=5)
-    assert run.returncode == 2 and not output.exists()
+    # Disable site packages so an editable install cannot mask a missing source path.
+    run = subprocess.run([sys.executable, '-S', str(SCRIPT), '--output', str(output), *arguments],
+        env={**os.environ, 'PYTHONPATH': str(SCRIPT.parents[1] / 'src')},
+        capture_output=True, text=True, timeout=5)
+    assert run.returncode == 2 and not output.exists(), run.stderr
 
 
 @pytest.mark.parametrize('missing', [True, False])
