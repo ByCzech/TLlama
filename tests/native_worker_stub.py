@@ -138,6 +138,89 @@ async def embeddings_request(reader, writer, body):
     await json_response(writer, payload)
 
 
+async def multimodal_embeddings_request(reader, writer, body):
+    """Independent fixture decoder for the native multimodal diagnostic."""
+    mode = os.environ['STUB_MULTIMODAL_EMBEDDINGS']
+    value = body.get('input')
+    if not value or body.get('encoding_format', 'float') not in {'float', 'base64'}:
+        await json_response(writer, {'error': {'message': 'invalid request'}}, 400)
+        return
+    token_input = isinstance(value, list) and type(value[0]) is int
+    entries = [value] if not isinstance(value, list) or token_input else value
+    if len(entries) == 8 and entries == [entries[0]] * 8 and mode != 'fast':
+        mark('started', 'multimodal-embeddings')
+        await reader.read()
+        mark('cancelled', 'multimodal-embeddings')
+        return
+
+    def pixels(encoded):
+        data = base64.b64decode(encoded, validate=True)
+        if not data.startswith(b'\x89PNG\r\n\x1a\n'):
+            raise ValueError('invalid PNG')
+        offset, compressed = 8, b''
+        while offset < len(data):
+            size = struct.unpack('>I', data[offset:offset + 4])[0]
+            if data[offset + 4:offset + 8] == b'IDAT':
+                compressed += data[offset + 8:offset + 8 + size]
+            offset += size + 12
+        return zlib.decompress(compressed)
+
+    def canonical(entry):
+        if isinstance(entry, str):
+            return entry.encode()
+        if isinstance(entry, list):
+            return ''.join(chr(t - 10) for t in entry[1:]).encode()
+        chunks = []
+        if 'content' in entry:
+            for part in entry['content']:
+                if part['type'] == 'text':
+                    chunks.append(part['text'].encode())
+                elif part['type'] == 'image_url':
+                    image = pixels(part['image_url']['url'].split(',', 1)[1])
+                    chunks.append(b'' if mode == 'ignore-images' else b'IMAGE:' + image)
+                else:
+                    raise ValueError('unsupported content')
+        else:
+            parts = entry['prompt_string'].split('<stub-media>')
+            chunks.append(parts[0].encode())
+            for part, data in zip(parts[1:], entry['multimodal_data']):
+                image = pixels(data)
+                chunks.extend([b'' if mode == 'ignore-images' else b'IMAGE:' + image, part.encode()])
+        return b''.join(chunks)
+
+    data = []
+    try:
+        for index, entry in enumerate(entries):
+            digest = hashlib.sha256(canonical(entry)).digest()
+            vector = [float(v + 1) for v in digest[:8]]
+            if mode == 'drift' and len(entries) > 1:
+                vector[0] += 100
+            norm = math.sqrt(sum(v * v for v in vector))
+            vector = [v / norm for v in vector]
+            if mode == 'bad-norm':
+                vector = [v * 2 for v in vector]
+            if mode == 'wrong-dimension':
+                vector.pop()
+            if mode == 'nan':
+                vector[0] = float('nan')
+            if body.get('encoding_format') == 'base64':
+                vector = base64.b64encode(struct.pack('<' + 'f' * len(vector), *vector)).decode()
+            data.append({'object': 'embedding', 'index': 0 if mode == 'bad-index' else index,
+                         'embedding': vector})
+    except (ValueError, KeyError, zlib.error) as exc:
+        invalid_png = str(exc) == 'invalid PNG'
+        message = ('Failed to load image or audio file' if invalid_png else 'invalid media/content')
+        if invalid_png and mode == 'decoder-error':
+            message = 'unrelated decoder failure'
+        await json_response(writer, {'error': {'message': message}}, 500 if invalid_png else 400)
+        return
+    payload = {'object': 'list', 'data': data, 'model': arg('--alias'),
+               'usage': {'prompt_tokens': 50 * len(entries), 'total_tokens': 50 * len(entries)}}
+    if mode == 'no-usage':
+        del payload['usage']
+    await json_response(writer, payload)
+
+
 async def tools_request(reader, writer, body):
     """Synthetic Tools protocol only; does not simulate real model quality."""
     mode = os.environ['STUB_TOOLS']
@@ -440,6 +523,7 @@ async def handle(reader, writer):
                 "model_path": arg("--model"),
                 "default_generation_settings": {"n_ctx": 0 if MODE == "bad-context" else int(os.environ.get('STUB_PUBLIC_CTX',2048))},
                 "modalities": {"vision": "--mmproj" in sys.argv and MODE != 'no-vision'},
+                "media_marker": "<stub-media>",
                 "bos_token": "<bos>", "eos_token": "<eos>",
                 "chat_template": (Path(arg("--chat-template-file")).read_text() if "--chat-template-file" in sys.argv
                                   else "{% for m in messages %}{{ m.role }}:{{ m.content }}\n{% endfor %}"),
@@ -473,6 +557,9 @@ async def handle(reader, writer):
         if os.environ.get('STUB_MTP') and path == '/v1/chat/completions':
             async with LOCK:
                 await mtp_request(reader, writer, body)
+            return
+        if os.environ.get('STUB_MULTIMODAL_EMBEDDINGS') and path == '/v1/embeddings':
+            await multimodal_embeddings_request(reader, writer, body)
             return
         if (os.environ.get('STUB_EMBEDDINGS') or '--embeddings' in sys.argv) and path == '/v1/embeddings':
             await embeddings_request(reader, writer, body)
