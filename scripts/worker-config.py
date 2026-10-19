@@ -49,10 +49,13 @@ def main():
         resolved = resolve_worker_config(config, storage_path(spec.llm_model), spec,
                                          num_ctx=args.ctx, mmproj=storage_path(spec.mmproj_model))
         # Illustrative private paths only; NativeWorker creates the actual files.
-        command = resolved.launch.command(Path("/private/api-key"), Path("/private/chat-template.jinja"))
+        command = (resolved.launch.command(Path("/private/api-key"), Path("/private/chat-template.jinja"))
+                   if resolved.launch.device is not None else None)
         print(json.dumps({"dry_run": True, "runtime_fingerprint": resolved.launch.runtime_fingerprint,
                           "runtime": plain(resolved.runtime), "sources": plain(resolved.sources),
                           "argv": command, "native_sampling": build_native_sampling({}, resolved=resolved),
+                          "backend_priority": resolved.launch.backend_priority,
+                          "automatic_device_selection": resolved.launch.device is None,
                           "system_prompt": resolved.system_prompt, "gguf_metadata_read": False,
                           "private_paths": "illustrative; created by NativeWorker at start"},
                          ensure_ascii=False, indent=2))

@@ -11,6 +11,7 @@ from typing import Mapping, Any
 from tllama.native_cli import runtime_cli_args, mmproj_cli_args
 from tllama.native_params import POOLING_TYPES, freeze_values, kv_type_name
 from tllama.decision_contract import DECISION_TYPES
+from tllama.backend_policy import DEFAULT_BACKEND_PRIORITY, backend_priority
 
 
 RUNTIME_FINGERPRINT = "b11552-ec2797836f"
@@ -28,12 +29,14 @@ class WorkerLaunchSpec:
     """Resolved load configuration for one private native process."""
 
     model: Path
-    device: str
+    device: str | None
     alias: str = "tllama-worker"
     executable: Path = DEFAULT_EXECUTABLE
     mmproj: Path | None = None
     n_ctx: int = 2048
     n_gpu_layers: int | None = None
+    backend_priority: tuple[str, ...] = DEFAULT_BACKEND_PRIORITY
+    fit: bool = False
     type_k: str | None = None
     type_v: str | None = None
     flash_attn: bool | None = None
@@ -56,6 +59,9 @@ class WorkerLaunchSpec:
     log_limit_bytes: int = 4 * 1024 * 1024
 
     def __post_init__(self):
+        object.__setattr__(self, "backend_priority", backend_priority(self.backend_priority))
+        if type(self.fit) is not bool:
+            raise ValueError("fit must be a boolean")
         if self.version_policy not in ("warn", "strict"):
             raise ValueError("version_policy must be warn or strict")
         if self.memory_source not in ("auto", "native", "log"):
@@ -73,9 +79,11 @@ class WorkerLaunchSpec:
 
         for name in ("device", "alias", "runtime_fingerprint"):
             value = getattr(self, name)
+            if name == "device" and value is None:
+                continue
             if not isinstance(value, str) or not value or "\0" in value:
                 raise ValueError(f"{name} must be a nonempty string")
-        devices = self.device.split(",")
+        devices = self.device.split(",") if self.device is not None else []
         if any(not part or part.strip() != part for part in devices):
             raise ValueError("device must contain nonempty server device selectors")
         if "none" in devices and len(devices) != 1:
@@ -160,14 +168,16 @@ class WorkerLaunchSpec:
         return env
 
     def command(self, api_key_file: Path, template_file: Path | None = None) -> tuple[str, ...]:
+        if self.device is None:
+            raise ValueError("Automatic device selection must resolve before building a worker command")
         if not api_key_file.is_absolute():
             raise ValueError("api_key_file must be an absolute path")
         layers = 0 if self.device == "none" else self.n_gpu_layers
-        layers_arg = "all" if layers in (None, -1) else str(layers)
+        layers_arg = "auto" if self.fit and layers is None else "all" if layers in (None, -1) else str(layers)
         args = [str(self.executable), "--model", str(self.model), "--alias", self.alias,
                 "--host", "127.0.0.1", "--port", str(self.port), "--parallel", "1",
                 "--device", self.device, "--n-gpu-layers", layers_arg,
-                "--ctx-size", str(self.n_ctx), "--fit", "off", "--sleep-idle-seconds", "-1",
+                "--ctx-size", str(self.n_ctx), "--fit", "on" if self.fit else "off", "--sleep-idle-seconds", "-1",
                 "--api-key-file", str(api_key_file), "--offline", "--no-context-shift",
                 "--log-colors", "off", "--no-log-prefix", "--no-log-timestamps",
                 "--log-verbosity", "5"]

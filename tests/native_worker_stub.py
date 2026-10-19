@@ -19,6 +19,29 @@ def arg(name, default=None):
 
 MODE = os.environ.get("STUB_MODE", "normal")
 ROOT = Path(os.environ["STUB_ROOT"])
+if '--list-devices' in sys.argv and 'STUB_DISCOVERY' in os.environ:
+    (ROOT / 'discovery').write_text(json.dumps({'argv': sys.argv[1:], 'cwd': os.getcwd(), 'pid': os.getpid(),
+        'env': {k: v for k, v in os.environ.items() if k.startswith(('LLAMA_ARG_', 'AIP_'))
+                or k in {'GGML_BACKEND_PATH', 'CUDA_VISIBLE_DEVICES'}}}))
+    mode = os.environ['STUB_DISCOVERY']
+    if mode == 'hang':
+        import time
+        time.sleep(60)
+    if mode == 'flood':
+        print('x' * (5 * 1024 * 1024), flush=True)
+        raise SystemExit(0)
+    if mode == 'bad':
+        print('not a device table', flush=True)
+        raise SystemExit(0)
+    if mode == 'error':
+        raise SystemExit(7)
+    print('Available devices:', flush=True)
+    devices = json.loads(mode)
+    for device in devices:
+        print(f'  {device}: synthetic test device (8192 MiB, 8000 MiB free)', flush=True)
+    if not devices:
+        print('  (none)', flush=True)
+    raise SystemExit(0)
 KEY = Path(arg("--api-key-file")).read_text().strip()
 LOCK = asyncio.Lock()
 HEALTH_READS = 0
@@ -809,6 +832,10 @@ async def main():
                     "key_mode": oct(Path(arg("--api-key-file")).stat().st_mode & 0o777),
                     "env": {k: v for k, v in os.environ.items() if k.startswith(("LLAMA_", "AIP_"))
                             or k in ("CUDA_VISIBLE_DEVICES", "GGML_BACKEND_PATH", "MTMD_BACKEND_DEVICE")}})
+    failure = json.loads(os.environ.get('STUB_DEVICE_FAILURES', '{}')).get(arg('--device'))
+    if failure:
+        print(failure, file=sys.stderr, flush=True)
+        return 23
     if MODE == "fatal":
         print("device kernel image is invalid", file=sys.stderr, flush=True)
         return 23

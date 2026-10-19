@@ -18,7 +18,7 @@ AUDITED_RUNTIME = 'b11552-3144c167ef'
 VISIBILITY_ENV = frozenset({'CUDA_VISIBLE_DEVICES', 'ROCR_VISIBLE_DEVICES', 'HIP_VISIBLE_DEVICES',
                           'GGML_VK_VISIBLE_DEVICES', 'ONEAPI_DEVICE_SELECTOR', 'SYCL_DEVICE_FILTER',
                           'ZE_AFFINITY_MASK', 'GGML_DISABLE_VULKAN'})
-_ROW = re.compile(r'^  (\S+): (.+) \(([0-9]{1,20}) MiB, ([0-9]{1,20}) MiB free\)$')
+_ROW = re.compile(r'^  (.+?): (.+) \(([0-9]{1,20}) MiB, ([0-9]{1,20}) MiB free\)$')
 _BDF = re.compile(r'^[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$')
 
 

@@ -18,6 +18,7 @@ from tllama.embedding_contract import embedding_contract
 from tllama.helpers.common import never_expires_at, NEVER_EXPIRES_SECONDS
 from tllama.native_params import freeze_values
 from tllama.worker import NativeWorker, WorkerError, WorkerExited
+from tllama.automatic_worker import AutomaticWorker
 
 
 logger = logging.getLogger(__name__)
@@ -363,7 +364,9 @@ class NativeResidency:
                             f"Loaded model limit reached ({self.max_loaded_models}). "
                             "Unload a model first or increase TLLAMA_MAX_LOADED_MODELS."
                         )
-                    worker = self._factory(definition.resolved.launch)
+                    launch = definition.resolved.launch
+                    worker = (AutomaticWorker(launch, worker_factory=self._factory)
+                              if launch.device is None else self._factory(launch))
                     entry = _Generation(next(self._numbers), definition, worker)
                     self._entries[entry.number] = entry
                     self._current[name] = entry

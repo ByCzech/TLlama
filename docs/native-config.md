@@ -4,11 +4,9 @@ Runtime fingerprint: **b11552-ec2797836f**. The native configuration modules do
 not import llama-cpp-python. Their vocabulary is TLlama-owned and pinned to the
 parser/protocol; an upstream option does not automatically become a TLlama API.
 
-Public inference routes still use the legacy manager at this checkpoint.
-They explicitly refuse `runtime.device` rather than letting Python `**kwargs`
-discard it. Use the standalone resolver/preview until block 04 migrates the
-manager. Negative temperature and removed `tfs_z` are already refused by public
-requests before model load/unload. No new inference endpoints are introduced.
+Public inference uses managed native workers. Explicit selectors remain native
+runtime controls; automatic backend priorities are documented in
+[backend-priority.md](backend-priority.md). No Python inference binding is used.
 
 ## Resolution and defaults
 
@@ -16,13 +14,13 @@ requests before model load/unload. No new inference endpoints are introduced.
 storage paths resolved by the caller. It returns a launch contract, resolved
 runtime values and their sources, global/model sampling and the default system
 prompt. It does not load weights, read GGUF metadata, import files or start a
-process. Missing device selection is an error before native loading.
+process. Missing device selection defers backend selection until worker startup.
 
 | Setting | Native migration policy |
 |---|---|
-| `device` | TOML `[runtime].device` > `TLLAMA_RUNTIME_DEVICE`; no implicit selection yet |
+| `device` | TOML `[runtime].device` > `TLLAMA_RUNTIME_DEVICE` > automatic backend priority |
 | Context | Request `num_ctx` > TOML `n_ctx` > global context; global default 0 = trained maximum |
-| GPU layers | Default -1 means all, serialized as `all`; explicit nonnegative counts retained |
+| GPU layers | Explicit placement retains default `all`; automatic placement fits unset GPU layer count natively; explicit counts retained on GPU attempts |
 | CPU | `device=none` forces layers 0, operation/KV/projector offload disabled; explicit contradictory offload rejected |
 | Fit / parallel / context shift | off / 1 / off, owned by the supervisor |
 | Flash attention | Off unless configured; supplied model profiles remain on |

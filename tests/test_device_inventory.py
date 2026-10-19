@@ -63,6 +63,14 @@ def test_unknown_selectors_and_parentheses_in_descriptions_are_retained():
         parse_device_list(b'Available devices:\n\xff')
 
 
+def test_virtual_and_colon_selectors_are_preserved_literally():
+    table = parse_device_list(b'Available devices:\n'
+        b'  [virtgpu] CUDA0: Remote GPU (4096 MiB, 4000 MiB free)\n'
+        b'  HTP0:1: Virtual HTP (4096 MiB, 4000 MiB free)\n')
+    assert table['status'] == 'complete'
+    assert [row['selector'] for row in table['devices']] == ['[virtgpu] CUDA0', 'HTP0:1']
+
+
 def test_pci_evidence_reads_only_display_and_processing_accelerator_attributes(tmp_path):
     a = pci(tmp_path)
     pci(tmp_path, '0000:04:00.0', cls='0x120000')
@@ -127,7 +135,8 @@ if mode=='flood':
     while True:os.write(2,b'x'*65536)
 if mode=='pipe-child':
     if os.fork()==0:
-        Path(os.environ['CAPTURE']+'.child').write_text(str(os.getpid()))
+        # procfs can be mounted from an ancestor PID namespace.
+        Path(os.environ['CAPTURE']+'.child').write_text(os.readlink('/proc/self'))
         signal.signal(signal.SIGTERM,signal.SIG_IGN)
         time.sleep(30)
     sys.exit(0)

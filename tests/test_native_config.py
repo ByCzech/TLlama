@@ -84,9 +84,12 @@ def test_model_selector_beats_global_and_context_keeps_request_priority(device):
     assert requested.launch.n_ctx == 2048 and requested.sources["n_ctx"] == "request"
 
 
-def test_absent_device_requires_configuration_but_needs_no_gpu_discovery():
-    with pytest.raises(ConfigError, match="TLLAMA_RUNTIME_DEVICE"):
-        resolve_worker_config(BackendConfig(), MODEL)
+def test_absent_device_defers_automatic_selection_without_discovery():
+    resolved = resolve_worker_config(BackendConfig(), MODEL)
+    assert resolved.launch.device is None and resolved.launch.n_gpu_layers is None
+    assert resolved.sources['device'] == 'backend priority'
+    with pytest.raises(ValueError, match='Automatic device selection'):
+        command(resolved)
 
 
 @pytest.mark.parametrize("extra", ['n_gpu_layers=-1', 'n_gpu_layers=1', 'op_offload=true', 'offload_kqv=true'])

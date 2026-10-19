@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Mapping
 
 from tllama.worker_config import DEFAULT_EXECUTABLE
+from tllama.backend_policy import DEFAULT_BACKEND_PRIORITY, backend_priority
 
 DEFAULT_MODELS_DIR = "/var/lib/tllama/models"
 
@@ -416,10 +417,12 @@ class BackendConfig:
     ignore_unsupported_runner: bool = False
     runtime_executable: Path = DEFAULT_EXECUTABLE
     runtime_version_policy: str = "warn"
+    backend_priority: tuple[str, ...] = DEFAULT_BACKEND_PRIORITY
     memory_source: str = "auto"
     memory_compare: bool = False
 
     def __post_init__(self):
+        object.__setattr__(self, "backend_priority", backend_priority(self.backend_priority))
         path = Path(self.runtime_executable)
         if not path.is_absolute() or "\0" in str(path):
             raise ConfigError("TLLAMA_RUNTIME_EXECUTABLE must be an absolute path")
@@ -465,6 +468,7 @@ def load_backend_config_from_env() -> BackendConfig:
         ignore_unsupported_runner=_env_bool("TLLAMA_IGNORE_UNSUPPORTED_RUNNER", False),
         runtime_executable=_env_str("TLLAMA_RUNTIME_EXECUTABLE", str(DEFAULT_EXECUTABLE)),
         runtime_version_policy=_env_str("TLLAMA_RUNTIME_VERSION_POLICY", "warn").strip().lower(),
+        backend_priority=os.environ.get("TLLAMA_BACKEND_PRIORITY", DEFAULT_BACKEND_PRIORITY),
         memory_source=_env_str("TLLAMA_MEMORY_SOURCE", "auto").strip().lower(),
         memory_compare=_env_bool("TLLAMA_MEMORY_COMPARE", False),
     )

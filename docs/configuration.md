@@ -226,7 +226,19 @@ Native configuration and its defaults, CLI mapping and removal matrix are docume
 
 Whole numbers, finite floats, boolean words (`1/true/yes/on`, `0/false/no/off`) and comma-separated tensor proportions are supported. `numa` accepts disabled/strategy numbers or a boolean. `kv_overrides` is TOML-only. The model path comes from `[llm]`; context and K/V types have dedicated environment variables rather than duplicate `TLLAMA_RUNTIME_*` spellings.
 
-**Migration checkpoint:** public routes still use the legacy manager. A native `device` selector works in the standalone resolver/preview; the legacy manager explicitly refuses it until block 04 replaces that manager. Device selection is required by the native resolver before load, and model TOML overrides the global selector. It is not a stable physical GPU ID.
+Public routes use managed native workers. Model TOML overrides the global device selector. If neither is set, [backend priorities](backend-priority.md) select the device at model load. A selector is not a stable physical GPU ID.
+
+### `TLLAMA_BACKEND_PRIORITY`
+
+Ordered automatic acceleration preferences, default `CUDA,ROCm,SYCL,Vulkan`.
+For example, `TLLAMA_BACKEND_PRIORITY="Vulkan,ROCm"` tries only these GPU
+backends, then CPU. An **unset** variable uses the default; an explicitly
+**empty** value means CPU-only. `CPU` is a terminal entry and can appear first.
+Explicit model/global `device` overrides the entire priority list, including its
+allowlist. Names are case-insensitive, whitespace is trimmed, and duplicates
+retain the first occurrence. CPU helper libraries such as BLAS/BLIS are not
+independent placement choices. See [backend-priority.md](backend-priority.md)
+for matching, failure handling and native fitting limits.
 
 ### `TLLAMA_FLASH_ATTENTION`
 

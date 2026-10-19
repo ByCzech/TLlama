@@ -103,7 +103,10 @@ def resolve_worker_config(
         sources["draft_n_max"] = "MTP default"
     device = runtime.get("device")
     if device is None:
-        raise ConfigError("Set [runtime].device or TLLAMA_RUNTIME_DEVICE before loading a native model")
+        sources["device"] = "backend priority"
+        runtime["device"] = None
+        if sources["n_gpu_layers"] == "baseline":
+            runtime["n_gpu_layers"], sources["n_gpu_layers"] = None, "native fit"
     if device == "none":
         if sources["n_gpu_layers"] != "baseline" and runtime["n_gpu_layers"] != 0:
             raise ConfigError("CPU device 'none' conflicts with explicit n_gpu_layers; use 0")
@@ -140,9 +143,11 @@ def resolve_worker_config(
         launch = WorkerLaunchSpec(
             model=model, executable=config.runtime_executable if executable is None else executable,
             device=device, alias=alias, mmproj=mmproj,
+            backend_priority=config.backend_priority,
             version_policy=config.runtime_version_policy,
             memory_source=config.memory_source, memory_compare=config.memory_compare,
-            n_ctx=int(runtime["n_ctx"]), n_gpu_layers=int(runtime["n_gpu_layers"]),
+            n_ctx=int(runtime["n_ctx"]),
+            n_gpu_layers=None if runtime["n_gpu_layers"] is None else int(runtime["n_gpu_layers"]),
             type_k=runtime["type_k"], type_v=runtime["type_v"], flash_attn=runtime["flash_attn"],
             embedding=runtime["embedding"], pooling_type=runtime["pooling_type"],
             decision_type=decision,
