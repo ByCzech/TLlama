@@ -17,6 +17,7 @@ import socket
 import struct
 import sys
 
+import h11
 import httpx
 import tomlkit
 import uvicorn
@@ -303,26 +304,66 @@ async def exercise_requests(audit, client, manager, rows, normalized, raw, limit
         # inference-start event is available for any non-streaming endpoint.
         body = {'model': audit.model, 'prompt' if path == '/api/embeddings' else 'input': value}
         audit.emit('request', source='public', probe='cancel', path=path, body=body)
-        task = asyncio.create_task(client.post(path, json=body))
-        try:
-            done, _ = await asyncio.wait({task}, timeout=audit.args.cancel_after_ms / 1000)
-            leases = manager.native_snapshot()[0]['leases']
-            if done:
-                response = await task
-                require(response.status_code == 200, 'Cancellation request failed before closure')
-                audit.emit('public-response', probe='cancel-completed', path=path, status=response.status_code,
-                           payload=response.json())
-            else:
-                task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
-            await wait_until(lambda: manager.native_snapshot()[0]['leases'] == 0, audit.args.request_timeout)
-            audit.emit('transport-cancel', path=path, pending_at_cancel=not bool(done), leases_at_cancel=leases,
-                       native_early_stop_observed=None, inference_started_observed=None,
-                       note='Transport closure and same-worker reuse do not prove early native compute cancellation')
-        finally:
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
+        await cancel_public_request(audit, client.base_url, manager, path, body)
         await audit.public(client, '/api/embed', list(TEXTS), normalized, rows, path + ':after-cancel')
+
+
+async def cancel_public_request(audit, address, manager, path, body):
+    # Own the socket directly: cancelling an HTTPX task can race with opening
+    # its pooled connection and leave it waiting for response headers.
+    url = httpx.URL(address)
+    reader, writer = await asyncio.wait_for(asyncio.open_connection(url.host, url.port),
+                                           audit.args.request_timeout)
+    connection = h11.Connection(h11.CLIENT)
+
+    async def read_response():
+        status, content = None, bytearray()
+        while True:
+            event = connection.next_event()
+            if event is h11.NEED_DATA:
+                connection.receive_data(await reader.read(65536))
+            elif isinstance(event, h11.Response):
+                status = event.status_code
+            elif isinstance(event, h11.Data):
+                content.extend(event.data)
+                require(len(content) <= 128 * 1024 * 1024, 'Cancellation response exceeds byte limit')
+            elif isinstance(event, h11.EndOfMessage):
+                require(status is not None, 'Cancellation response has no status')
+                return status, json.loads(content)
+            elif isinstance(event, h11.ConnectionClosed):
+                raise WorkerError('Cancellation response closed before completion')
+
+    task = asyncio.create_task(read_response())
+    try:
+        data = json.dumps(body, ensure_ascii=False, allow_nan=False).encode('utf-8')
+        writer.write(connection.send(h11.Request(method='POST', target=path, headers=[
+            ('Host', f'{url.host}:{url.port}'), ('Content-Type', 'application/json'),
+            ('Content-Length', str(len(data))), ('Connection', 'close')])))
+        writer.write(connection.send(h11.Data(data=data)))
+        writer.write(connection.send(h11.EndOfMessage()))
+        await asyncio.wait_for(writer.drain(), audit.args.request_timeout)
+        done, _ = await asyncio.wait({task}, timeout=audit.args.cancel_after_ms / 1000)
+        leases = manager.native_snapshot()[0]['leases']
+        if done:
+            status, payload = await task
+            require(status == 200, 'Cancellation request failed before closure')
+            audit.emit('public-response', probe='cancel-completed', path=path, status=status, payload=payload)
+    finally:
+        # Closing the owned transport precedes waiting on the local reader.
+        writer.close()
+        task.cancel()
+        async def close_and_join():
+            try:
+                await writer.wait_closed()
+            finally:
+                await asyncio.gather(task, return_exceptions=True)
+        audit.emit('transport-close', path=path, state='closing')
+        await asyncio.wait_for(close_and_join(), audit.args.request_timeout)
+        audit.emit('transport-close', path=path, state='closed')
+    await wait_until(lambda: manager.native_snapshot()[0]['leases'] == 0, audit.args.request_timeout)
+    audit.emit('transport-cancel', path=path, pending_at_cancel=not bool(done), leases_at_cancel=leases,
+               native_early_stop_observed=None, inference_started_observed=None,
+               note='Transport closure and same-worker reuse do not prove early native compute cancellation')
 
 
 async def exercise_model(args, model, profile, sdks, emit):
@@ -451,7 +492,7 @@ async def exercise_model(args, model, profile, sdks, emit):
 
 
 async def exercise(args, emit, sdks):
-    emit('diagnostic-version', version=3, checkpoint='0061', models=args.model, public_api='tcp',
+    emit('diagnostic-version', version=4, checkpoint='0073', models=args.model, public_api='tcp',
          mode='text_only', native_cancellation='early_compute_stop_not_proven',
          sdk_versions={name: version(name) for name in ('ollama', 'openai')})
     ok, observations = True, []

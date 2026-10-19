@@ -1,4 +1,4 @@
-# Public text embedding / SDK comparison — 0059 / 0060 / 0061
+# Public text embedding / SDK comparison — 0059 / 0060 / 0061 / 0073
 
 Run from the checkout after applying 0061 on top of 0058–0060. This gate compares real loopback TCP
 requests and the official Ollama/OpenAI Python SDKs against independent private
@@ -130,6 +130,25 @@ Native missing usage is recorded as unknown; public usage must equal measured
 submitted IDs. No retrieval quality, model ranking or multimodal claim is made.
 
 ## Cancellation and output
+
+Diagnostic version 4 / checkpoint 0073 fixes a cancellation race exposed by
+synthetic TCP tests. Public embedding work now runs in an owned AnyIO cancel
+scope: disconnect or caller cancellation keeps cancellation active across
+transport checkpoints, including when a transport consumes the first request
+to cancel. Cleanup still waits for work and residency lease release. This does
+not establish early GPU compute termination. Existing accepted vector/SDK
+hardware references remain accepted; no repeated model matrix is required.
+
+Each cancellation probe owns a direct loopback TCP connection. The tool sends
+one HTTP/1.1 JSON request and explicitly closes its socket after the observation
+delay, then joins its local response reader. A pooled HTTPX request task can
+still wait for headers after cancel(), including a race while connecting; task
+cancellation alone therefore does not prove transport closure. Completed
+responses are parsed with h11 and validated; incomplete response headers and
+bodies are bounded. Recovery uses the separate ordinary HTTPX client. Socket
+cleanup and subsequent lease draining have separate `--request-timeout` bounds;
+`transport-close` records distinguish these stages. This changes diagnostic
+transport only; ordinary public and SDK requests retain their existing paths.
 
 These responses are non-streaming and expose no reliable inference-start
 event. A request may already have completed before `--cancel-after-ms` (default

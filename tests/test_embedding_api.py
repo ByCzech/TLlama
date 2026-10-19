@@ -531,3 +531,45 @@ async def test_real_tcp_nonstream_disconnect_releases_native_transport_and_lease
         server.should_exit = True
         await asyncio.wait_for(serving, 3)
         sock.close()
+
+
+@pytest.mark.parametrize('trigger', ['disconnect', 'caller'])
+async def test_embedding_cancellation_remains_active_when_transport_consumes_first_cancel(monkeypatch, trigger):
+    from tllama import native_embeddings
+
+    started, disconnected, release, swallowed, finished = (asyncio.Event() for _ in range(5))
+
+    async def transport(*args, **kwargs):
+        try:
+            started.set()
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                # Model a cancellation racing an internal HTTP transport scope.
+                swallowed.set()
+                await release.wait()
+        finally:
+            finished.set()
+
+    async def receive():
+        await disconnected.wait()
+        return {'type': 'http.disconnect'}
+
+    monkeypatch.setattr(native_embeddings, 'serve_embeddings', transport)
+    request = type('Request', (), {'receive': staticmethod(receive)})()
+    task = asyncio.create_task(native_embeddings.embedding_response(request, None, None, api='ollama'))
+    try:
+        await asyncio.wait_for(started.wait(), 1)
+        if trigger == 'caller':
+            task.cancel()
+        else:
+            disconnected.set()
+        done, _ = await asyncio.wait({task}, timeout=0.5)
+        assert task in done, 'Embedding cleanup retained work after the first cancellation was consumed'
+        with pytest.raises(asyncio.CancelledError if trigger == 'caller' else ClientDisconnect):
+            await task
+        assert swallowed.is_set() and finished.is_set()
+    finally:
+        release.set()
+        disconnected.set()
+        await asyncio.gather(task, return_exceptions=True)

@@ -6,6 +6,7 @@ import math
 import struct
 import time
 
+import anyio
 from fastapi import HTTPException
 from starlette.requests import ClientDisconnect
 
@@ -219,13 +220,22 @@ async def embedding_response(http_request, manager, request, *, api, legacy=Fals
         while (await http_request.receive())['type'] != 'http.disconnect':
             pass
 
-    work = asyncio.create_task(serve_embeddings(manager, request, api=api, legacy=legacy))
+    scope = anyio.CancelScope()
+
+    async def embedding_work():
+        # HTTPX uses AnyIO cancellation scopes. Keep cancellation active across
+        # their checkpoints instead of relying on a single Task.cancel().
+        with scope:
+            return await serve_embeddings(manager, request, api=api, legacy=legacy)
+        raise asyncio.CancelledError
+
+    work = asyncio.create_task(embedding_work())
     watcher = asyncio.create_task(disconnected())
 
     async def cleanup():
-        for task in (work, watcher):
-            if not task.done():
-                task.cancel()
+        scope.cancel()
+        if not watcher.done():
+            watcher.cancel()
         await asyncio.gather(work, watcher, return_exceptions=True)
 
     try:

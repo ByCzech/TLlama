@@ -1,5 +1,6 @@
 """Exercise the actual public/SDK diagnostic over owned TCP native stubs."""
 
+import asyncio
 import base64
 import importlib.util
 import json
@@ -8,6 +9,7 @@ from pathlib import Path
 import struct
 import subprocess
 import sys
+from types import SimpleNamespace
 
 import gguf
 import pytest
@@ -103,7 +105,8 @@ def test_public_native_sdk_comparison_and_owned_cleanup(tmp_path, payload, mode,
     executable.chmod(0o700)
     output = tmp_path / 'results'
     command = [sys.executable, str(SCRIPT), '--model', 'a', '--models-dir', str(models.parent),
-               '--executable', str(executable), '--output', str(output)]
+               '--executable', str(executable), '--output', str(output),
+               '--load-timeout', '10', '--request-timeout', '5']
     environment = {k: v for k, v in os.environ.items() if k.lower() not in {'http_proxy', 'https_proxy', 'all_proxy'}}
     environment.update(PYTHONPATH=str(SCRIPT.parents[1] / 'src'), STUB_EMBEDDINGS=mode,
                        STUB_ROOT=str(root), STUB_BUILD=payload['runtime_fingerprint'],
@@ -165,3 +168,55 @@ def test_invalid_cli_has_no_output_or_worker(tmp_path, option, value):
                          env={**os.environ, 'PYTHONPATH': str(SCRIPT.parents[1] / 'src')},
                          capture_output=True, text=True, timeout=5)
     assert run.returncode == 2 and not output.exists(), run.stderr
+
+
+@pytest.mark.parametrize('completed,status', [(False, 200), (True, 200), (True, 500)])
+async def test_cancel_probe_owns_tcp_closure_and_handles_completed_responses(completed, status):
+    disconnected, events, received, handlers = asyncio.Event(), [], [], set()
+    body = {'model': 'a', 'input': 'řádek\nliteral\\n 🐈'}
+
+    async def handle(reader, writer):
+        handler = asyncio.current_task()
+        handlers.add(handler)
+        try:
+            head = await reader.readuntil(b'\r\n\r\n')
+            headers = dict(line.split(b': ', 1) for line in head.split(b'\r\n')[1:-2])
+            received.append(json.loads(await reader.readexactly(int(headers[b'Content-Length']))))
+            assert headers[b'Connection'] == b'close'
+            if completed:
+                data = b'{"embeddings":[]}'
+                writer.write(f'HTTP/1.1 {status} Test\r\nContent-Length: {len(data)}\r\n\r\n'.encode() + data)
+                await writer.drain()
+            await reader.read()
+            disconnected.set()
+        finally:
+            writer.close()
+            await writer.wait_closed()
+            handlers.remove(handler)
+
+    server = await asyncio.start_server(handle, '127.0.0.1', 0)
+    audit = SimpleNamespace(args=SimpleNamespace(request_timeout=1, cancel_after_ms=100 if completed else 5),
+                            emit=lambda stage, **values: events.append({'stage': stage, **values}))
+    manager = SimpleNamespace(native_snapshot=lambda: [{'leases': 0 if disconnected.is_set() or completed else 1}])
+    try:
+        port = server.sockets[0].getsockname()[1]
+        call = smoke.cancel_public_request(audit, f'http://127.0.0.1:{port}', manager, '/api/embed', body)
+        if status == 500:
+            with pytest.raises(WorkerError, match='failed before closure'):
+                await asyncio.wait_for(call, 2)
+        else:
+            await asyncio.wait_for(call, 2)
+            result = next(row for row in events if row['stage'] == 'transport-cancel')
+            assert result['pending_at_cancel'] is (not completed)
+            assert result['leases_at_cancel'] == (0 if completed else 1)
+            assert result['native_early_stop_observed'] is result['inference_started_observed'] is None
+            assert any(row['stage'] == 'public-response' for row in events) is completed
+        await asyncio.wait_for(disconnected.wait(), 1)
+        assert received == [body]
+        assert [row['state'] for row in events if row['stage'] == 'transport-close'] == ['closing', 'closed']
+    finally:
+        server.close()
+        await server.wait_closed()
+        for handler in tuple(handlers):
+            handler.cancel()
+        await asyncio.gather(*handlers, return_exceptions=True)
