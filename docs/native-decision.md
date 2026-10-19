@@ -3,10 +3,10 @@
 The independent native references for the exact registered Laya Q8_0,
 Bespoke-Nimble-9B-v3 Q4_K_M and Clef-Flash Q4_K_M passed0065/0066. This
 checkpoint integrates their text Decision contracts with ModelManager and
-NativeWorker. Public Decision endpoints and the managed/public hardware
-comparison follow separately. Existing generation routes reject Decision mode
-before load/eviction; `/api/show` suppresses generation capabilities for a
-declared Decision head and does not yet advertise a public Decision capability.
+NativeWorker.0068 adds the [public text Decision API](decision-api.md);
+the managed/public hardware comparison follows separately. Existing generation
+routes reject Decision mode before load/eviction. `/api/show` advertises only
+`decision` for an integrated text Decision header,without generation capabilities.
 
 ## Mode and configuration
 
@@ -76,6 +76,10 @@ is bounded to2MiB UTF-8,depth32 and100000 value nodes. These resource bounds
 are transport policy, not the model's trained context. Image/media keys, stream,
 sampling and other options are rejected before POST. A caller-supplied model
 value is replaced by the owned private alias.
+
+0068 also refuses media parts in the native chat-state layouts (a message array
+or `state.messages` array),since native otherwise extracts image/audio parts
+from those forms. Data elsewhere is not recursively interpreted as media.
 
 The request is copied before awaiting the slot. Literal Unicode, newlines,
 backslash-n and nested JSON retain their meaning; no de-escaping, prompt render,

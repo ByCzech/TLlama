@@ -268,8 +268,10 @@ async def decision_request(reader, writer, body):
         remote = any(not s.startswith('data:') for s in body['images'])
         await json_response(writer, {'error': {'message': 'unsupported decision image'}}, 400 if remote else 501)
         return
-    if mode == 'http500':
-        await json_response(writer, {'error': {'message': 'synthetic decision failure'}}, 500)
+    if mode == 'crash':
+        os._exit(71)
+    if mode in {'http400', 'http500', 'http501'}:
+        await json_response(writer, {'error': {'message': 'synthetic decision failure'}}, int(mode[4:]))
         return
     if mode == 'hold' or list(questions) == [f'q{i}' for i in range(32 if kind == 'laya' else 2)] and mode != 'fast':
         mark('started', 'decision')

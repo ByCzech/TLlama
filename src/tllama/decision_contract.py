@@ -49,6 +49,16 @@ def decision_type(metadata: Mapping) -> str | None:
     return kind
 
 
+def decision_capable(metadata: Mapping) -> bool:
+    """Offline text capability; native startup still verifies the actual head."""
+    if metadata.get('embedding_configured') is True or metadata.get('has_projector') is True:
+        return False
+    try:
+        return decision_type(metadata) is not None
+    except ValueError:
+        return False
+
+
 def prepare_decision_request(payload: Mapping) -> dict:
     """Snapshot literal JSON before any await; no template or generation options."""
     if not isinstance(payload, Mapping):
@@ -100,6 +110,18 @@ def prepare_decision_request(payload: Mapping) -> dict:
             raise ValueError('Decision values must be JSON values')
         elif type(value) is float and not math.isfinite(value):
             raise ValueError('Decision JSON numbers must be finite')
+    # Pinned parse_state() extracts media from these two chat-shaped layouts,
+    # even without top-level images/files. Refuse that native interpretation
+    # for text workers; similarly named data elsewhere stays literal JSON.
+    state = body['state']
+    messages = state.get('messages') if isinstance(state, dict) and 'messages' in state else state
+    if isinstance(messages, list):
+        for message in messages:
+            content = message.get('content') if isinstance(message, dict) else None
+            if isinstance(content, list) and any(isinstance(part, dict) and (
+                    part.get('type') == 'image_url' and 'image_url' in part
+                    or part.get('type') == 'input_audio' and 'input_audio' in part) for part in content):
+                raise ValueError('Media parts in Decision chat state are not supported by the text contract')
     try:
         encoded = json.dumps(body, ensure_ascii=False, allow_nan=False).encode('utf-8')
     except (ValueError, UnicodeError) as exc:
