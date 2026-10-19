@@ -244,6 +244,79 @@ async def multimodal_embeddings_request(reader, writer, body):
     await json_response(writer, payload)
 
 
+async def decision_request(reader, writer, body):
+    """Synthetic typed decisions; no real head, tokenizer or quality simulation."""
+    mode = os.environ['STUB_DECISION']
+    questions = body.get('questions')
+    invalid = 'state' not in body or body['state'] is None or not isinstance(questions, dict) or not questions
+    for q in (questions or {}).values():
+        if not isinstance(q, dict) or not q.get('instructions') or q.get('type') not in {'choice', 'score', 'noul'}:
+            invalid = True
+            continue
+        c = q.get('criteria')
+        if q['type'] == 'choice' and (not isinstance(c, dict) or not 1 <= len(c) <= 255):
+            invalid = True
+        if q['type'] == 'score' and (not isinstance(c, list) or not 2 <= len(c) <= 10):
+            invalid = True
+    if invalid:
+        await json_response(writer, {'error': {'message': 'invalid decision request'}}, 400)
+        return
+    if body.get('images'):
+        remote = any(not s.startswith('data:') for s in body['images'])
+        await json_response(writer, {'error': {'message': 'unsupported decision image'}}, 400 if remote else 501)
+        return
+    if len(questions) == 32 and mode != 'fast':
+        mark('started', 'decision')
+        await reader.read()
+        mark('cancelled', 'decision')
+        return
+    answers = {}
+    charged = 'charged' in json.dumps(body['state']).lower()
+    for key, q in questions.items():
+        a = {'type': q['type']}
+        if q['type'] == 'noul':
+            a['noul'] = 0.8 if charged else 0.2
+        else:
+            keys = list(q['criteria']) if q['type'] == 'choice' else [str(i) for i in range(len(q['criteria']))]
+            n = len(keys)
+            weights = [float(n - i if charged else i + 1) for i in range(n)]
+            if mode == 'drift' and len(questions) > 1:
+                weights[0] += 2
+            probs = [v / sum(weights) for v in weights]
+            a['probabilities'] = dict(zip(keys, probs))
+            best = max(range(n), key=lambda i: probs[i])
+            if q['type'] == 'choice':
+                a['choice'] = keys[best]
+                a['confidence'] = 1 if n == 1 else (probs[best] - 1/n) / (1 - 1/n)
+                if mode == 'wrong-choice' and n > 1:
+                    a['choice'] = keys[(best + 1) % n]
+            else:
+                a['score'] = sum(i * p for i, p in enumerate(probs))
+                a['legend'] = dict(zip(keys, q['criteria']))
+                a['confidence'] = max(0, 1 - sum(p * abs(i - best) for i,p in enumerate(probs)) /
+                                      sum(abs(i - (n - 1)/2)/n for i in range(n)))
+                if mode == 'wrong-score':
+                    a['score'] += 0.2
+                if mode == 'wrong-legend':
+                    a['legend']['0'] = 'wrong'
+            if mode == 'bad-sum':
+                a['probabilities'][keys[0]] += 0.2
+            if mode == 'bad-confidence':
+                a['confidence'] = 0.99
+            if mode == 'nan':
+                a['confidence'] = float('nan')
+        answers[key] = a
+    if mode == 'wrong-order':
+        answers = dict(reversed(list(answers.items())))
+    count = sum(min(500, len(json.dumps({'state': body['state'], 'q': q}))) for q in questions.values())
+    payload = {'model': arg('--alias'), 'answers': answers, 'usage': {'input_tokens': count, 'output_tokens': 0}}
+    if mode == 'bad-usage':
+        payload['usage']['output_tokens'] = 1
+    if mode == 'no-usage':
+        del payload['usage']
+    await json_response(writer, payload)
+
+
 async def tools_request(reader, writer, body):
     """Synthetic Tools protocol only; does not simulate real model quality."""
     mode = os.environ['STUB_TOOLS']
@@ -536,6 +609,13 @@ async def handle(reader, writer):
                 await json_response(writer, {"error": "Loading model"}, 503)
             else:
                 await json_response(writer, {"status": "bad" if MODE == "bad-health" else "ok"})
+            return
+        if path == '/v1/models' and os.environ.get('STUB_DECISION'):
+            await json_response(writer, {'object': 'list', 'data': [{'id': arg('--alias'),
+                'architecture': {'output_modalities': ['text'] if os.environ['STUB_DECISION'] == 'no-decisions' else ['decisions']}}]})
+            return
+        if path == '/v1/systemone' and os.environ.get('STUB_DECISION'):
+            await decision_request(reader, writer, body)
             return
         if path == "/props":
             await json_response(writer, {
