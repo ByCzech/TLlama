@@ -216,7 +216,8 @@ class NativeWorker:
             observed = props.get("build_info")
             self.runtime_fingerprint = observed if isinstance(observed, str) and observed else None
             self.memory.identify_runtime(self.runtime_fingerprint)
-            supported = ({self.spec.runtime_fingerprint} if self.spec.runtime_fingerprint != RUNTIME_FINGERPRINT
+            supported = ({DECISION_RUNTIME} if self.spec.decision_type is not None
+                         else {self.spec.runtime_fingerprint} if self.spec.runtime_fingerprint != RUNTIME_FINGERPRINT
                          else SUPPORTED_RUNTIME_FINGERPRINTS)
             if self.runtime_fingerprint not in supported:
                 if self.spec.version_policy == "strict":
@@ -230,8 +231,6 @@ class NativeWorker:
             if type(context) is not int or context <= 0:
                 raise WorkerProtocolError("Native props lacks a valid effective slot context")
             if self.spec.decision_type is not None:
-                if self.runtime_fingerprint != DECISION_RUNTIME:
-                    raise WorkerProtocolError("Decision requires the audited native runtime " + DECISION_RUNTIME)
                 async with self._client.stream("GET", "/v1/models") as response:
                     models = await self._json_body(response)
                 data = models.get("data")

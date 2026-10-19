@@ -33,11 +33,11 @@ BODY = {'state': {'ticket': 'I was charged twice.\nLiteral \\n 日本語 🐈', 
 
 @pytest.fixture
 def decision_model(native_manager, monkeypatch):
-    def make(kind='laya', *, mode='normal', extra='', limit=1):
+    def make(kind='laya', *, mode='normal', extra='', limit=1, **config_values):
         monkeypatch.setenv('STUB_DECISION', mode)
         monkeypatch.setenv('STUB_DECISION_KIND', kind)
         monkeypatch.setenv('STUB_BUILD', DECISION_RUNTIME)
-        manager = native_manager(limit=limit)
+        manager = native_manager(limit=limit, **config_values)
         name, toml = manager.test.define(extra=extra)
         weights = manager.local_models_dir / 'a.gguf'
         header(weights, kind=kind)
@@ -162,12 +162,17 @@ async def test_live_and_response_contracts_reject_corruption(decision_model, mod
             assert len(manager.test.ledger) == 1
 
 
-async def test_decision_requires_audited_runtime_even_with_version_warn(decision_model, monkeypatch):
-    manager, name, _, _ = decision_model()
+@pytest.mark.parametrize('policy', ['warn', 'strict'])
+async def test_decision_uses_configured_version_policy(decision_model, monkeypatch, policy):
+    manager, name, _, _ = decision_model(runtime_version_policy=policy)
     monkeypatch.setenv('STUB_BUILD', 'b11552-ec2797836f')
-    with pytest.raises(WorkerStartupError, match='audited native runtime'):
-        await manager.preload_native_model(name)
-    assert manager.native_snapshot() == [] and manager.test.ledger[0].process.returncode is not None
+    if policy == 'strict':
+        with pytest.raises(WorkerStartupError, match='Unsupported runtime fingerprint'):
+            await manager.preload_native_model(name)
+        assert manager.native_snapshot() == [] and manager.test.ledger[0].process.returncode is not None
+    else:
+        async with manager.acquire_native_model(name, operation='decision') as lease:
+            assert (await lease.worker.decision(BODY))['answers']
 
 
 async def test_native_http_error_keeps_status_and_releases_slot(decision_model):

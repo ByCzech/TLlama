@@ -14,8 +14,12 @@ The GGUF's `<arch>.decision.type` selects the frozen worker `decision_type`.
 There is no new TOML mode flag or file/model-name heuristic. Current integrated
 pairs are modern-bert/laya, qwen35/nimble and clef/clef. Native must also report
 the private alias and `architecture.output_modalities: ["decisions"]` at startup.
-Decision requires the audited runtime **b11552-3144c167ef**, including when the
-general runtime version policy is `warn`. Other native Decision families are
+With `TLLAMA_RUNTIME_VERSION_POLICY=strict`, Decision requires the audited
+runtime **b11552-3144c167ef**. The default `warn` policy permits other builds
+with a warning, while retaining the live alias/output-modality checks and all
+typed request/response, probability, score, confidence and usage validation.
+A build fingerprint records tested provenance, not an API capability version.
+Other native Decision families are
 not integrated by this checkpoint; that is not a claim about upstream support.
 The exact PPLX v1.2 conversion retains its runner/readout/prompt follow-up; Tev's
 reviewed file lacks Decision type/template. Neither is guessed into this path.
