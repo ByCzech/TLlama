@@ -248,6 +248,8 @@ async def decision_request(reader, writer, body):
     """Synthetic typed decisions; no real head, tokenizer or quality simulation."""
     mode = ((ROOT / 'decision-mode').read_text() if (ROOT / 'decision-mode').exists()
             else os.environ['STUB_DECISION'])
+    if mode.startswith('second-worker:'):
+        mode = mode.split(':', 1)[1] if len((ROOT / 'launch').read_text().splitlines()) > 1 else 'normal'
     kind = os.environ.get('STUB_DECISION_KIND', 'laya')
     questions = body.get('questions')
     invalid = 'state' not in body or body['state'] is None or not isinstance(questions, dict) or not questions

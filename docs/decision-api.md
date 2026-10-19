@@ -6,6 +6,9 @@ Chat Completions or Ollama method. Use HTTP JSON; no high-level SDK method is
 claimed. The managed/public hardware comparison is the next gate. Keep the
 accepted independent Laya/Nimble/Clef native references.
 
+Run the [0069 native / managed / public comparison](../scripts/decision-api-smoke.md)
+to verify the managed launch and public text adapter on those existing models.
+
 ```bash
 curl http://127.0.0.1:54800/v1/systemone \
   -H 'Content-Type: application/json' \
