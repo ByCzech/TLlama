@@ -16,6 +16,7 @@ from tllama.native_routes import serve_native
 from tllama.native_reporting import ollama_processes
 from tllama.errors import ollama_stream_error_line
 from tllama.embedding_contract import embedding_capable
+from tllama.decision_contract import has_decision_head
 from tllama.native_embeddings import embedding_response
 from tllama.schemas.embeddings import OllamaEmbedRequest, OllamaLegacyEmbeddingRequest
 
@@ -132,6 +133,10 @@ async def show_model_info(request: dict):
         capabilities.append('vision')
     if metadata_info.get("embedding_configured") is True:
         capabilities = ["embedding"] if embedding_capable(metadata_info) else []
+    if has_decision_head(metadata_info):
+        # Do not advertise generation for a native Decision head. The public
+        # Decision contract/capability is integrated in the next checkpoint.
+        capabilities = []
     # Ollama's own `show --modelfile` hands back the definition a model
     # was built from, and the workflow that makes it worth having is
     # fetching it, editing it and putting it back. So this is the .toml

@@ -28,6 +28,9 @@ BASE_METADATA_KEYS = (
     "general.type",
     "tokenizer.chat_template",
     "tokenizer.chat_template.tool_use",
+    "tokenizer.chat_template.systemone",
+    "tokenizer.ggml.mask_token_id",
+    "tokenizer.ggml.seperator_token_id",
     "clip.has_vision_encoder",
     "split.no",
     "split.count",
@@ -261,7 +264,8 @@ def _build_metadata_key_set(reader: Any) -> tuple[str, ...]:
         if isinstance(arch, str) and arch:
             keys.add(f"{arch}.context_length")
             keys.update(f"{arch}.{suffix}" for suffix in (
-                "pooling_type", "embedding_length", "embedding_length_out", "decision.type"))
+                "pooling_type", "embedding_length", "embedding_length_out", "block_count"))
+            keys.update(key for key in reader.fields if key.startswith(f"{arch}.decision."))
 
     return tuple(sorted(keys))
 

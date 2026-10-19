@@ -20,6 +20,7 @@ from tllama.helpers.sampling_params import coerce_sampling_overrides
 from tllama.native_cli import RUNTIME_OPTION_NAMES
 from tllama.native_params import freeze_values, kv_type_name, runtime_problem, MTP_DRAFT_N_MAX_DEFAULT
 from tllama.worker_config import WorkerLaunchSpec
+from tllama.decision_contract import decision_type
 
 
 _DEFAULTS = {"n_gpu_layers": -1, "flash_attn": False, "n_batch": 512, "n_ubatch": 512,
@@ -62,6 +63,7 @@ def resolve_worker_config(
     environment: Mapping[str, str] | None = None, executable: Path | None = None,
     alias: str = "tllama-worker", load_timeout: float = 600,
     request_timeout: float | None = None,
+    metadata: Mapping | None = None,
 ) -> ResolvedWorkerConfig:
     if virtual_spec is not None and (not isinstance(virtual_spec.fim_order, str)
                                      or virtual_spec.fim_order not in FIM_ORDERS):
@@ -125,10 +127,14 @@ def resolve_worker_config(
         raise ConfigError("Resolve the TOML projector path before constructing its worker")
     if virtual_spec is not None and virtual_spec.mmproj_from is not None and mmproj is None:
         raise ConfigError("Import and resolve the TOML projector before constructing its worker")
-    if runtime["embedding"] and virtual_spec is not None:
+    try:
+        decision = decision_type(metadata or {})
+    except ValueError as exc:
+        raise ConfigError(str(exc)) from exc
+    if (runtime["embedding"] or decision is not None) and virtual_spec is not None:
         if (virtual_spec.sampling or virtual_spec.stop or virtual_spec.system_prompt is not None
                 or virtual_spec.fim_order != "auto"):
-            raise ConfigError("Embedding workers do not accept model sampling, system prompts or FIM settings")
+            raise ConfigError("Embedding/Decision workers do not accept model sampling, system prompts or FIM settings")
     sampling = coerce_sampling_overrides(config.sampling_overrides)
     try:
         launch = WorkerLaunchSpec(
@@ -139,6 +145,7 @@ def resolve_worker_config(
             n_ctx=int(runtime["n_ctx"]), n_gpu_layers=int(runtime["n_gpu_layers"]),
             type_k=runtime["type_k"], type_v=runtime["type_v"], flash_attn=runtime["flash_attn"],
             embedding=runtime["embedding"], pooling_type=runtime["pooling_type"],
+            decision_type=decision,
             environment=environment or {}, load_timeout=load_timeout, request_timeout=request_timeout,
             runtime_options={key: value for key, value in runtime.items() if key in RUNTIME_OPTION_NAMES},
             mmproj_options=_plain(virtual_spec.mmproj_context) if virtual_spec else {},

@@ -325,7 +325,8 @@ class NativeResidency:
                 raise
             if definition.name != name:
                 raise ValueError("Resolver returned a different public model name")
-            if operation is not None and definition.resolved.launch.embedding != (operation != "generation"):
+            expected_mode = "embedding" if operation == "text_embedding" else operation
+            if operation is not None and definition.resolved.launch.mode != expected_mode:
                 raise ValueError(f"Model {name!r} is not configured for {operation}")
             if operation == 'text_embedding':
                 embedding_contract(definition.metadata, definition.resolved.launch.pooling_type)
@@ -394,8 +395,8 @@ class NativeResidency:
     @asynccontextmanager
     async def lease(self, name: str, *, num_ctx: int | None = None, keep_alive_seconds: float | None = 300,
                     operation: str | None = None):
-        if operation not in (None, "generation", "embedding", "text_embedding"):
-            raise ValueError("operation must be generation, embedding, text_embedding or unset for load control")
+        if operation not in (None, "generation", "embedding", "text_embedding", "decision"):
+            raise ValueError("operation must be generation, embedding, text_embedding, decision or unset for load control")
         if keep_alive_seconds is not None and (
             isinstance(keep_alive_seconds, bool) or not isinstance(keep_alive_seconds, (int, float))
             or not math.isfinite(keep_alive_seconds) or keep_alive_seconds < 0

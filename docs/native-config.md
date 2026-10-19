@@ -80,6 +80,10 @@ a shell; paths and serialized values stay individual argv elements.
 | `[mmproj].image_min_tokens/max_tokens/batch_max_tokens` | `--image-min-tokens`, `--image-max-tokens`, `--mtmd-batch-max-tokens` | Projector load |
 | `[mmproj].warmup` | `--warmup` / `--no-warmup` | **Whole worker**, replacing projector-only scope |
 
+Decision mode is selected from audited GGUF Decision metadata, rather than a
+new runtime flag. See [native-decision.md](native-decision.md) for its separate
+head/template contract, conflicting generation settings and private transport.
+
 LoRA's native loading behavior is used; the old binding's automatic mmap override
 is not emulated. Scaled LoRA paths containing ':' cannot be represented by this
 pinned parser and are refused. CSV quotes/commas in other paths/metadata strings

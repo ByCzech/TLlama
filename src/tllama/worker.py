@@ -22,6 +22,7 @@ from tllama.worker_config import RUNTIME_FINGERPRINT, SUPPORTED_RUNTIME_FINGERPR
 from tllama.native_memory import NativeMemory
 from tllama.native_memory_api import MemoryReportError, NativeMemoryReport, UnsupportedMemorySchema
 from tllama.native_telemetry import MemoryTelemetry
+from tllama.decision_contract import DECISION_RUNTIME, prepare_decision_request, validate_decision_response
 
 
 logger = logging.getLogger(__name__)
@@ -228,6 +229,17 @@ class NativeWorker:
             context = props.get("default_generation_settings", {}).get("n_ctx")
             if type(context) is not int or context <= 0:
                 raise WorkerProtocolError("Native props lacks a valid effective slot context")
+            if self.spec.decision_type is not None:
+                if self.runtime_fingerprint != DECISION_RUNTIME:
+                    raise WorkerProtocolError("Decision requires the audited native runtime " + DECISION_RUNTIME)
+                async with self._client.stream("GET", "/v1/models") as response:
+                    models = await self._json_body(response)
+                data = models.get("data")
+                if (not isinstance(data, list) or len(data) != 1 or not isinstance(data[0], dict)
+                        or data[0].get("id") != self.spec.alias
+                        or not isinstance(data[0].get("architecture"), dict)
+                        or data[0]["architecture"].get("output_modalities") != ["decisions"]):
+                    raise WorkerProtocolError("Native model does not advertise the loaded Decision alias/output")
             self._check_alive()
             if self._closing:
                 raise WorkerError("Worker is closing")
@@ -463,9 +475,22 @@ class NativeWorker:
         return body
 
     def _require_mode(self, *, embedding):
-        if self.spec.embedding is not embedding:
+        if self.spec.mode != ("embedding" if embedding else "generation"):
             operation = "Embeddings" if embedding else "Generation"
             raise WorkerRequestError(400, f"{operation} is incompatible with this worker's configured mode")
+
+    async def decision(self, payload: Mapping[str, Any]) -> dict:
+        """Typed text Decision protocol; the caller owns the residency lease."""
+        if self.spec.mode != "decision":
+            raise WorkerRequestError(400, "Decision is incompatible with this worker's configured mode")
+        body = prepare_decision_request(payload)
+        body['model'] = self.spec.alias
+        async with self._response('/v1/systemone', body) as response:
+            result = await self._json_body(response)
+        try:
+            return validate_decision_response(result, body['questions'], self.spec.decision_type, self.spec.alias)
+        except ValueError as exc:
+            raise WorkerProtocolError(str(exc)) from exc
 
     async def embeddings(self, payload: Mapping[str, Any]) -> dict:
         """Raw pooled embedding protocol; the caller owns validation and its lease."""

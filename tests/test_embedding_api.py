@@ -326,7 +326,7 @@ async def test_real_gguf_metadata_and_show_support_embedding_without_loading(emb
 
 @pytest.mark.parametrize('path', PATHS)
 async def test_projected_output_width_overrides_hidden_width_and_refreshes_old_cache(embeddings, path):
-    from tllama.helpers.metadata_cache import get_metadata_cache_path, save_metadata_cache
+    from tllama.helpers.metadata_cache import get_metadata_cache_path, save_metadata_cache, SCHEMA_VERSION
     from tllama.helpers.gguf_metadata import build_model_metadata_payload
     manager, client, name, _, header = embeddings
     header(dimension=512, output_dimension=8)
@@ -351,7 +351,7 @@ async def test_projected_output_width_overrides_hidden_width_and_refreshes_old_c
     else:
         vectors = [r['embedding'] for r in payload['data']]
     assert len(vectors[0]) == 8
-    assert json.loads(cache.read_text())['schema_version'] == 6
+    assert json.loads(cache.read_text())['schema_version'] == SCHEMA_VERSION
     show = (await client.post('/api/show', json={'model': name})).json()
     assert show['model_info']['bert.embedding_length'] == 512
     assert show['model_info']['bert.embedding_length_out'] == 8

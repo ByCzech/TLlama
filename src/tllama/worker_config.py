@@ -10,6 +10,7 @@ from typing import Mapping, Any
 
 from tllama.native_cli import runtime_cli_args, mmproj_cli_args
 from tllama.native_params import POOLING_TYPES, freeze_values, kv_type_name
+from tllama.decision_contract import DECISION_TYPES
 
 
 RUNTIME_FINGERPRINT = "b11552-ec2797836f"
@@ -38,6 +39,7 @@ class WorkerLaunchSpec:
     flash_attn: bool | None = None
     embedding: bool = False
     pooling_type: int = -1
+    decision_type: str | None = None
     port: int = 0
     environment: Mapping[str, str] = field(default_factory=dict, repr=False)
     runtime_options: Mapping[str, Any] = field(default_factory=dict)
@@ -113,6 +115,15 @@ class WorkerLaunchSpec:
             if (self.runtime_options.get("spec_type", "none") != "none"
                     or "draft_n_max" in self.runtime_options or self.runtime_options.get("spm_infill")):
                 raise ValueError("Embedding workers do not accept speculative decoding or FIM settings")
+        if self.decision_type is not None:
+            if not isinstance(self.decision_type, str) or self.decision_type not in DECISION_TYPES:
+                raise ValueError("Decision worker type must be laya, nimble or clef")
+            if self.embedding or self.pooling_type != -1 or self.template is not None or self.mmproj is not None:
+                raise ValueError("Text Decision workers reject embedding mode, pooling, template overrides and projectors")
+            if (self.runtime_options.get("spec_type", "none") != "none" or "draft_n_max" in self.runtime_options
+                    or self.runtime_options.get("spm_infill") or self.runtime_options.get("kv_overrides")
+                    or "lora_path" in self.runtime_options):
+                raise ValueError("Decision workers reject speculative decoding, FIM, metadata overrides and LoRA")
         if self.mmproj_options and self.mmproj is None:
             raise ValueError("Projector options require a resolved mmproj path")
         if self.device == "none" and any(self.runtime_options.get(key) is True for key in ("op_offload", "offload_kqv")):
@@ -137,6 +148,10 @@ class WorkerLaunchSpec:
             if _owned_environment(name):
                 raise ValueError(f"{name} is controlled by the worker launch contract")
         object.__setattr__(self, "environment", MappingProxyType(environment))
+
+    @property
+    def mode(self) -> str:
+        return "decision" if self.decision_type is not None else "embedding" if self.embedding else "generation"
 
     def child_environment(self, inherited: Mapping[str, str]) -> dict[str, str]:
         """Copy the environment, removing unrelated native server configuration."""
@@ -170,6 +185,8 @@ class WorkerLaunchSpec:
                 args += [flag, value]
         args += runtime_cli_args(self.runtime_options)
         args += mmproj_cli_args(self.mmproj_options)
+        if self.decision_type is not None and "spec_type" not in self.runtime_options:
+            args += ["--spec-type", "none"]
         if self.embedding:
             args.append("--embeddings")
             if "spec_type" not in self.runtime_options:

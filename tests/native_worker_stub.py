@@ -246,12 +246,14 @@ async def multimodal_embeddings_request(reader, writer, body):
 
 async def decision_request(reader, writer, body):
     """Synthetic typed decisions; no real head, tokenizer or quality simulation."""
-    mode = os.environ['STUB_DECISION']
+    mode = ((ROOT / 'decision-mode').read_text() if (ROOT / 'decision-mode').exists()
+            else os.environ['STUB_DECISION'])
     kind = os.environ.get('STUB_DECISION_KIND', 'laya')
     questions = body.get('questions')
     invalid = 'state' not in body or body['state'] is None or not isinstance(questions, dict) or not questions
     for q in (questions or {}).values():
-        if not isinstance(q, dict) or not q.get('instructions') or q.get('type') not in {'choice', 'score', 'noul'}:
+        if (not isinstance(q, dict) or 'instructions' not in q or q['instructions'] is None
+                or q.get('type') not in {'choice', 'score', 'noul'}):
             invalid = True
             continue
         c = q.get('criteria')
@@ -266,7 +268,10 @@ async def decision_request(reader, writer, body):
         remote = any(not s.startswith('data:') for s in body['images'])
         await json_response(writer, {'error': {'message': 'unsupported decision image'}}, 400 if remote else 501)
         return
-    if list(questions) == [f'q{i}' for i in range(32 if kind == 'laya' else 2)] and mode != 'fast':
+    if mode == 'http500':
+        await json_response(writer, {'error': {'message': 'synthetic decision failure'}}, 500)
+        return
+    if mode == 'hold' or list(questions) == [f'q{i}' for i in range(32 if kind == 'laya' else 2)] and mode != 'fast':
         mark('started', 'decision')
         await reader.read()
         mark('cancelled', 'decision')
@@ -331,7 +336,8 @@ async def decision_request(reader, writer, body):
         count = 80 + len(json.dumps(body['state'])) + sum(len(json.dumps(q)) for q in questions.values())
     if mode == 'usage-drift' and reads[signature] > 1:
         count += 1
-    payload = {'model': arg('--alias'), 'answers': answers, 'usage': {'input_tokens': count, 'output_tokens': 0}}
+    payload = {'model': 'foreign' if mode == 'wrong-model' else arg('--alias'),
+               'answers': answers, 'usage': {'input_tokens': count, 'output_tokens': 0}}
     if mode == 'bad-usage':
         payload['usage']['output_tokens'] = 1
     if mode == 'no-usage':

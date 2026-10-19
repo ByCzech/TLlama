@@ -254,6 +254,7 @@ class ModelManager:
                 continue
             resolved = resolve_worker_config(self.config, model.resolve(), spec, num_ctx=num_ctx,
                                              mmproj=mmproj.resolve() if mmproj else None,
+                                             metadata=metadata,
                                              **self._native_launch_options)
             if metadata_scanned:
                 # Admission must warm the same header cache as /api/show.
