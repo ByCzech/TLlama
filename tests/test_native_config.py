@@ -199,7 +199,7 @@ stop=["END"]
     assert build_native_sampling({"seed": 0}, resolved=resolved)["seed"] == 0
 
 
-@pytest.mark.parametrize("limit", [None, 0, -1, -2, -100])
+@pytest.mark.parametrize("limit", [None, -1, -2, -100])
 def test_nonpositive_public_token_limits_are_not_native_zero_prefill(limit):
     assert build_native_sampling({"num_predict": limit})["n_predict"] == -1
 

@@ -111,7 +111,7 @@ class TestMaxTokens:
 
         kwargs = build_sampling_kwargs(opts, metadata_info)
 
-        assert kwargs["max_tokens"] is None
+        assert kwargs["max_tokens"] == 0
 
 
 class TestStop:

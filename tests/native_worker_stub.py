@@ -728,6 +728,9 @@ async def handle(reader, writer):
                 tokens = [1, *tokens, 2]
             await json_response(writer, {'tokens': tokens})
             return
+        if path == "/apply-template":
+            await json_response(writer, {"prompt": "".join(message["content"] for message in body["messages"])})
+            return
         if path == "/tokenize":
             # Deterministic IDs expose exact render text in the request log.
             text = body["content"]

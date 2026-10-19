@@ -18,7 +18,7 @@ from typing import AsyncIterator, Mapping, Any
 
 import httpx
 
-from tllama.worker_config import RUNTIME_FINGERPRINT, SUPPORTED_RUNTIME_FINGERPRINTS, WorkerLaunchSpec
+from tllama.worker_config import RUNTIME_FINGERPRINT, SUPPORTED_RUNTIME_FINGERPRINTS, ZERO_PREDICTION_RUNTIME, WorkerLaunchSpec
 from tllama.native_memory import NativeMemory
 from tllama.native_memory_api import MemoryReportError, NativeMemoryReport, UnsupportedMemorySchema
 from tllama.native_telemetry import MemoryTelemetry
@@ -216,7 +216,7 @@ class NativeWorker:
             observed = props.get("build_info")
             self.runtime_fingerprint = observed if isinstance(observed, str) and observed else None
             self.memory.identify_runtime(self.runtime_fingerprint)
-            supported = ({DECISION_RUNTIME} if self.spec.decision_type is not None
+            supported = ({DECISION_RUNTIME, ZERO_PREDICTION_RUNTIME} if self.spec.decision_type is not None
                          else {self.spec.runtime_fingerprint} if self.spec.runtime_fingerprint != RUNTIME_FINGERPRINT
                          else SUPPORTED_RUNTIME_FINGERPRINTS)
             if self.runtime_fingerprint not in supported:
@@ -507,6 +507,15 @@ class NativeWorker:
         self._require_mode(embedding=False)
         async with self._response("/completion", self._body(payload, chat=False, stream=False)) as response:
             return await self._json_body(response)
+
+    async def render_chat(self, payload: Mapping[str, Any]) -> str:
+        """Render with the same loaded template and options as chat inference."""
+        async with self._response("/apply-template", self._body(payload, chat=True, stream=False)) as response:
+            result = await self._json_body(response)
+        prompt = result.get("prompt")
+        if not isinstance(prompt, str):
+            raise WorkerProtocolError("Native chat template must return a text prompt")
+        return prompt
 
     async def tokenize(self, content: str, *, add_special: bool = True, parse_special: bool = True) -> list[int]:
         """Use this loaded worker's tokenizer, without evaluating the prompt."""

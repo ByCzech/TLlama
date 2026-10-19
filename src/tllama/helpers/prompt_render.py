@@ -173,9 +173,8 @@ def render_generate_text(metadata_info: dict, request, *, bos_token: str, eos_to
             detail=f"template render failed: {type(e).__name__}: {e}"
         )
 
-    stop = normalize_stop((getattr(request, "options", None) or {}).get("stop"))
-    if not stop:
-        stop = list(metadata_info.get("stop_defaults") or [])
+    options = getattr(request, "options", None) or {}
+    stop = normalize_stop(options["stop"]) if "stop" in options else list(metadata_info.get("stop_defaults") or [])
     if eos_token and eos_token not in stop:
         stop.append(eos_token)
 

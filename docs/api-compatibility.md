@@ -455,3 +455,8 @@ curl -s http://127.0.0.1:54800/v1/chat/completions \
 - `docs/model-repositories.md`
 - `docs/metadata-cache.md`
 - `docs/development.md`
+
+
+The audited Ollama client parameter contract (20 options, including runner reloads)
+is documented in [ollama-options.md](ollama-options.md). Native patch 0078 is
+required for correct zero-token prompt evaluation.

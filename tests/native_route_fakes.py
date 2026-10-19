@@ -16,6 +16,7 @@ class ReplyWorker:
     def __init__(self, metadata, *, content="ok", reasoning="", usage=None, timings=None, vision=False):
         self.props = {"chat_template": metadata.get("template", "{{ Prompt }}"), "bos_token": "", "eos_token": ""}
         self.props['modalities'] = {'vision':vision}
+        self.props["default_generation_settings"] = {"n_ctx": 2048}
         self.content, self.reasoning = content, reasoning
         self.usage = {"prompt_tokens": 15, "completion_tokens": 542, "total_tokens": 557} if usage is None else usage
         self.timings = {"prompt_n": 15, "predicted_n": 542, "prompt_ms": 172.9, "predicted_ms": 5192.2} if timings is None else timings
@@ -24,6 +25,9 @@ class ReplyWorker:
         self.slot = asyncio.Lock()
         self.before_completion = None
         self.after_completion = None
+
+    async def render_chat(self, payload):
+        return "".join(message["content"] for message in payload["messages"])
 
     async def tokenize(self, content, *, add_special=True):
         self.prompts.append(content)
@@ -89,7 +93,7 @@ def install_reply(monkeypatch, manager, *, metadata=None, **values):
     state = SimpleNamespace(worker=worker, manager=manager, refs=0, actions=[], load_delay=0, load_error=None)
 
     @asynccontextmanager
-    async def acquire(name, num_ctx=None, keep_alive=None, *, operation=None):
+    async def acquire(name, num_ctx=None, keep_alive=None, *, operation=None, runtime_overrides=None):
         assert operation in (None, "generation")
         if state.load_delay:
             await asyncio.sleep(state.load_delay)
@@ -99,7 +103,7 @@ def install_reply(monkeypatch, manager, *, metadata=None, **values):
             system_prompt=metadata.get("default_system_prompt"), sampling=metadata.get("sampling_defaults", {}),
             stop=metadata.get("stop_defaults", []))
         resolved = resolve_worker_config(BackendConfig(runtime_overrides={"device": "none"},
-            sampling_overrides=manager.config.sampling_overrides), Path('/models/m.gguf'), spec, num_ctx=num_ctx)
+            sampling_overrides=manager.config.sampling_overrides), Path('/models/m.gguf'), spec, num_ctx=num_ctx, runtime_overrides=runtime_overrides)
         state.refs += 1
         try:
             yield ModelLease(1, ModelDefinition(name, resolved, metadata=metadata), worker)

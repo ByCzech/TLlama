@@ -1,6 +1,7 @@
 import json
 from datetime import datetime, timedelta, timezone
 from tllama.native_params import SAMPLING_TYPES, sampling_problem
+from tllama.ollama_options import validate_ollama_options
 
 
 # Ollama has no "does not expire" state on the wire. A negative keep_alive
@@ -44,7 +45,7 @@ def normalize_max_tokens_from_options(opts: dict):
     if num_predict is None:
         return None
 
-    if isinstance(num_predict, int) and num_predict <= 0:
+    if isinstance(num_predict, int) and num_predict < 0:
         return None
 
     return num_predict
@@ -112,6 +113,7 @@ def sampling_value_problem(name: str, value) -> str | None:
 
 def validate_sampling_options(opts: dict) -> None:
     """Reject unsupported requested samplers before loading/unloading a model."""
+    validate_ollama_options(opts)
     for name in ("spec_type", "draft_n_max"):
         if name in opts:
             raise ValueError(f"{name} is a worker load setting; use [runtime] or TLLAMA_RUNTIME_{name.upper()}")
@@ -233,10 +235,8 @@ def build_sampling_kwargs(
             global_sampling.get("max_tokens")
         )
 
-    stop = normalize_stop(opts.get("stop"))
-    if not stop:
-        stop = list((metadata_info or {}).get("stop_defaults") or [])
-    if stop:
+    stop = normalize_stop(opts["stop"]) if "stop" in opts else list((metadata_info or {}).get("stop_defaults") or [])
+    if stop or "stop" in opts:
         kwargs["stop"] = stop
 
     for name, value in kwargs.items():

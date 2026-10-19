@@ -58,8 +58,8 @@ def test_omitted_openai_sampling_preserves_toml_and_global_defaults(resolved):
 def test_limit_normalization_matches_both_surfaces(resolved, limit):
     oa = ChatCompletionRequest(model="m", messages=[], max_tokens=limit)
     ol = OllamaChatRequest(model="m", messages=[], options={"num_predict": limit})
-    assert prepare_openai_chat(oa, resolved=resolved).body()["n_predict"] == -1
-    assert prepare_ollama_chat(ol, resolved=resolved).body()["n_predict"] == -1
+    assert prepare_openai_chat(oa, resolved=resolved).body()["n_predict"] == (0 if limit == 0 else -1)
+    assert prepare_ollama_chat(ol, resolved=resolved).body()["n_predict"] == (0 if limit == 0 else -1)
 
 
 @pytest.mark.parametrize("value,enabled,effort", [(False, False, "none"), ("FALSE", False, "none"),

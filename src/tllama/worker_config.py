@@ -15,7 +15,8 @@ from tllama.backend_policy import DEFAULT_BACKEND_PRIORITY, backend_priority
 
 
 RUNTIME_FINGERPRINT = "b11552-ec2797836f"
-SUPPORTED_RUNTIME_FINGERPRINTS = frozenset({RUNTIME_FINGERPRINT, "b11552-d1570abd3d", "b11552-3144c167ef"})
+ZERO_PREDICTION_RUNTIME = "b11552-cdf566cc34"
+SUPPORTED_RUNTIME_FINGERPRINTS = frozenset({RUNTIME_FINGERPRINT, "b11552-d1570abd3d", "b11552-3144c167ef", ZERO_PREDICTION_RUNTIME})
 DEFAULT_EXECUTABLE = Path("/usr/lib/tllama/server/tllama-server")
 _OWNED_ENV = {"GGML_BACKEND_PATH", "MTMD_BACKEND_DEVICE", "LLAMA_API_KEY"}
 
@@ -178,7 +179,7 @@ class WorkerLaunchSpec:
                 "--host", "127.0.0.1", "--port", str(self.port), "--parallel", "1",
                 "--device", self.device, "--n-gpu-layers", layers_arg,
                 "--ctx-size", str(self.n_ctx), "--fit", "on" if self.fit else "off", "--sleep-idle-seconds", "-1",
-                "--api-key-file", str(api_key_file), "--offline", "--no-context-shift",
+                "--api-key-file", str(api_key_file), "--offline",
                 "--log-colors", "off", "--no-log-prefix", "--no-log-timestamps",
                 "--log-verbosity", "5"]
         if self.device == "none" and "op_offload" not in self.runtime_options:
@@ -193,6 +194,8 @@ class WorkerLaunchSpec:
             value = getattr(self, name)
             if value is not None:
                 args += [flag, value]
+        if "context_shift" not in self.runtime_options:
+            args.append("--no-context-shift")
         args += runtime_cli_args(self.runtime_options)
         args += mmproj_cli_args(self.mmproj_options)
         if self.decision_type is not None and "spec_type" not in self.runtime_options:

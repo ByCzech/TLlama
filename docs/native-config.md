@@ -22,7 +22,7 @@ process. Missing device selection defers backend selection until worker startup.
 | Context | Request `num_ctx` > TOML `n_ctx` > global context; global default 0 = trained maximum |
 | GPU layers | Explicit placement retains default `all`; automatic placement fits unset GPU layer count natively; explicit counts retained on GPU attempts |
 | CPU | `device=none` forces layers 0, operation/KV/projector offload disabled; explicit contradictory offload rejected |
-| Fit / parallel / context shift | off / 1 / off, owned by the supervisor |
+| Fit / parallel / context shift | Explicit placement: off; automatic fitting: on / 1 / off unless runtime `context_shift` or request `num_keep` enables it |
 | Flash attention | Off unless configured; supplied model profiles remain on |
 | Batch / ubatch | 512 / 512 unless configured |
 | Threads | Omitted when unset: native automatic policy, replacing the binding's thread defaults |
@@ -58,6 +58,7 @@ a shell; paths and serialized values stay individual argv elements.
 | `main_gpu`, `tensor_split` | `--main-gpu`, CSV `--tensor-split` | Load; main_gpu does not choose a backend |
 | `split_mode` 0/1/2 | `--split-mode none/layer/row` | Load |
 | `use_mmap`, `use_mlock` | `--load-mode none/mmap/mlock/mmap+mlock` | Load |
+| `context_shift` | `--context-shift` / `--no-context-shift` | Load; request `num_keep` enables it |
 | `offload_kqv`, `op_offload` | Positive/negative `--kv-offload`, `--op-offload` | Load |
 | `swa_full`, `spm_infill` | Positive flags when true, omitted when false | Load; spm flag is not proof of public FIM parity |
 | `rope_scaling_type` -1/0/1/2 | Omit / `--rope-scaling none/linear/yarn` | Load; longrope has no parser mapping |
@@ -95,9 +96,10 @@ TOML round-trip content is retained; resolving does not rewrite supplied files.
 and TOML token-bias keys to a JSON token-ID map. An unset seed is omitted so the
 worker's configured seed applies; a request seed of 0 remains explicit.
 
-An unset token limit or any integer <=0 maps to native -1, bounded by available
-context with shifting disabled. In particular public 0 does **not** become native
-zero-token prefill, and public -2 is not sent to a parser that rejects it.
+An unset or negative token limit maps to native -1. Public 0 remains zero-token
+prefill (requires native correction 0078); public -2 is translated to -1 with
+context shifting disabled. See [ollama-options.md](ollama-options.md) for all
+20 client parameters, request runner overrides and reload behavior.
 Empty messages/prompts remain ModelManager preload/unload policy, not sampler work.
 Format, thinking/template kwargs and public response mapping belong to their next
 integration milestones. Merely storing system_prompt does not insert it twice.

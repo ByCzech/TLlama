@@ -262,10 +262,11 @@ async def exercise(args, emit):
         workers.append(worker)
         return worker
     class SmokeManager(ModelManager):
-        def _resolve_native_definition_sync(self, name, num_ctx):
+        def _resolve_native_definition_sync(self, name, num_ctx, *, runtime_overrides=None):
             # OpenAI has no context-size request field. Pin every admission in
             # this isolated diagnostic, without changing registered TOML files.
-            return super()._resolve_native_definition_sync(name, args.ctx)
+            return super()._resolve_native_definition_sync(name, args.ctx,
+                runtime_overrides={**(runtime_overrides or {}), "n_ctx": args.ctx})
     manager = SmokeManager(config, native_worker_factory=factory, native_launch_options={
         'executable': args.executable.expanduser().resolve() if args.executable else None,
         'load_timeout': args.load_timeout, 'request_timeout': args.request_timeout})

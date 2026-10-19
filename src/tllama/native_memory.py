@@ -9,11 +9,11 @@ from __future__ import annotations
 from decimal import Decimal, InvalidOperation
 import re
 
-from tllama.worker_config import RUNTIME_FINGERPRINT
+from tllama.worker_config import RUNTIME_FINGERPRINT, ZERO_PREDICTION_RUNTIME
 
 # Log grammar and the input/staging-buffer placement rule are verified
 # independently of the worker's broader runtime compatibility policy.
-_LOG_RUNTIME_FINGERPRINTS = frozenset({RUNTIME_FINGERPRINT, "b11552-d1570abd3d", "b11552-3144c167ef"})
+_LOG_RUNTIME_FINGERPRINTS = frozenset({RUNTIME_FINGERPRINT, "b11552-d1570abd3d", "b11552-3144c167ef", ZERO_PREDICTION_RUNTIME})
 
 BACKEND_PREFIX = r"[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)*"
 

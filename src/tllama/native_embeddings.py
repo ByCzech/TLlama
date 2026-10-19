@@ -14,6 +14,7 @@ from tllama.embedding_contract import embedding_contract
 from tllama.embedding_media import media_budget
 from tllama.helpers.vision import NO_MULTIMODAL_SUPPORT
 from tllama.native_api import public_error
+from tllama.ollama_options import ollama_runtime_overrides, validate_ollama_options
 from tllama.residency import _settle_owned
 from tllama.worker import WorkerProtocolError, WorkerRequestError
 
@@ -141,19 +142,22 @@ async def serve_embeddings(manager, request, *, api, legacy=False):
         if media and api == 'ollama' and request.truncate:
             raise ValueError('Image embeddings require truncate=false; automatic media truncation is not integrated')
         keep_alive = request.keep_alive if api == 'ollama' else None
-        num_ctx = request.options.get('num_ctx') if api == 'ollama' else None
+        if api == 'ollama':
+            validate_ollama_options(request.options)
+        overrides = ollama_runtime_overrides(request.options) if api == 'ollama' else {}
+        load_kwargs = {"runtime_overrides": overrides} if overrides else {}
         if api == 'ollama' and (value is None or value == '' or value == []):
             phase = 'load'
             if manager.resolve_keep_alive(keep_alive) == 0:
                 await manager.unload_native_model(request.model)
             else:
-                await manager.preload_native_model(request.model, num_ctx=num_ctx, keep_alive=keep_alive)
+                await manager.preload_native_model(request.model, keep_alive=keep_alive, **load_kwargs)
             elapsed = time.monotonic_ns() - started
             return {'embedding': []} if legacy else {
                 'model': request.model, 'embeddings': [], 'prompt_eval_count': 0,
                 'load_duration': elapsed, 'total_duration': elapsed}
         phase = 'load'
-        async with manager.acquire_native_model(request.model, num_ctx=num_ctx, keep_alive=keep_alive,
+        async with manager.acquire_native_model(request.model, keep_alive=keep_alive, **load_kwargs,
                                                 operation='text_embedding') as lease:
             loaded = time.monotonic_ns()
             phase = 'prepare'

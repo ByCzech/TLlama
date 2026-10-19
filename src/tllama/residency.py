@@ -292,14 +292,14 @@ class NativeResidency:
                         entry.expires_at = None if entry.keep_alive is None else self._clock() + entry.keep_alive
             self._condition.notify_all()
 
-    async def _claim(self, name, num_ctx, keep_alive, operation):
+    async def _claim(self, name, num_ctx, keep_alive, operation, runtime_overrides):
         intent = _Intent(name)
         claimed = None
         async with self._condition:
             self._ensure_open()
             self._intents.add(intent)
         try:
-            claimed = await self._claim_intent(intent, num_ctx, keep_alive, operation)
+            claimed = await self._claim_intent(intent, num_ctx, keep_alive, operation, runtime_overrides)
             return claimed
         finally:
             try:
@@ -315,14 +315,15 @@ class NativeResidency:
         async with self._condition:
             self._intents.discard(intent)
 
-    async def _claim_intent(self, intent, num_ctx, keep_alive, operation):
+    async def _claim_intent(self, intent, num_ctx, keep_alive, operation, runtime_overrides):
         name = intent.name
         while True:
             self._ensure_open()
             try:
-                definition = await self._resolve(name, num_ctx)
+                definition = await self._resolve(name, num_ctx, **({"runtime_overrides": runtime_overrides} if runtime_overrides else {}))
             except Exception:
-                await self.unload(name)
+                if not runtime_overrides:
+                    await self.unload(name)
                 raise
             if definition.name != name:
                 raise ValueError("Resolver returned a different public model name")
@@ -397,7 +398,7 @@ class NativeResidency:
 
     @asynccontextmanager
     async def lease(self, name: str, *, num_ctx: int | None = None, keep_alive_seconds: float | None = 300,
-                    operation: str | None = None):
+                    operation: str | None = None, runtime_overrides=None):
         if operation not in (None, "generation", "embedding", "text_embedding", "decision"):
             raise ValueError("operation must be generation, embedding, text_embedding, decision or unset for load control")
         if keep_alive_seconds is not None and (
@@ -405,17 +406,17 @@ class NativeResidency:
             or not math.isfinite(keep_alive_seconds) or keep_alive_seconds < 0
         ):
             raise ValueError("keep_alive_seconds must be nonnegative and finite, or None for pinned")
-        entry = await self._claim(name, num_ctx, keep_alive_seconds, operation)
+        entry = await self._claim(name, num_ctx, keep_alive_seconds, operation, freeze_values(runtime_overrides or {}))
         try:
             yield ModelLease(entry.number, entry.definition, entry.worker)
         finally:
             await _settle_owned(self._owned(self._release(entry)))
 
-    async def preload(self, name: str, *, num_ctx=None, keep_alive_seconds=300):
+    async def preload(self, name: str, *, num_ctx=None, keep_alive_seconds=300, runtime_overrides=None):
         if keep_alive_seconds == 0 and not isinstance(keep_alive_seconds, bool):
             await self.unload(name)
             return None
-        async with self.lease(name, num_ctx=num_ctx, keep_alive_seconds=keep_alive_seconds) as lease:
+        async with self.lease(name, num_ctx=num_ctx, keep_alive_seconds=keep_alive_seconds, runtime_overrides=runtime_overrides) as lease:
             return lease.generation
 
     def _worker_failure(self, entry):

@@ -213,11 +213,11 @@ class ModelManager:
         if self._stopping:
             raise ResidencyClosed("ModelManager is shutting down")
 
-    async def _resolve_native_definition(self, model_name, num_ctx):
+    async def _resolve_native_definition(self, model_name, num_ctx, *, runtime_overrides=None):
         # Definition/path/header work is independent of the residency lock.
-        return await asyncio.to_thread(self._resolve_native_definition_sync, model_name, num_ctx)
+        return await asyncio.to_thread(self._resolve_native_definition_sync, model_name, num_ctx, runtime_overrides=runtime_overrides)
 
-    def _resolve_native_definition_sync(self, model_name, num_ctx):
+    def _resolve_native_definition_sync(self, model_name, num_ctx, *, runtime_overrides=None):
         for _ in range(3):
             before = self._toml_fingerprint_for_reference(model_name)
             spec = self._resolve_virtual_model_spec(model_name)
@@ -254,7 +254,7 @@ class ModelManager:
                 continue
             resolved = resolve_worker_config(self.config, model.resolve(), spec, num_ctx=num_ctx,
                                              mmproj=mmproj.resolve() if mmproj else None,
-                                             metadata=metadata,
+                                             metadata=metadata, runtime_overrides=runtime_overrides,
                                              **self._native_launch_options)
             if metadata_scanned:
                 # Admission must warm the same header cache as /api/show.
@@ -269,21 +269,21 @@ class ModelManager:
 
     @asynccontextmanager
     async def acquire_native_model(self, model_name: str, num_ctx: int | None = None,
-                                   keep_alive: str | int | float | None = None, *, operation: str | None = None):
+                                   keep_alive: str | int | float | None = None, *, operation: str | None = None, runtime_overrides=None):
         """Hold one resolved worker generation through slot wait and inference."""
         self._check_running()
         self._ensure_janitor_running()
         seconds = self.resolve_keep_alive(keep_alive)
         async with self._native.lease(model_name, num_ctx=num_ctx, keep_alive_seconds=seconds,
-                                      operation=operation) as lease:
+                                      operation=operation, runtime_overrides=runtime_overrides) as lease:
             yield lease
 
     async def preload_native_model(self, model_name: str, num_ctx: int | None = None,
-                                   keep_alive: str | int | float | None = None):
+                                   keep_alive: str | int | float | None = None, *, runtime_overrides=None):
         self._check_running()
         self._ensure_janitor_running()
         return await self._native.preload(model_name, num_ctx=num_ctx,
-                                          keep_alive_seconds=self.resolve_keep_alive(keep_alive))
+                                          keep_alive_seconds=self.resolve_keep_alive(keep_alive), runtime_overrides=runtime_overrides)
 
     async def unload_native_model(self, model_name: str):
         self._check_running()

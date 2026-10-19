@@ -17,6 +17,7 @@ VALUE_FLAGS = {
     "yarn_orig_ctx": "--yarn-orig-ctx",
 }
 BOOL_FLAGS = {
+    "context_shift": ("--context-shift", "--no-context-shift"),
     "offload_kqv": ("--kv-offload", "--no-kv-offload"),
     "op_offload": ("--op-offload", "--no-op-offload"),
     "no_perf": ("--no-perf", "--perf"),

@@ -6,7 +6,7 @@ inference, metadata probing, file writes or process-global environment changes.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
 from typing import Mapping
@@ -25,14 +25,15 @@ from tllama.decision_contract import decision_type
 
 _DEFAULTS = {"n_gpu_layers": -1, "flash_attn": False, "n_batch": 512, "n_ubatch": 512,
              "use_mmap": True, "use_mlock": False, "last_n_tokens_size": 64,
-             "type_k": "f16", "type_v": "f16", "embedding": False, "pooling_type": -1}
+             "type_k": "f16", "type_v": "f16", "embedding": False, "pooling_type": -1,
+             "context_shift": False}
 
 
 @dataclass(frozen=True)
 class ResolvedWorkerConfig:
     launch: WorkerLaunchSpec
     runtime: Mapping
-    sources: Mapping[str, str]
+    sources: Mapping[str, str] = field(compare=False)
     global_sampling: Mapping
     model_sampling: Mapping | None
     model_stop: tuple[str, ...] | None
@@ -63,7 +64,7 @@ def resolve_worker_config(
     environment: Mapping[str, str] | None = None, executable: Path | None = None,
     alias: str = "tllama-worker", load_timeout: float = 600,
     request_timeout: float | None = None,
-    metadata: Mapping | None = None,
+    metadata: Mapping | None = None, runtime_overrides: Mapping | None = None,
 ) -> ResolvedWorkerConfig:
     if virtual_spec is not None and (not isinstance(virtual_spec.fim_order, str)
                                      or virtual_spec.fim_order not in FIM_ORDERS):
@@ -98,9 +99,22 @@ def resolve_worker_config(
         overlay(virtual_spec.runtime, "TOML")
     if num_ctx is not None:
         overlay({"n_ctx": num_ctx}, "request")
+    overlay(runtime_overrides or {}, "request")
+    for name in ("n_threads", "n_threads_batch"):
+        if name in (runtime_overrides or {}) and runtime_overrides[name] <= 0:
+            runtime.pop(name, None)
+            sources.pop(name, None)
+    if (runtime_overrides or {}).get("n_gpu_layers") == 0:
+        runtime["device"], sources["device"] = "none", "request CPU placement"
+        for flag in ("op_offload", "offload_kqv"):
+            runtime[flag], sources[flag] = False, "request CPU placement"
+    if (runtime_overrides or {}).get("context_shift") is True and mmproj is not None:
+        raise ConfigError("num_keep context shifting is unsupported by the native multimodal runtime")
     if runtime.get("spec_type") == "draft-mtp" and "draft_n_max" not in runtime:
         runtime["draft_n_max"] = MTP_DRAFT_N_MAX_DEFAULT
         sources["draft_n_max"] = "MTP default"
+    if (runtime_overrides or {}).get("n_gpu_layers") == -1:
+        runtime["n_gpu_layers"] = None
     device = runtime.get("device")
     if device is None:
         sources["device"] = "backend priority"
@@ -108,7 +122,7 @@ def resolve_worker_config(
         if sources["n_gpu_layers"] == "baseline":
             runtime["n_gpu_layers"], sources["n_gpu_layers"] = None, "native fit"
     if device == "none":
-        if sources["n_gpu_layers"] != "baseline" and runtime["n_gpu_layers"] != 0:
+        if sources["n_gpu_layers"] != "baseline" and runtime["n_gpu_layers"] not in (0, None):
             raise ConfigError("CPU device 'none' conflicts with explicit n_gpu_layers; use 0")
         for flag in ("op_offload", "offload_kqv"):
             if runtime.get(flag) is True:
@@ -146,7 +160,7 @@ def resolve_worker_config(
             backend_priority=config.backend_priority,
             version_policy=config.runtime_version_policy,
             memory_source=config.memory_source, memory_compare=config.memory_compare,
-            n_ctx=int(runtime["n_ctx"]),
+            n_ctx=int(runtime["n_ctx"]), fit=runtime["n_gpu_layers"] is None,
             n_gpu_layers=None if runtime["n_gpu_layers"] is None else int(runtime["n_gpu_layers"]),
             type_k=runtime["type_k"], type_v=runtime["type_v"], flash_attn=runtime["flash_attn"],
             embedding=runtime["embedding"], pooling_type=runtime["pooling_type"],
@@ -186,5 +200,7 @@ def build_native_sampling(opts: dict, metadata_info: dict | None = None, *,
         values.pop("seed", None)  # Let the explicitly configured worker seed apply.
     if "logit_bias" in values:
         values["logit_bias"] = {str(token): bias for token, bias in values["logit_bias"].items()}
-    values["repeat_last_n"] = resolved.runtime["last_n_tokens_size"] if resolved else 64
+    values["repeat_last_n"] = opts.get("repeat_last_n", resolved.runtime["last_n_tokens_size"] if resolved else 64)
+    if "num_keep" in opts:
+        values["n_keep"] = opts["num_keep"]
     return values

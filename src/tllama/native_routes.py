@@ -19,6 +19,8 @@ from tllama.helpers.vision import content_carries_images, request_carries_images
 from tllama.native_api import (NativeAPI, ReplyContext, ollama_response, openai_response,
                               ollama_stream, openai_stream, public_error)
 from tllama.native_config import _plain
+from tllama.ollama_options import ollama_runtime_overrides
+from tllama.ollama_context import prepare_ollama_context, truncate_completion
 from tllama.native_fim import prepare_fim, validate_fim_input
 from tllama.native_tool_input import tool_options
 from tllama.native_requests import (NativeRequest, prepare_ollama_chat, prepare_openai_chat,
@@ -144,6 +146,14 @@ async def _completion_request(request, lease, metadata) -> NativeRequest:
     # Preserve the former completion tokenizer's initial duplicate-BOS rule.
     if bos and prompt.startswith(bos) and len(tokens) > 1 and tokens[0] == tokens[1]:
         tokens = tokens[1:]
+    if "num_keep" in request.options:
+        context = (lease.worker.props or {}).get("default_generation_settings", {}).get("n_ctx")
+        if type(context) is not int or context < 1:
+            raise WorkerProtocolError("num_keep requires the effective native context")
+        if len(tokens) >= context:
+            raw = await lease.worker.tokenize(prompt, add_special=False)
+            add_bos = bool(raw and len(tokens) > len(raw) and tokens[-len(raw):] == raw)
+            tokens = truncate_completion(tokens, context, request.options["num_keep"], add_bos=add_bos)
     body["prompt"] = tokens  # Native mixed token input does not add another BOS.
     return replace(prepared, payload=body)
 
@@ -154,6 +164,8 @@ async def serve_native(manager, request, *, api, kind="chat"):
     try:
         normalized = _validate(request, api, kind)
         keep_alive = request.keep_alive if api == "ollama" else None
+        overrides = ollama_runtime_overrides(request.options) if api == "ollama" else {}
+        load_kwargs = {"runtime_overrides": overrides} if overrides else {}
         if api == "ollama":
             seconds = manager.resolve_keep_alive(keep_alive)
             empty = (not request.messages if kind == "chat" else
@@ -163,7 +175,7 @@ async def serve_native(manager, request, *, api, kind="chat"):
                 if seconds == 0:
                     await manager.unload_native_model(request.model)
                 else:
-                    await manager.preload_native_model(request.model, num_ctx=request.options.get("num_ctx"), keep_alive=keep_alive)
+                    await manager.preload_native_model(request.model, keep_alive=keep_alive, **load_kwargs)
                 payload = {"model": request.model, "created_at": get_iso_time(), "done": True,
                            "done_reason": "unload" if seconds == 0 else "load"}
                 payload.update({"message": {"role": "assistant", "content": ""}} if kind == "chat" else {"response": ""})
@@ -171,8 +183,7 @@ async def serve_native(manager, request, *, api, kind="chat"):
         started = time.monotonic_ns()
         phase = "load"
         lease = await stack.enter_async_context(manager.acquire_native_model(
-            request.model, num_ctx=request.options.get("num_ctx") if api == "ollama" else None,
-            keep_alive=keep_alive, operation="generation"))
+            request.model, keep_alive=keep_alive, operation="generation", **load_kwargs))
         context = ReplyContext(request.model, started_ns=started, acquired_ns=time.monotonic_ns())
         metadata = lease_metadata(lease)
         phase = "prepare"
@@ -188,6 +199,8 @@ async def serve_native(manager, request, *, api, kind="chat"):
         else:
             builder = prepare_ollama_chat if api == "ollama" else prepare_openai_chat
             prepared = builder(request, resolved=lease.resolved, metadata_info=metadata, normalized_messages=normalized)
+        if api == "ollama":
+            prepared = await prepare_ollama_context(prepared, lease)
         native = NativeAPI(lease.worker, prepared)
         phase = "inference"
         if not request.stream:

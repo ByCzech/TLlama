@@ -49,14 +49,17 @@ async def exercise(args):
     config = load_backend_config_from_env()
     if args.models_dir:
         config = replace(config, models_dir=str(args.models_dir.expanduser().resolve()))
-    class SmokeManager(ModelManager):
-        def acquire_native_model(self, model_name, num_ctx=None, keep_alive=None, *, operation=None):
-            return super().acquire_native_model(model_name, num_ctx=args.ctx if args.ctx is not None else num_ctx,
-                                                keep_alive=keep_alive, operation=operation)
+    def pinned_runtime(values):
+        return {**(values or {}), **({"n_ctx": args.ctx} if args.ctx is not None else {})}
 
-        async def preload_native_model(self, model_name, num_ctx=None, keep_alive=None):
+    class SmokeManager(ModelManager):
+        def acquire_native_model(self, model_name, num_ctx=None, keep_alive=None, *, operation=None, runtime_overrides=None):
+            return super().acquire_native_model(model_name, num_ctx=args.ctx if args.ctx is not None else num_ctx,
+                                                keep_alive=keep_alive, operation=operation, runtime_overrides=pinned_runtime(runtime_overrides))
+
+        async def preload_native_model(self, model_name, num_ctx=None, keep_alive=None, *, runtime_overrides=None):
             return await super().preload_native_model(model_name, num_ctx=args.ctx if args.ctx is not None else num_ctx,
-                                                      keep_alive=keep_alive)
+                                                      keep_alive=keep_alive, runtime_overrides=pinned_runtime(runtime_overrides))
 
     manager = SmokeManager(config, native_launch_options={
         'executable': args.executable.expanduser().resolve() if args.executable else None,

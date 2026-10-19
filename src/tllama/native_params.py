@@ -26,7 +26,7 @@ RUNTIME_TYPES = {
     "type_k": "Union[str,int]", "type_v": "Union[str,int]", "type_kv": "Union[str,int]",
     "spm_infill": "bool", "verbose": "bool",
     "spec_type": "str", "draft_n_max": "int",
-    "embedding": "bool", "pooling_type": "int",
+    "embedding": "bool", "pooling_type": "int", "context_shift": "bool",
 }
 
 MTP_DRAFT_N_MAX_DEFAULT = 3
@@ -151,7 +151,7 @@ def runtime_problem(name: str, value: Any) -> str | None:
     if name == "spec_type" and value not in {"none", "draft-mtp"}:
         return "'spec_type' must be none or draft-mtp; other speculative strategies are not integrated"
     if name == "draft_n_max" and value < 0:
-        return "'draft_n_max' must be nonnegative (zero retains the MTP context but disables drafting)"
+        return "'draft_n_max' must be nonnegative; use spec_type=none to disable speculation"
     if name.startswith("type_"):
         try:
             kv_type_name(value)

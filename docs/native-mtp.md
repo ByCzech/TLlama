@@ -20,12 +20,14 @@ normal service use, since ordinary models may not contain an MTP head.
 | `spec_type="none"` | Explicit `--spec-type none`; an inherited draft limit stays dormant |
 | `spec_type="draft-mtp"` | `--spec-type draft-mtp`, default draft limit 3 |
 | `draft_n_max=N` | Nonnegative native int32; serialized as `--spec-draft-n-max` only with MTP selected |
-| `draft_n_max=0` | MTP context remains allocated, drafting disabled; not an activation proof |
+| `draft_n_max=0` | MTP context remains allocated; native loop can emit a first candidate before checking the limit; use `spec_type="none"` to disable |
 
 The supported strategy list deliberately contains only `none` and `draft-mtp`.
 No arbitrary CLI passthrough, sidecar downloads, external draft model or
 automatic model-name selection is introduced. Settings are worker-load scope;
-Ollama request options cannot change them and return HTTP 400 if attempted.
+Ollama `draft_num_predict` overrides them per request: positive values enable MTP,
+zero disables the strategy. Direct `spec_type`/`draft_n_max` option spellings
+still return HTTP 400. See [ollama-options.md](ollama-options.md).
 Changes participate in normal definition/config identity: active leases retain
 their old worker, which drains, while new requests use the new configuration.
 
