@@ -162,5 +162,6 @@ def test_public_native_sdk_comparison_and_owned_cleanup(tmp_path, payload, mode,
 def test_invalid_cli_has_no_output_or_worker(tmp_path, option, value):
     output = tmp_path / 'results'
     run = subprocess.run([sys.executable, str(SCRIPT), '--output', str(output), option, value],
+                         env={**os.environ, 'PYTHONPATH': str(SCRIPT.parents[1] / 'src')},
                          capture_output=True, text=True, timeout=5)
-    assert run.returncode == 2 and not output.exists()
+    assert run.returncode == 2 and not output.exists(), run.stderr

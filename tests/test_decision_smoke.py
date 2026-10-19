@@ -201,5 +201,6 @@ def test_repeat_usage_requires_exact_counts_even_with_probability_tolerance():
     ('--rtol','inf'), ('--cancel-after-ms','0')])
 def test_bad_cli_is_refused_before_output_or_process(tmp_path, option, value):
     run = subprocess.run([sys.executable, str(SCRIPT), '--output', str(tmp_path / 'out'), option, value],
+                         env={**os.environ, 'PYTHONPATH': str(SCRIPT.parents[1] / 'src')},
                          capture_output=True, text=True, timeout=5)
-    assert run.returncode == 2 and not (tmp_path / 'out').exists()
+    assert run.returncode == 2 and not (tmp_path / 'out').exists(), run.stderr

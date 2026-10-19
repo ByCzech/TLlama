@@ -168,8 +168,9 @@ def test_launch_comparison_ignores_only_port_and_owned_credential_file():
 def test_invalid_cli_starts_nothing(tmp_path, option, value):
     output = tmp_path / 'results'
     run = subprocess.run([sys.executable, str(SCRIPT), '--output', str(output), option, value],
+                         env={**os.environ, 'PYTHONPATH': str(SCRIPT.parents[1] / 'src')},
                          capture_output=True, text=True, timeout=5)
-    assert run.returncode == 2 and not output.exists()
+    assert run.returncode == 2 and not output.exists(), run.stderr
 
 
 @pytest.mark.parametrize('kind', [None, 'pplx-decider'])

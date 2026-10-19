@@ -147,5 +147,6 @@ def test_multimodal_reference_and_cleanup(tmp_path, payload, mode, ok, review, m
 def test_invalid_cli_does_not_start_a_worker(tmp_path, option, value):
     output = tmp_path / 'results'
     run = subprocess.run([sys.executable, str(SCRIPT), '--output', str(output), option, value],
+                         env={**os.environ, 'PYTHONPATH': str(SCRIPT.parents[1] / 'src')},
                          capture_output=True, text=True, timeout=5)
-    assert run.returncode == 2 and not output.exists()
+    assert run.returncode == 2 and not output.exists(), run.stderr

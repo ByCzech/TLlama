@@ -140,8 +140,9 @@ def test_semantic_probe_only_inspects_expected_expression(text, case, expected):
 def test_invalid_cli_does_not_create_evidence_directory(tmp_path, extra):
     output = tmp_path / 'results'
     run = subprocess.run([sys.executable, str(SCRIPT), '--output', str(output), *extra],
+                         env={**os.environ, 'PYTHONPATH': str(SCRIPT.parents[1] / 'src')},
                          capture_output=True, text=True, timeout=10)
-    assert run.returncode != 0 and not output.exists()
+    assert run.returncode == 2 and not output.exists(), run.stderr
 
 
 def test_independent_fim_layouts_do_not_conflate_native_and_training_spm():
