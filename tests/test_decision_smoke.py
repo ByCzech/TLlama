@@ -25,7 +25,8 @@ SPEC.loader.exec_module(smoke)
 
 
 def header(path, *, kind='laya', template=True, head=True):
-    writer = gguf.GGUFWriter(path, 'modern-bert')
+    arch = {'nimble': 'qwen35', 'clef': 'clef'}.get(kind, 'modern-bert')
+    writer = gguf.GGUFWriter(path, arch)
     writer.add_context_length(8192)
     writer.add_embedding_length(4)
     writer.add_block_count(4)
@@ -33,7 +34,7 @@ def header(path, *, kind='laya', template=True, head=True):
     writer.add_uint32('tokenizer.ggml.mask_token_id', 1)
     writer.add_uint32('tokenizer.ggml.seperator_token_id', 2)
     if kind:
-        writer.add_string('modern-bert.decision.type', kind)
+        writer.add_string(arch + '.decision.type', kind)
     writer.add_uint32('modern-bert.decision.block_count', 2)
     writer.add_uint32('modern-bert.decision.max_head_tokens', 256)
     writer.add_float32('modern-bert.decision.temperature.choice', 1.2)
@@ -86,12 +87,29 @@ def test_inventory_reads_native_keys_and_scorer_descriptors(tmp_path, kind, temp
     ('wrong-order', False, True), ('nan', False, True), ('no-usage', False, True), ('bad-usage', False, True),
 ])
 def test_reference_errors_recovery_and_cleanup(tmp_path, payload, mode, ok, review):
+    run_reference(tmp_path, payload, mode, ok, review)
+
+
+@pytest.mark.parametrize('kind,mode,ok,review', [
+    ('nimble', 'normal', True, False), ('clef', 'normal', True, False),
+    ('nimble', 'fast', True, False), ('clef', 'fast', True, False),
+    ('nimble', 'repeat-drift', True, True), ('clef', 'repeat-drift', True, True),
+    ('nimble', 'usage-drift', True, True), ('clef', 'usage-drift', True, True),
+    ('clef', 'permutation-drift', True, True),
+    ('clef', 'wrong-option-order', False, True),
+    ('nimble', 'wrong-many-keys', False, True), ('clef', 'wrong-many-keys', False, True),
+])
+def test_schema_reference_semantics_and_corruptions(tmp_path, payload, kind, mode, ok, review):
+    run_reference(tmp_path, payload, mode, ok, review, kind=kind)
+
+
+def run_reference(tmp_path, payload, mode, ok, review, *, kind='laya'):
     root = tmp_path / 'stub'
     root.mkdir()
     (root / 'memory-report').write_text(json.dumps(payload))
     models = tmp_path / 'models' / 'Local'
     models.mkdir(parents=True)
-    header(models / 'a.gguf')
+    header(models / 'a.gguf', kind=kind)
     definition = b'# Keep original.\n[llm]\nmodel="Local/a.gguf"\n[runtime]\ndevice="none"\n'
     (models / 'a.toml').write_bytes(definition)
     executable = tmp_path / 'native-stub'
@@ -101,7 +119,8 @@ def test_reference_errors_recovery_and_cleanup(tmp_path, payload, mode, ok, revi
     command = [sys.executable, str(SCRIPT), '--model', 'a', '--inventory-model', 'a',
                '--models-dir', str(models.parent), '--executable', str(executable), '--output', str(output)]
     environment = {**os.environ, 'PYTHONPATH': str(SCRIPT.parents[1] / 'src'), 'STUB_ROOT': str(root),
-        'STUB_DECISION': mode, 'STUB_BUILD': 'b11552-3144c167ef', 'STUB_PUBLIC_CTX': '1024'}
+        'STUB_DECISION': mode, 'STUB_DECISION_KIND': kind,
+        'STUB_BUILD': 'b11552-3144c167ef', 'STUB_PUBLIC_CTX': '1024'}
     memory = dict(payload, runtime_fingerprint='b11552-3144c167ef')
     (root / 'memory-report').write_text(json.dumps(memory))
     run = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=25)
@@ -115,9 +134,9 @@ def test_reference_errors_recovery_and_cleanup(tmp_path, payload, mode, ok, revi
     assert closed['clean'] and closed['directory_removed']
     if ok:
         checks = [r for r in rows if r['stage'] == 'comparison']
-        assert len(checks) == 8
-        assert all(r['within_tolerance'] for r in checks) is (mode != 'drift')
-        assert len([r for r in rows if r['stage'] == 'decision']) == 15
+        assert len(checks) == {'laya': 8, 'nimble': 6, 'clef': 7}[kind]
+        assert all(r['within_tolerance'] for r in checks) is (not review)
+        assert len([r for r in rows if r['stage'] == 'decision']) == (15 if kind == 'laya' else 19)
         assert [r['status'] for r in rows if r['stage'] == 'native-error'] == [400] * 9 + [501]
         assert next(r for r in rows if r['stage'] == 'state-sensitivity')['distinct']
         cancel = next(r for r in rows if r['stage'] == 'transport-cancel')
@@ -125,26 +144,48 @@ def test_reference_errors_recovery_and_cleanup(tmp_path, payload, mode, ok, revi
             assert cancel['pending_at_cancel']
         assert cancel['inference_started_observed'] is cancel['native_early_stop_observed'] is None
         assert next(r for r in rows if r['stage'] == 'recovery')['pid'] == closed['pid']
+        contract = next(r for r in rows if r['stage'] == 'decision-contract')
+        assert contract['decision_type'] == kind
+        usage = next(r for r in rows if r['stage'] == 'usage-composition')
+        assert usage['additive_required'] is (kind == 'laya')
+        if kind != 'laya':
+            assert usage['single_input_tokens'] != usage['combined_input_tokens']
+            observations = [r for r in rows if r['stage'] == 'composition-observation']
+            assert len(observations) == (5 if kind == 'nimble' else 4)
+            assert any(not r['within_tolerance'] for r in observations)
+            assert not any(r.get('probe') == 'native-laya-head-truncation' for r in rows)
+            sent = {r['probe']: r['body'] for r in rows if r['stage'] == 'request'}
+            assert len(sent['cancel']['questions']) == 2
+            assert len(sent['twenty-seven-options']['questions']['many']['criteria']) == 27
+            literal = next(r for r in rows if r['stage'] == 'native-response' and r['probe'] == 'literal-keys-unicode')
+            keys = next(iter(literal['payload']['answers'].values()))['probabilities']
+            expected_keys = list(next(iter(sent['literal-keys-unicode']['questions'].values()))['criteria'])
+            assert list(keys) == (sorted(expected_keys) if kind == 'clef' else expected_keys)
     launches = (root / 'launch').read_bytes()
     again = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=5)
     assert again.returncode == 2 and (root / 'launch').read_bytes() == launches
 
 
-def test_inventory_only_starts_no_worker_even_when_executable_is_missing(tmp_path):
+@pytest.mark.parametrize('kind,inventory_only', [(None, True), (None, False),
+                                               ('pplx-decider', False), ('kev', False)])
+def test_inventory_and_unsupported_references_start_no_worker(tmp_path, kind, inventory_only):
     models = tmp_path / 'models' / 'Local'
     models.mkdir(parents=True)
-    header(models / 'a.gguf', kind=None, head=False)
+    header(models / 'a.gguf', kind=kind, head=False)
     (models / 'a.toml').write_text('[llm]\nmodel="Local/a.gguf"\n')
     output = tmp_path / 'results'
     env = {**os.environ, 'PYTHONPATH': str(SCRIPT.parents[1] / 'src')}
-    run = subprocess.run([sys.executable, str(SCRIPT), '--inventory-only', '--model', 'a', '--inventory-model', 'a',
+    run = subprocess.run([sys.executable, str(SCRIPT), *(['--inventory-only'] if inventory_only else []),
+        '--model', 'a', '--inventory-model', 'a',
         '--models-dir', str(models.parent), '--executable', str(tmp_path / 'missing'), '--output', str(output)],
         env=env, capture_output=True, text=True, timeout=10)
-    assert run.returncode == 0, run.stdout + run.stderr
+    assert run.returncode == (0 if inventory_only else 1), run.stdout + run.stderr
     rows = [json.loads(s) for s in (output / 'raw.jsonl').read_text().splitlines()]
-    assert not next(r for r in rows if r['stage'] == 'inventory')['header_candidate']
-    assert not any(r['stage'] in {'ready', 'worker-closed'} for r in rows)
-    assert rows[-1]['inventory_only'] and rows[-1]['residency'] == []
+    assert next(r for r in rows if r['stage'] == 'inventory')['header_candidate'] is (kind is not None)
+    assert not any(r['stage'] in {'diagnostic-overrides', 'ready', 'worker-closed'} for r in rows)
+    assert rows[-1]['inventory_only'] is inventory_only and rows[-1]['residency'] == []
+    if not inventory_only:
+        assert 'Reference requires' in next(r for r in rows if r['stage'] == 'error')['error']
 
 
 def test_repeat_usage_requires_exact_counts_even_with_probability_tolerance():

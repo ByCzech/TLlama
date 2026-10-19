@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Inventory local Decision GGUFs and audit a first native Laya reference."""
+"""Inventory local Decision GGUFs and audit native Laya, Nimble or Clef."""
 
 import argparse
 import asyncio
@@ -32,6 +32,7 @@ MODELS = (
     MODEL,
 )
 TYPES = {'openjev', 'lev', 'kev', 'nimble', 'laya', 'clef', 'pplx-decider', 'lfm2-d1', 'lfm2-d1-omni'}
+REFERENCE_TYPES = {'laya', 'nimble', 'clef'}
 STATE = 'Customer: I am furious! I was charged twice. Please refund the duplicate payment now.'
 QUESTIONS = {
     'route': {'type': 'choice', 'instructions': 'Which team should handle this?',
@@ -120,8 +121,8 @@ def inventory(manager, model):
 def probe_launch(spec, args):
     options = {k: v for k, v in spec.runtime_options.items() if k not in {'draft_n_max', 'spm_infill'}}
     options.update(spec_type='none', n_batch=args.ctx, n_ubatch=args.ctx)
-    # Native selects Laya's per-token head/NONE pooling from its GGUF. Never
-    # force the semantic embedding API's mode or pooled output onto that head.
+    # Native selects the Decision computation from its GGUF. Never force the
+    # semantic embedding API's mode or pooled output onto a trained head.
     return replace(spec, n_ctx=args.ctx, mmproj=None, mmproj_options={}, template=None,
                    embedding=False, pooling_type=-1, runtime_options=options,
                    type_k='f16', type_v='f16', flash_attn=False,
@@ -140,7 +141,22 @@ class ProbeWorker(NativeWorker):
                 return await self._json_body(response)
 
 
-def inspect(payload, questions):
+def reference_contract(selected):
+    require(selected is not None and selected['header_candidate']
+            and selected['decision_type'] in REFERENCE_TYPES and not selected['source_caution'],
+            'Reference requires a complete local Laya, Nimble or Clef Decision GGUF; inspect inventory first')
+    kind = selected['decision_type']
+    return {'decision_type': kind,
+            'prompt_composition': {'laya': 'independent_questions', 'nimble': 'whole_schema_per_question',
+                                   'clef': 'joint_schema'}[kind],
+            'choice_key_order': 'sorted' if kind == 'clef' else 'request',
+            'single_combined_equality_required': kind == 'laya',
+            'reversed_questions_equality_required': kind == 'laya',
+            'additive_single_usage_required': kind == 'laya',
+            'cancel_questions': 32 if kind == 'laya' else 2}
+
+
+def inspect(payload, questions, kind='laya'):
     require(isinstance(payload, dict) and isinstance(payload.get('model'), str), 'Invalid Decision envelope')
     answers, usage = payload.get('answers'), payload.get('usage')
     require(isinstance(answers, dict) and list(answers) == list(questions), 'Question IDs/order differ from the request')
@@ -159,6 +175,8 @@ def inspect(payload, questions):
             number(answer.get('noul'), 0, 1)
             continue
         keys = list(q['criteria']) if q['type'] == 'choice' else [str(i) for i in range(len(q['criteria']))]
+        if kind == 'clef' and q['type'] == 'choice':
+            keys.sort()
         probs = answer.get('probabilities')
         require(isinstance(probs, dict) and list(probs) == keys, 'Decision probability keys/order differ')
         p = [number(probs[k], 0, 1) for k in keys]
@@ -180,7 +198,7 @@ def inspect(payload, questions):
     return payload
 
 
-def compare(a, b, args, emit, notes, label):
+def compare(a, b, args, emit, notes, label, *, required=True):
     differences = []
     close = True
     def walk(x, y):
@@ -195,8 +213,9 @@ def compare(a, b, args, emit, notes, label):
         else:
             close &= x == y
     walk(a, b)
-    emit('comparison', probe=label, within_tolerance=close, max_abs_difference=max(differences, default=0))
-    if not close:
+    emit('comparison' if required else 'composition-observation', probe=label,
+         within_tolerance=close, max_abs_difference=max(differences, default=0))
+    if required and not close:
         notes.append(label + ':difference')
 
 
@@ -212,7 +231,7 @@ async def memory(worker, emit, notes, phase):
 
 
 async def exercise(args, emit):
-    emit('diagnostic-version', version=1, checkpoint='0065', model=args.model,
+    emit('diagnostic-version', version=2, checkpoint='0066', model=args.model,
          mode='native_decision_reference', public_api='not_exercised',
          prompt_policy='embedded_systemone_template_native_head_and_calibration',
          semantic_quality='observations_only', native_early_compute_stop='unknown')
@@ -253,8 +272,10 @@ async def exercise(args, emit):
                 notes.append(model + ':inventory_error')
         if not args.inventory_only:
             selected = inventory_rows.get(args.model)
-            require(selected is not None and selected['header_candidate'] and selected['decision_type'] == 'laya',
-                    'This first native reference requires a complete local Laya Decision GGUF; inspect inventory first')
+            contract = reference_contract(selected)
+            kind = contract['decision_type']
+            independent = kind == 'laya'
+            emit('decision-contract', **contract)
             async with manager.acquire_native_model(args.model, keep_alive=-1) as lease:
                 worker, pid, generation = lease.worker, lease.worker.pid, lease.generation
                 require(worker.spec.model.stat().st_size == selected['size_bytes']
@@ -273,20 +294,27 @@ async def exercise(args, emit):
                     started = time.monotonic()
                     payload = await worker.systemone(body)
                     emit('native-response', probe=label, payload=payload)
-                    inspect(payload, questions)
+                    inspect(payload, questions, kind)
                     emit('decision', probe=label, answers=payload['answers'], usage=payload['usage'],
                          elapsed_ms=(time.monotonic() - started) * 1000)
                     return payload
                 singles = {key: await collect(STATE, {key: q}, 'single-' + key) for key, q in QUESTIONS.items()}
                 together = await collect(STATE, QUESTIONS, 'combined')
                 for key, single in singles.items():
-                    compare(single['answers'][key], together['answers'][key], args, emit, notes, 'single-vs-combined-' + key)
-                require(together['usage']['input_tokens'] == sum(p['usage']['input_tokens'] for p in singles.values()),
-                        'Laya independent question usage is not additive')
+                    compare(single['answers'][key], together['answers'][key], args, emit, notes,
+                            'single-vs-combined-' + key, required=independent)
+                single_tokens = sum(p['usage']['input_tokens'] for p in singles.values())
+                emit('usage-composition', single_input_tokens=single_tokens,
+                     combined_input_tokens=together['usage']['input_tokens'], additive_required=independent)
+                if independent:
+                    require(together['usage']['input_tokens'] == single_tokens, 'Laya independent question usage is not additive')
                 repeat = await collect(STATE, QUESTIONS, 'repeat')
                 compare(together, repeat, args, emit, notes, 'repeat')
                 reverse = await collect(STATE, dict(reversed(list(QUESTIONS.items()))), 'reversed-questions')
-                compare(together, reverse, args, emit, notes, 'reversed-questions')
+                compare(together, reverse, args, emit, notes, 'reversed-questions', required=independent)
+                if not independent:
+                    reversed_repeat = await collect(STATE, dict(reversed(list(QUESTIONS.items()))), 'reversed-questions-repeat')
+                    compare(reverse, reversed_repeat, args, emit, notes, 'reversed-questions-repeat')
                 structured = await collect({'ticket': STATE, 'nested': {'plan': 'pro', 'attempts': [1, 2]}}, QUESTIONS, 'json-state')
                 repeated = await collect({'ticket': STATE, 'nested': {'plan': 'pro', 'attempts': [1, 2]}}, QUESTIONS, 'json-state-repeat')
                 compare(structured, repeated, args, emit, notes, 'json-state-repeat')
@@ -295,6 +323,20 @@ async def exercise(args, emit):
                 await collect('První řádek\nDruhý; literal \\n. 日本語 🐈 ' + STATE, special, 'literal-keys-unicode')
                 await collect(STATE, {'one': {'type': 'choice', 'instructions': 'Choose the only option', 'criteria': {'only': None}}}, 'one-option')
                 await collect(STATE, {'scale': {'type': 'score', 'instructions': 'How urgent?', 'criteria': [str(i) for i in range(10)]}}, 'ten-level-score')
+                if not independent:
+                    permuted = {'route': {**QUESTIONS['route'], 'criteria': dict(reversed(list(QUESTIONS['route']['criteria'].items())))}}
+                    option_reverse = await collect(STATE, permuted, 'reversed-options')
+                    compare(singles['route'], option_reverse, args, emit, notes, 'reversed-options', required=kind == 'clef')
+                    option_repeat = await collect(STATE, permuted, 'reversed-options-repeat')
+                    compare(option_reverse, option_repeat, args, emit, notes, 'reversed-options-repeat')
+                    # Nimble switches from one-letter to short label codes above
+                    # 26 options; Clef exercises its sorted joint option spans.
+                    many = {'many': {'type': 'choice', 'instructions': 'Choose a category.',
+                                     'criteria': {f'category-{i:02}': None for i in reversed(range(27))}}}
+                    await collect(STATE, many, 'twenty-seven-options')
+                    typed = {'typed': {'type': 'noul', 'instructions': {'question': 'Is the customer angry?', 'tags': ['support', 1]},
+                                       'criteria': {'true': {'meaning': 'angry'}, 'false': ['calm', 'happy']}}}
+                    await collect({'ticket': STATE}, typed, 'structured-instructions')
                 changed = await collect('Customer: I am happy with my purchase. My parcel arrived on time.', QUESTIONS, 'changed-state')
                 effect = max(abs(together['answers']['route']['probabilities'][k] - changed['answers']['route']['probabilities'][k])
                              for k in QUESTIONS['route']['criteria'])
@@ -302,13 +344,16 @@ async def exercise(args, emit):
                      baseline_choice=together['answers']['route']['choice'], changed_choice=changed['answers']['route']['choice'])
                 if effect <= args.atol:
                     notes.append('changed_state:no_measurable_effect')
-                # Laya's native training-budget truncation is recorded, never
-                # silently reimplemented by Python or mistaken for a full read.
-                head = selected['metadata']['modern-bert.decision.max_head_tokens']
-                require(head <= 4096, 'Head budget exceeds this bounded first-reference probe')
-                longq = {'long': {**QUESTIONS['route'], 'instructions': 'Please decide. ' * (head * 2)}}
-                await collect(STATE, longq, 'native-laya-head-truncation')
-                emit('native-budget', max_head_tokens=head, option_text_cap=48, state_policy='not_truncated_by_this_diagnostic')
+                if independent:
+                    # Only Laya has this audited training-budget truncation.
+                    head = selected['metadata']['modern-bert.decision.max_head_tokens']
+                    require(head <= 4096, 'Head budget exceeds this bounded reference probe')
+                    longq = {'long': {**QUESTIONS['route'], 'instructions': 'Please decide. ' * (head * 2)}}
+                    await collect(STATE, longq, 'native-laya-head-truncation')
+                    emit('native-budget', max_head_tokens=head, option_text_cap=48, state_policy='not_truncated_by_this_diagnostic')
+                else:
+                    emit('native-budget', max_head_tokens=None, option_text_cap=None,
+                         state_policy='not_truncated_by_this_diagnostic', laya_truncation_probe='not_applicable')
                 errors = [
                     ('missing-state', {'questions': QUESTIONS}, 400), ('missing-questions', {'state': STATE}, 400),
                     ('empty-questions', {'state': STATE, 'questions': {}}, 400),
@@ -331,7 +376,9 @@ async def exercise(args, emit):
                         raise WorkerError(label + ': native accepted invalid/unsupported input')
                 recovered = await collect(STATE, QUESTIONS, 'after-errors')
                 compare(together, recovered, args, emit, notes, 'after-errors')
-                cancel = {'state': STATE, 'questions': {f'q{i}': QUESTIONS['route'] for i in range(32)}}
+                # Whole-schema prompts grow with question count. Do not turn
+                # the cancellation control into an accidental context overflow.
+                cancel = {'state': STATE, 'questions': {f'q{i}': QUESTIONS['route'] for i in range(contract['cancel_questions'])}}
                 emit('request', probe='cancel', path='/v1/systemone', body=cancel)
                 task = asyncio.create_task(worker.systemone(cancel))
                 try:
@@ -339,7 +386,7 @@ async def exercise(args, emit):
                     if done:
                         payload = await task
                         emit('native-response', probe='cancel-completed', payload=payload)
-                        inspect(payload, cancel['questions'])
+                        inspect(payload, cancel['questions'], kind)
                     else:
                         task.cancel()
                     await asyncio.gather(task, return_exceptions=True)

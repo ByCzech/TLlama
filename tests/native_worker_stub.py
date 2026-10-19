@@ -247,6 +247,7 @@ async def multimodal_embeddings_request(reader, writer, body):
 async def decision_request(reader, writer, body):
     """Synthetic typed decisions; no real head, tokenizer or quality simulation."""
     mode = os.environ['STUB_DECISION']
+    kind = os.environ.get('STUB_DECISION_KIND', 'laya')
     questions = body.get('questions')
     invalid = 'state' not in body or body['state'] is None or not isinstance(questions, dict) or not questions
     for q in (questions or {}).values():
@@ -265,12 +266,15 @@ async def decision_request(reader, writer, body):
         remote = any(not s.startswith('data:') for s in body['images'])
         await json_response(writer, {'error': {'message': 'unsupported decision image'}}, 400 if remote else 501)
         return
-    if len(questions) == 32 and mode != 'fast':
+    if list(questions) == [f'q{i}' for i in range(32 if kind == 'laya' else 2)] and mode != 'fast':
         mark('started', 'decision')
         await reader.read()
         mark('cancelled', 'decision')
         return
     answers = {}
+    reads = globals().setdefault('DECISION_READS', {})
+    signature = json.dumps(body, ensure_ascii=False)
+    reads[signature] = reads.get(signature, 0) + 1
     charged = 'charged' in json.dumps(body['state']).lower()
     for key, q in questions.items():
         a = {'type': q['type']}
@@ -278,10 +282,20 @@ async def decision_request(reader, writer, body):
             a['noul'] = 0.8 if charged else 0.2
         else:
             keys = list(q['criteria']) if q['type'] == 'choice' else [str(i) for i in range(len(q['criteria']))]
+            if kind == 'clef' and q['type'] == 'choice':
+                keys.sort(reverse=mode == 'wrong-option-order')
             n = len(keys)
             weights = [float(n - i if charged else i + 1) for i in range(n)]
             if mode == 'drift' and len(questions) > 1:
                 weights[0] += 2
+            if kind != 'laya':
+                # Context-dependent answers and non-additive counts must be
+                # accepted for the audited whole-schema/joint reference paths.
+                weights[0] += len(questions) - 1 + list(questions).index(key) / 10
+            if mode == 'repeat-drift' and reads[signature] > 1:
+                weights[0] += 3
+            if mode == 'permutation-drift' and q['type'] == 'choice' and list(q['criteria']) != sorted(q['criteria']):
+                weights[0] += 3
             probs = [v / sum(weights) for v in weights]
             a['probabilities'] = dict(zip(keys, probs))
             best = max(range(n), key=lambda i: probs[i])
@@ -305,10 +319,18 @@ async def decision_request(reader, writer, body):
                 a['confidence'] = 0.99
             if mode == 'nan':
                 a['confidence'] = float('nan')
+            if mode == 'wrong-many-keys' and n == 27:
+                a['probabilities'].pop(keys[-1])
         answers[key] = a
     if mode == 'wrong-order':
         answers = dict(reversed(list(answers.items())))
     count = sum(min(500, len(json.dumps({'state': body['state'], 'q': q}))) for q in questions.values())
+    if kind == 'nimble':
+        count += 19 * len(questions) ** 2
+    elif kind == 'clef':
+        count = 80 + len(json.dumps(body['state'])) + sum(len(json.dumps(q)) for q in questions.values())
+    if mode == 'usage-drift' and reads[signature] > 1:
+        count += 1
     payload = {'model': arg('--alias'), 'answers': answers, 'usage': {'input_tokens': count, 'output_tokens': 0}}
     if mode == 'bad-usage':
         payload['usage']['output_tokens'] = 1
