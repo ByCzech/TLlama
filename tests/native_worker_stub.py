@@ -141,13 +141,15 @@ async def embeddings_request(reader, writer, body):
 async def multimodal_embeddings_request(reader, writer, body):
     """Independent fixture decoder for the native multimodal diagnostic."""
     mode = os.environ['STUB_MULTIMODAL_EMBEDDINGS']
+    if (ROOT / 'media-behavior').exists():
+        mode = (ROOT / 'media-behavior').read_text().strip()
     value = body.get('input')
     if not value or body.get('encoding_format', 'float') not in {'float', 'base64'}:
         await json_response(writer, {'error': {'message': 'invalid request'}}, 400)
         return
     token_input = isinstance(value, list) and type(value[0]) is int
     entries = [value] if not isinstance(value, list) or token_input else value
-    if len(entries) == 8 and entries == [entries[0]] * 8 and mode != 'fast':
+    if (len(entries) == 8 and entries == [entries[0]] * 8 and mode != 'fast') or (ROOT / 'media-hold').exists():
         mark('started', 'multimodal-embeddings')
         await reader.read()
         mark('cancelled', 'multimodal-embeddings')
@@ -169,6 +171,8 @@ async def multimodal_embeddings_request(reader, writer, body):
         if isinstance(entry, str):
             return entry.encode()
         if isinstance(entry, list):
+            if os.environ.get('STUB_PUBLIC_EMBEDDINGS'):
+                return bytes(t - 10 for t in entry[1:-1])
             return ''.join(chr(t - 10) for t in entry[1:]).encode()
         chunks = []
         if 'content' in entry:
@@ -205,7 +209,7 @@ async def multimodal_embeddings_request(reader, writer, body):
                 vector[0] = float('nan')
             if body.get('encoding_format') == 'base64':
                 vector = base64.b64encode(struct.pack('<' + 'f' * len(vector), *vector)).decode()
-            data.append({'object': 'embedding', 'index': 0 if mode == 'bad-index' else index,
+            data.append({'object': 'embedding', 'index': 99 if mode == 'out-of-range' else 0 if mode == 'bad-index' else index,
                          'embedding': vector})
     except (ValueError, KeyError, zlib.error) as exc:
         invalid_png = str(exc) == 'invalid PNG'
@@ -214,8 +218,27 @@ async def multimodal_embeddings_request(reader, writer, body):
             message = 'unrelated decoder failure'
         await json_response(writer, {'error': {'message': message}}, 500 if invalid_png else 400)
         return
+    def token_count(entry):
+        if isinstance(entry, list):
+            return len(entry)
+        if isinstance(entry, dict):
+            if 'content' in entry:
+                if any(p['type'] == 'image_url' for p in entry['content']):
+                    return 50
+                entry = ''.join(p['text'] for p in entry['content'])
+            else:
+                if entry['multimodal_data']:
+                    return 50
+                entry = entry['prompt_string']
+        return len(entry.encode()) + 2 if os.environ.get('STUB_PUBLIC_EMBEDDINGS') else len(entry) + 1
+    count = sum(token_count(e) for e in entries)
+    if (ROOT / 'media-token-count').exists():
+        count = int((ROOT / 'media-token-count').read_text())
     payload = {'object': 'list', 'data': data, 'model': arg('--alias'),
-               'usage': {'prompt_tokens': 50 * len(entries), 'total_tokens': 50 * len(entries)}}
+               'usage': {'prompt_tokens': count, 'total_tokens': count}}
+    if mode in {'bad-usage', 'over-limit', 'boolean-usage'}:
+        payload['usage'] = {'prompt_tokens': True, 'total_tokens': True} if mode == 'boolean-usage' else {
+            'prompt_tokens': 2000 if mode == 'over-limit' else count, 'total_tokens': 2000 if mode == 'over-limit' else count + 1}
     if mode == 'no-usage':
         del payload['usage']
     await json_response(writer, payload)

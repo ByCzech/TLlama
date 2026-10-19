@@ -6,12 +6,14 @@ import asyncio
 import base64
 from dataclasses import dataclass, replace
 import hashlib
+import importlib.util
 import json
 import logging
 import math
 from pathlib import Path
 import signal
 import struct
+import sys
 import zlib
 
 import tomlkit
@@ -172,10 +174,10 @@ async def memory(worker, emit, notes, phase):
 
 
 async def exercise(args, emit):
-    emit('diagnostic-version', version=2 if args.managed else 1,
-         checkpoint='0063' if args.managed else '0062', model=args.model,
+    emit('diagnostic-version', version=3 if args.public else 2 if args.managed else 1,
+         checkpoint='0064' if args.public else '0063' if args.managed else '0062', model=args.model,
          launch_path='production' if args.managed else 'independent_reference',
-         public_api='not_exercised', mode='native_multimodal_embeddings', pooling='last',
+         public_api='requested' if args.public else 'not_exercised', mode='native_multimodal_embeddings', pooling='last',
          prompt_policy='literal_content_no_implicit_template_or_instruction',
          native_cancellation='early_compute_stop_not_proven')
     config = load_backend_config_from_env()
@@ -219,7 +221,7 @@ async def exercise(args, emit):
         require(before is not None, 'Registered model definition not found')
         emit('registered-definition', phase='before', path=str(definition), toml=before.decode('utf-8'),
              sha256=hashlib.sha256(before).hexdigest())
-        async with manager.acquire_native_model(args.model, num_ctx=args.ctx, keep_alive=-1,
+        async with manager.acquire_native_model(args.model, num_ctx=None if args.managed else args.ctx, keep_alive=-1,
                                                 operation='text_embedding' if args.managed else None) as lease:
             worker, pid, generation = lease.worker, lease.worker.pid, lease.generation
             contract = embedding_contract(lease.definition.metadata, 3)
@@ -336,6 +338,16 @@ async def exercise(args, emit):
             require(worker.pid == pid, 'Recovery changed the native process')
             emit('recovery', pid=pid, generation=generation)
             await memory(worker, emit, notes, 'after-requests')
+            if args.public:
+                spec = importlib.util.spec_from_file_location('embeddings_media_public',
+                    Path(__file__).with_name('embeddings-media-public.py'))
+                public = importlib.util.module_from_spec(spec)
+                sys.modules[spec.name] = public
+                spec.loader.exec_module(public)
+                await public.exercise(args, manager, worker, entries, controls, contract.dimension,
+                                      emit, notes, sys.modules[__name__])
+                require(worker.pid == pid and len(workers) == 1, 'Public requests changed the reference worker')
+                await memory(worker, emit, notes, 'after-public-requests')
         await manager.unload_native_model(args.model)
         await manager.wait_native_closed(generation)
         require(not manager.native_snapshot(), 'Unload retained a generation')
@@ -357,7 +369,8 @@ async def exercise(args, emit):
         emit('registered-definition', phase='after', unchanged=unchanged)
         ok &= not bool(manager.native_snapshot())
     emit('finished', protocol_ok=ok, review_required=not ok or bool(notes), observations=notes,
-         residency=manager.native_snapshot(), public_api='not_exercised')
+         residency=manager.native_snapshot(), public_api='exercised' if args.public and ok else
+         'incomplete' if args.public else 'not_exercised')
     return ok
 
 
@@ -365,6 +378,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--model', default=MODEL)
     parser.add_argument('--managed', action='store_true', help='Use production resolution and NativeWorker unchanged')
+    parser.add_argument('--public', action='store_true', help='Add public TCP/SDK comparison; implies --managed')
     parser.add_argument('--models-dir', type=Path)
     parser.add_argument('--executable', type=Path)
     parser.add_argument('--output', type=Path, required=True)
@@ -376,6 +390,7 @@ def main(argv=None):
     parser.add_argument('--rtol', type=float, default=1e-3)
     parser.add_argument('--norm-tolerance', type=float, default=1e-3)
     args = parser.parse_args(argv)
+    args.managed |= args.public
     if not 512 <= args.ctx <= 4096:
         parser.error('--ctx must be 512..4096')
     for name in ('load_timeout', 'request_timeout', 'cancel_after_ms', 'atol', 'rtol', 'norm_tolerance'):

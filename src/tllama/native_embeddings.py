@@ -1,4 +1,4 @@
-"""Public text embeddings over an immutable model lease and bounded native transport."""
+"""Public embeddings over an immutable model lease and bounded native transport."""
 
 import asyncio
 import base64
@@ -10,16 +10,18 @@ from fastapi import HTTPException
 from starlette.requests import ClientDisconnect
 
 from tllama.embedding_contract import embedding_contract
+from tllama.embedding_media import media_budget
+from tllama.helpers.vision import NO_MULTIMODAL_SUPPORT
 from tllama.native_api import public_error
 from tllama.residency import _settle_owned
-from tllama.worker import WorkerProtocolError
+from tllama.worker import WorkerProtocolError, WorkerRequestError
 
 
 _NATIVE_EMBEDDING_JSON_BUDGET = 8 * 1024 * 1024
 
 
 def _inputs(value):
-    if isinstance(value, str) or isinstance(value, list) and value and type(value[0]) is int:
+    if isinstance(value, (str, dict)) or isinstance(value, list) and value and type(value[0]) is int:
         return [value]
     return value or []
 
@@ -59,6 +61,16 @@ async def _truncate_text(worker, text, full, limit):
 async def _prepare_inputs(lease, inputs, contract, *, truncate):
     limit, prepared, total = _token_limit(lease, contract), [], 0
     for value in inputs:
+        if isinstance(value, dict):
+            marker = lease.worker.props.get('media_marker')
+            if not isinstance(marker, str) or not marker:
+                raise WorkerProtocolError('Native image embeddings require a live media marker')
+            if any(p['type'] == 'text' and marker in p['text'] for p in value['content']):
+                raise ValueError('Embedding text must not contain the native media marker')
+            # Native mtmd owns tokenization and image feature expansion. The
+            # text-only /tokenize endpoint cannot preflight this literal input.
+            prepared.append(value)
+            continue
         if isinstance(value, str):
             tokens = await lease.worker.tokenize(value, add_special=True, parse_special=True)
         else:
@@ -105,12 +117,18 @@ def _vectors(payload, count, dimension, tokens, *, normalized):
             raise WorkerProtocolError('Native embedding normalization is invalid')
         output[index] = vector
     usage = payload.get('usage')
+    if tokens is None:
+        if (not isinstance(usage, dict) or type(usage.get('prompt_tokens')) is not int
+                or usage['prompt_tokens'] <= 0 or type(usage.get('total_tokens')) is not int
+                or usage['total_tokens'] != usage['prompt_tokens']):
+            raise WorkerProtocolError('Native image embedding usage is missing or invalid')
+        tokens = usage['prompt_tokens']
     if usage is not None:
         if (not isinstance(usage, dict)
                 or any(type(usage.get(key)) is not int or usage[key] != tokens
                        for key in ('prompt_tokens', 'total_tokens'))):
             raise WorkerProtocolError('Native embedding usage differs from the submitted token count')
-    return output
+    return output, tokens
 
 
 async def serve_embeddings(manager, request, *, api, legacy=False):
@@ -118,6 +136,9 @@ async def serve_embeddings(manager, request, *, api, legacy=False):
     try:
         value = request.prompt if legacy else request.input
         inputs = _inputs(value)
+        media = media_budget(inputs)
+        if media and api == 'ollama' and request.truncate:
+            raise ValueError('Image embeddings require truncate=false; automatic media truncation is not integrated')
         keep_alive = request.keep_alive if api == 'ollama' else None
         num_ctx = request.options.get('num_ctx') if api == 'ollama' else None
         if api == 'ollama' and (value is None or value == '' or value == []):
@@ -136,22 +157,45 @@ async def serve_embeddings(manager, request, *, api, legacy=False):
             loaded = time.monotonic_ns()
             phase = 'prepare'
             contract = embedding_contract(lease.definition.metadata, lease.resolved.launch.pooling_type)
+            if media:
+                modalities = lease.worker.props.get('modalities')
+                if (lease.resolved.launch.mmproj is None or not isinstance(modalities, dict)
+                        or modalities.get('vision') is not True):
+                    raise ValueError(NO_MULTIMODAL_SUPPORT)
             dimensions = None if legacy else request.dimensions
             if dimensions is not None and dimensions != contract.dimension:
                 raise ValueError(f'dimensions must equal this model\'s full output ({contract.dimension}); dimension reduction is not integrated')
             prepared = await _prepare_inputs(lease, inputs, contract,
                                              truncate=api == 'ollama' and not legacy and request.truncate)
-            tokens = sum(map(len, prepared))
+            tokens = 0
             phase = 'inference'
             # Bound each private response even for large public batches. Native
             # float32 JSON uses fewer than 32 bytes per value; leave envelope room.
-            chunk_size = max(1, _NATIVE_EMBEDDING_JSON_BUDGET // (32 * contract.dimension + 512))
+            chunk_size = 1 if media else max(1, _NATIVE_EMBEDDING_JSON_BUDGET // (32 * contract.dimension + 512))
             vectors = []
             for offset in range(0, len(prepared), chunk_size):
                 chunk = prepared[offset:offset + chunk_size]
-                payload = await lease.worker.embeddings({'input': chunk, 'encoding_format': 'float',
-                                                          'embd_normalize': -1 if legacy else 2})
-                vectors.extend(_vectors(payload, len(chunk), contract.dimension, sum(map(len, chunk)), normalized=not legacy))
+                image_chunk = any(isinstance(item, dict) for item in chunk)
+                try:
+                    payload = await lease.worker.embeddings({'input': chunk, 'encoding_format': 'float',
+                                                              'embd_normalize': -1 if legacy else 2})
+                except WorkerRequestError as exc:
+                    error = exc.payload.get('error') if isinstance(exc.payload, dict) else None
+                    if (image_chunk and exc.http_status == 500 and isinstance(error, dict)
+                            and error.get('message') == 'Failed to load image or audio file'):
+                        phase = 'prepare'
+                        raise ValueError('Image data cannot be decoded by the native worker') from exc
+                    raise
+                expected = None if image_chunk else sum(map(len, chunk))
+                output, count = _vectors(payload, len(chunk), contract.dimension, expected, normalized=not legacy)
+                if image_chunk and count > _token_limit(lease, contract):
+                    phase = 'prepare'
+                    raise ValueError(f'Image embedding input exceeds the supported token limit ({_token_limit(lease, contract)})')
+                tokens += count
+                if tokens > 300_000:
+                    phase = 'prepare'
+                    raise ValueError('Embedding request exceeds the 300000-token batch limit')
+                vectors.extend(output)
             if legacy:
                 return {'embedding': vectors[0]}
             if api == 'ollama':

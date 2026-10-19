@@ -1,4 +1,4 @@
-# Text embedding API — 0058
+# Embedding API — text 0058 / inline images 0064
 
 Requires an explicitly configured embedding worker from
 [native-embeddings.md](native-embeddings.md). Public text adapters now use its
@@ -8,18 +8,19 @@ No native patch, rebuild, download or automatic TOML edit is included.
 0063 also permits text requests on explicitly configured embedding workers with
 an attached projector. Known pooled semantic output is still required; a
 projector does not select mode/pooling or bypass Decision-head rejection.
-`/api/show` reports `embedding` for their text contract. All public input shapes
-below remain text/token-only; typed media and image fields are rejected before
-inference. See [native-embeddings.md](native-embeddings.md) for configuration and
-the separate managed native image reference. Public image support is a later gate.
+`/api/show` reports `embedding` for their semantic output contract. In0064 the
+modern routes also accept inline images, as specified below. Offline capability
+reporting does not claim a loaded vision encoder; media inference additionally
+checks the admitted projector and live native `modalities.vision is true`.
+See [native-embeddings.md](native-embeddings.md) for explicit configuration.
 
 ## Public contracts
 
 | Endpoint | Input | Output | Length handling |
 | --- | --- | --- | --- |
-| `POST /api/embed` | `input`: text or array of texts | `model`, normalized `embeddings`, nanosecond durations, `prompt_eval_count` | `truncate=true` by default; false reports 400 |
+| `POST /api/embed` | `input`: text, `{text?, image?}`, or a mixed array | `model`, normalized `embeddings`, nanosecond durations, `prompt_eval_count` | Text defaults to `truncate=true`; images require `truncate=false` |
 | `POST /api/embeddings` | `prompt`: one text | One unnormalized `embedding` | Over-limit input reports 400 |
-| `POST /v1/embeddings` | `input`: text(s) or token-ID array(s) | OpenAI list/data/index/model/usage envelope | Over-limit input reports 400; no truncation option |
+| `POST /v1/embeddings` | `input`: text(s), token-ID array(s), or the explicit image content extension below | OpenAI list/data/index/model/usage envelope | Over-limit input reports 400; no truncation option |
 
 All are non-streaming JSON endpoints. Ollama also accepts `runner`, `keep_alive`
 and `options.num_ctx`. Other options and unknown fields are rejected rather
@@ -36,6 +37,66 @@ starting a worker, including a missing name. Nonempty inference with zero
 keep_alive finishes before retiring the worker. OpenAI refuses empty inputs.
 An empty text *inside* an Ollama batch remains an item, using the tokenizer's
 actual special-token behavior; it is not converted into load control.
+
+## Inline image inputs — 0064
+
+Ollama follows the image subset of its current Go API request contract:
+
+```json
+{"model":"registered-embedding-model","input":{"text":"a literal query","image":"<base64 image bytes>"},"truncate":false}
+```
+
+Each object owns one image, with optional text placed before it. Bare base64
+and inline image data URLs are accepted. A mixed array of strings and objects
+returns one vector per entry, in request order. A text-only object is equivalent
+to its literal text; empty objects/text objects are invalid, not load control.
+Audio/video and unknown object fields are refused, never discarded.
+
+The OpenAI-compatible route has an explicit **TLlama/native extension**;
+OpenAI's standard embeddings API and SDK input type describe text/token input:
+
+```json
+{"model":"registered-embedding-model","input":{"content":[{"type":"text","text":"before\n"},{"type":"image_url","image_url":{"url":"data:image/png;base64,<bytes>"}},{"type":"text","text":"\nafter"}]}}
+```
+
+Content parts preserve order and literal text, including multiple images and
+interleaved text. Arrays may mix nonempty strings and content objects. Raw
+native `prompt_string`/`multimodal_data`, client media markers, remote/file URLs,
+audio/video, image detail hints and other fields are rejected. No fetch,
+chat template, instruction, prefix or separator is inserted by TLlama. The
+loaded native media marker is reserved inside media content text. Text-only
+content concatenates its text parts and follows the existing text tokenizer.
+Legacy `/api/embeddings` remains one text prompt.
+
+Image requests allow at most32 entries,32 images,4MiB decoded bytes per image,
+16MiB decoded media in total and64 content parts per entry. Encoded length is
+bounded before decoding; image signatures and strict base64 are checked before
+model admission. These are byte/item bounds, **not** pixel, image-feature or
+peak-memory estimates. Native remains the decoder and image preprocessor, using
+the resolved projector options (including image token settings); no launch
+setting is silently changed. Malformed image bytes that pass signature checks
+may still be refused by native. The pinned decoder's exact HTTP500 message
+`Failed to load image or audio file` becomes public400 on an image item only.
+Unrelated upstream500s remain500.
+
+There is no literal multimodal token-count preflight in native3144c167ef:
+`/tokenize` is text/token-only, and chat count routes apply a chat template.
+Consequently image entries go unchanged to native, one entry per private
+request. Native enforces its own context checks; afterward its mandatory,
+positive, consistent `usage` is checked against the same conservative per-item
+bound below and the300000-token request bound. An excessive returned count is
+public400 **after native work**, without a partial batch response. Missing or
+malformed media usage is500; text tokens never substitute for image counts.
+No exact multimodal preflight or automatic truncation is claimed. Ollama image
+requests require explicit `truncate=false`, including mixed text/image batches.
+Any ordinary text entries still use exact native tokenization and preflight.
+
+Use OpenAI Python SDK `extra_body={"input": ...}` for this provider extension;
+it does not establish hosted OpenAI image-embedding support. An older Ollama
+SDK may reject objects locally despite the current server contract. The public
+diagnostic records installed versions and high-level support, and separately
+labels fallback SDK HTTP transport/response parsing. It does not call that
+fallback high-level `embed()` compatibility.
 
 ## Tokenization and limits
 
@@ -76,14 +137,15 @@ an unvalidated caller-supplied ID. Batch limits are 2048 inputs and 300000
 submitted tokens. The input token limit is the local model/load limit above,
 not a hardcoded token limit borrowed from a hosted OpenAI model.
 
-Private inference batches are split to keep each upstream JSON response within
+Private text inference batches are split to keep each upstream JSON response within
 a conservative byte budget. Indices are validated and restored to input order
 across those batches. Every result has the full configured dimension and finite
 float32 values. Modern outputs must already have unit L2 norm; TLlama validates
 that property and does not repair invalid vectors. Legacy requests explicitly
 select native embd_normalize=-1; modern/OpenAI select 2. Reported native token
-counts must match submitted tokens. If native omits usage, counts come from
-those exact submitted IDs, never character estimates.
+counts must match submitted tokens. If native omits usage for a text-only
+item, counts come from those exact submitted IDs, never character estimates.
+Image items instead require authoritative usage as described above.
 
 ## Dimensions and encoding
 
@@ -135,6 +197,7 @@ cleanup retain the existing lifecycle.
 
 ```bash
 pytest -q tests/test_embedding_api.py tests/test_native_embeddings.py
+pytest -q tests/test_embedding_media_api.py tests/test_embeddings_multimodal_smoke.py
 pytest -q
 ```
 
@@ -148,13 +211,18 @@ They certify protocol/lifecycle behavior, not embedding-model quality.
 against independent MiniLM/Qwen native calls on the maintainer's hardware.
 It uses temporary definitions with ordinary production resolution and checks
 registered TOMLs unchanged. Keep those two models; additional architectures
-and multimodal/projector inputs have later gates. Hardware acceptance remains
-pending until the actual result is reviewed.
+have been accepted separately. Keep all six accepted text models and the
+accepted0062/0063 image references. The0064 public image gate is
+[`embeddings-multimodal-smoke.py --public`](../scripts/embeddings-multimodal-smoke.md),
+with real loopback HTTP, independent raw-native controls, native usage and SDK
+wire capture. Public image hardware acceptance remains pending until reviewed.
 
-Primary API references checked 2026-10-18:
+Primary API references checked 2026-10-19 (the current Ollama Go type/docs also
+describe image/audio objects;0064 integrates only inline images):
 
 - https://docs.ollama.com/api/embed
 - https://github.com/ollama/ollama/blob/main/api/types.go
+- https://github.com/ollama/ollama/blob/main/docs/api.md#generate-embeddings
 - https://github.com/ollama/ollama/blob/main/server/routes.go
 - https://developers.openai.com/api/reference/resources/embeddings/methods/create/
 

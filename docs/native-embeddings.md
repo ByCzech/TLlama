@@ -1,4 +1,4 @@
-# Native embedding workers — 0063
+# Native embedding workers — 0063 / public images 0064
 
 0063 permits an explicitly configured embedding worker to retain its registered
 projector and projector options. The accepted Qwen3-VL native reference0062
@@ -20,8 +20,10 @@ not enabled by attaching a projector.
 
 Existing public text routes also work on this worker, with the same exact-token,
 limit, normalization and usage checks. `/api/show` advertises `embedding`, without
-claiming public image input or generation/vision routes. Public embedding
-schemas still refuse images/typed media. The internal embedding transport
+claiming generation/vision routes from the embedding mode. The0064 modern
+embedding routes accept validated inline images, check live vision capability
+and require authoritative native media usage. See [embedding-api.md](embedding-api.md)
+for the exact input/limits/error contract. The internal embedding transport
 retains its authenticated bounded slot and raw protocol; its caller owns media
 validation and must check the admitted generation's live capabilities.
 
@@ -34,7 +36,8 @@ continue to fail operation admission before replacing an embedding worker.
 
 Use the [managed reference recipe](../scripts/embeddings-multimodal-smoke.md)
 to exercise production resolution, `WorkerLaunchSpec` and `NativeWorker` without
-editing the registered TOML. Public media contracts are the next checkpoint.
+editing the registered TOML. Its0064 `--public` mode adds real public TCP and
+SDK comparisons against the independent native controls.
 
 ## Original worker foundation — 0057
 
@@ -106,7 +109,7 @@ The launch explicitly disables speculation. Batch, ubatch, context, K/V and
 placement settings otherwise retain normal configuration precedence; no silent
 capacity tuning is performed. Native input limits still apply, including whole
 encoder sequences fitting the physical ubatch. Public input validation and
-truncation contracts will be implemented with the adapters.
+truncation contracts are described in [embedding-api.md](embedding-api.md).
 
 ## Ownership and operation admission
 
@@ -139,7 +142,10 @@ Memory telemetry, residency accounting, TTL and unload cleanup use the existing
 owned lifecycle; there is no second embedding manager or process queue.
 
 `/api/show` suppresses generation capabilities for configured embedding workers.
-It does not advertise public embedding capability until those adapters exist.
+Known semantic output advertises only `embedding`; public image inference also
+requires the registered projector and the loaded worker's live vision flag.
+The0064 [public contract](embedding-api.md) distinguishes image extensions,
+literal input, native token accounting and unsupported audio/video.
 
 ## Verification
 

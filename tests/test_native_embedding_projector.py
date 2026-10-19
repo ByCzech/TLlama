@@ -61,7 +61,7 @@ async def test_projector_worker_keeps_public_text_and_generation_contracts(embed
     assert {k: v for k, v in manager.native_snapshot()[0].items() if k != 'ttl_remaining'} == before
     assert len(manager.test.ledger) == 1
     media = await client.post(path, json=body(name, path, {'content': [
-        {'type': 'image_url', 'image_url': {'url': RED_BLUE_URL}}]}))
+        {'type': 'input_audio', 'input_audio': {'data': 'not supported'}}]}))
     assert media.status_code == 400 and len(calls(manager)) == 1
     unload = await client.post('/api/embed', json={'model': name, 'input': '', 'keep_alive': 0})
     assert unload.status_code == 200

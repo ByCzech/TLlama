@@ -5,6 +5,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr, field_validator
 from tllama.helpers.common import normalize_keep_alive
+from tllama.embedding_media import content_entry, media_budget
 
 
 class EmbeddingRequestBase(BaseModel):
@@ -49,7 +50,7 @@ class OllamaEmbeddingBase(EmbeddingRequestBase):
 
 
 class OllamaEmbedRequest(OllamaEmbeddingBase):
-    input: StrictStr | list[StrictStr] | None = None
+    input: Any = None
     truncate: StrictBool = True
     dimensions: StrictInt | None = Field(default=None, ge=1)
 
@@ -61,9 +62,18 @@ class OllamaEmbedRequest(OllamaEmbeddingBase):
     @field_validator('input')
     @classmethod
     def bounded_batch(cls, value):
-        if isinstance(value, list) and len(value) > 2048:
+        if value is None or isinstance(value, str):
+            return value
+        rows = value if isinstance(value, list) else [value]
+        if len(rows) > 2048:
             raise ValueError('input supports at most 2048 items')
-        return value
+        if any(isinstance(row, dict) and 'image' in row for row in rows) and len(rows) > 32:
+            raise ValueError('Image embedding requests support at most 32 items')
+        normalized = []
+        for row in rows:
+            normalized.append(row if isinstance(row, str) else content_entry(row, ollama=True))
+            media_budget(normalized)
+        return normalized if isinstance(value, list) else normalized[0]
 
 
 class OllamaLegacyEmbeddingRequest(OllamaEmbeddingBase):
@@ -87,6 +97,21 @@ class OpenAIEmbeddingRequest(EmbeddingRequestBase):
         def tokens(row):
             return isinstance(row, list) and bool(row) and all(type(t) is int and 0 <= t < 2**31 for t in row)
 
+        if isinstance(value, dict):
+            value = content_entry(value)
+            media_budget([value])
+            return value
+        if isinstance(value, list) and any(isinstance(row, dict) for row in value):
+            if len(value) > 32:
+                raise ValueError('Content embedding batches support at most 32 items')
+            rows = []
+            for row in value:
+                rows.append(content_entry(row) if isinstance(row, dict) else row)
+                media_budget(rows)
+            if not rows or len(rows) > 2048 or not all(isinstance(row, dict) or isinstance(row, str) and row for row in rows):
+                raise ValueError('Embedding content batches may mix nonempty text and content objects')
+            media_budget(rows)
+            return rows
         if isinstance(value, str):
             valid = bool(value)
         elif isinstance(value, list) and value:

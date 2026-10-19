@@ -48,13 +48,17 @@ def test_diagnostic_preserves_resolved_projector_and_production_guards(tmp_path)
         smoke.probe_launch(WorkerLaunchSpec(model=spec.model, device='none'), SimpleNamespace(ctx=1024))
 
 
-@pytest.mark.parametrize('mode,ok,review', [
+MODES = [
     ('normal', True, False), ('fast', True, False), ('ignore-images', True, True),
     ('drift', True, True), ('bad-norm', True, True), ('no-usage', True, True),
     ('wrong-dimension', False, True), ('bad-index', False, True), ('nan', False, True),
     ('no-vision', False, True), ('decoder-error', True, True),
-])
-@pytest.mark.parametrize('managed', [False, True])
+]
+
+
+@pytest.mark.parametrize('mode,ok,review,managed', [
+    (*mode, managed) for mode in MODES for managed in (False, True)
+] + [('normal', True, False, 'public'), ('fast', True, False, 'public')])
 def test_multimodal_reference_and_cleanup(tmp_path, payload, mode, ok, review, managed):
     root = tmp_path / 'stub'
     root.mkdir()
@@ -82,7 +86,7 @@ def test_multimodal_reference_and_cleanup(tmp_path, payload, mode, ok, review, m
     command = [sys.executable, str(SCRIPT), '--model', 'a', '--models-dir', str(models.parent),
                '--executable', str(executable), '--output', str(output)]
     if managed:
-        command.append('--managed')
+        command.append('--public' if managed == 'public' else '--managed')
     environment = {**os.environ, 'PYTHONPATH': str(SCRIPT.parents[1] / 'src'),
                    'STUB_MULTIMODAL_EMBEDDINGS': mode, 'STUB_ROOT': str(root),
                    'STUB_BUILD': payload['runtime_fingerprint'], 'STUB_PUBLIC_CTX': '1024',
@@ -91,7 +95,7 @@ def test_multimodal_reference_and_cleanup(tmp_path, payload, mode, ok, review, m
     assert run.returncode == (0 if ok else 1), run.stdout + run.stderr
     rows = [json.loads(line) for line in (output / 'raw.jsonl').read_text().splitlines()]
     assert rows[-1]['protocol_ok'] is ok and rows[-1]['review_required'] is review, rows[-1]
-    assert rows[-1]['public_api'] == 'not_exercised' and rows[-1]['residency'] == []
+    assert rows[-1]['public_api'] == ('exercised' if managed == 'public' else 'not_exercised') and rows[-1]['residency'] == []
     assert rows[0]['launch_path'] == ('production' if managed else 'independent_reference')
     if managed:
         probe = smoke.tomlkit.parse((output / 'managed-model.toml').read_text())
@@ -109,7 +113,7 @@ def test_multimodal_reference_and_cleanup(tmp_path, payload, mode, ok, review, m
         assert ready['argv'].count('--embeddings') == 1 and ready['argv'].count('--pooling') == 1
         assert next(row for row in rows if row['stage'] == 'recovery')['pid'] == ready['pid'] == closed['pid']
         checks = [row for row in rows if row['stage'] == 'comparison']
-        assert len(checks) == 16
+        assert len(checks) == (51 if managed == 'public' else 16)
         assert all(row['within_tolerance'] for row in checks) is (mode != 'drift')
         sensitivity = [row for row in rows if row['stage'] == 'image-sensitivity']
         assert len(sensitivity) == 3 and all(row['distinct'] for row in sensitivity) is (mode != 'ignore-images')
@@ -122,6 +126,17 @@ def test_multimodal_reference_and_cleanup(tmp_path, payload, mode, ok, review, m
         assert cancel['native_early_stop_observed'] is cancel['inference_started_observed'] is None
         assert next(row for row in rows if row['stage'] == 'unloaded')['residency'] == []
         assert len(list(output.glob('image-*.png'))) == 2
+        if managed == 'public':
+            public_rows = [r for r in rows if r['stage'] == 'public-response']
+            assert len(public_rows) == 25 and all(r['status'] == 200 for r in public_rows)
+            assert len([r for r in rows if r['stage'] == 'public-error']) == 8
+            assert len([r for r in rows if r['stage'] == 'public-transport-cancel']) == 2
+            assert len([r for r in rows if r['stage'] == 'sdk-response']) == 3
+            assert next(r for r in rows if r['stage'] == 'public-unload')['status'] == 200
+            sdk_requests = [r for r in rows if r['stage'] == 'request' and r.get('source') == 'sdk']
+            assert len(sdk_requests) == 5
+            assert all(isinstance(r['body']['input'], (dict, list)) for r in sdk_requests)
+            assert [r['status'] for r in rows if r['stage'] == 'sdk-error'] == [400, 400]
     launches = (root / 'launch').read_bytes()
     repeat = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=5)
     assert repeat.returncode == 2 and (root / 'launch').read_bytes() == launches

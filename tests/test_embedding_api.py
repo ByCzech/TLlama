@@ -34,13 +34,13 @@ async def embeddings(public, monkeypatch):
     monkeypatch.setenv('STUB_PUBLIC_CTX', '16')
     weights = manager.local_models_dir / 'a.gguf'
 
-    def header(*, pooling=1, dimension=8, output_dimension=None, decision=None):
+    def header(*, pooling=1, dimension=8, output_dimension=None, decision=None, context=16):
         writer = gguf.GGUFWriter(str(weights), arch='bert')
         writer.add_uint32('bert.pooling_type', pooling)
         writer.add_uint32('bert.embedding_length', dimension)
         if output_dimension is not None:
             writer.add_uint32('bert.embedding_length_out', output_dimension)
-        writer.add_uint32('bert.context_length', 16)
+        writer.add_uint32('bert.context_length', context)
         if decision is not None:
             writer.add_string('bert.decision.type', decision)
         writer.add_token_list([f'token{i}' for i in range(512)])
