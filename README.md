@@ -235,6 +235,9 @@ If you maintain your own patched `llama-cpp-python` wheel, install that wheel be
 
 ## Running TLlama
 
+The server command is `tllamad`; `tllama` is the HTTP client. See
+[client and daemon commands](docs/cli.md) for migration and client usage.
+
 Start TLlama using your installed entry point or module command.
 
 Example:

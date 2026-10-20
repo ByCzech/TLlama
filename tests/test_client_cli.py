@@ -43,7 +43,10 @@ def cli_server():
         def reply(self):
             body = self.rfile.read(int(self.headers.get('Content-Length', 0)))
             state['calls'].append((self.command, self.path, json.loads(body) if body else None))
-            status, value = state['responses'].get(self.path, (404, {'error': 'missing route'}))
+            response = state['responses'].get(self.path, (404, {'error': 'missing route'}))
+            if callable(response):
+                response = response(self.command, json.loads(body) if body else None)
+            status, value = response
             payload = json.dumps(value).encode() if not isinstance(value, bytes) else value
             self.send_response(status)
             self.send_header('Content-Type', 'application/json')

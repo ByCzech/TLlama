@@ -513,7 +513,7 @@ A refused value exits 2 before the socket is opened, so `systemctl status` shows
 Read the last line: it names the variable and what was expected.
 
 ```
-tllama: TLLAMA_HOST='0.0.0.0:http' is not valid: expected HOST:PORT with a numeric port.
+tllamad: TLLAMA_HOST='0.0.0.0:http' is not valid: expected HOST:PORT with a numeric port.
 ```
 
 ### A model disappeared from the listing

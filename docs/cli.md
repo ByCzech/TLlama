@@ -76,3 +76,37 @@ newline. `show --modelfile` returns TOML, not an Ollama Modelfile conversion.
 `ps` derives processor placement from the server's compatibility size fields;
 unknown values remain unknown. These fields are not a measurement of physical
 RAM/VRAM residency. Detailed memory/provenance remains available with `ps --json`.
+
+## Pull, remove and unload
+
+```sh
+tllama pull org/repository/file.gguf
+tllama pull org/repository/file.gguf --json
+tllama rm first-model second-model
+tllama stop MODEL
+```
+
+`pull` uses the server's existing Hugging Face reference syntax and credentials;
+it is not an Ollama registry download. Human progress goes to stderr, followed
+by a success line on stdout. `--json` emits each progress object as one NDJSON
+line on stdout. HTTP errors, in-stream errors, invalid progress and a stream
+ending without success all fail the command. Ctrl+C closes the client stream;
+the server's existing downloader thread is not guaranteed to stop immediately.
+
+`rm` deletes definitions on the selected server and leaves weight files on disk.
+All supplied names are attempted even if one fails; any failure makes the exit
+status 1. `--json` emits one record per name, with `model` and either the original
+`response` object or an `error`. Errors also go to stderr. No operation is
+retried automatically, so a lost response is reported without guessing whether
+the server completed the deletion.
+
+`stop` sends an empty non-streaming `/api/generate` request with keep_alive=0.
+This unload path runs before generation-mode admission, so it also handles
+embedding/Decision workers and an already-unloaded name without inference.
+Success means the unload was requested; active leases drain according to the
+existing lifecycle before the worker exits. It does not forcibly interrupt
+other clients' inference. `stop --json` returns the unload response.
+
+`run`, REPL, create/copy, server TOML/daemon switches and systemd packaging remain
+subsequent planned work. The client layer uses async HTTPX operations so that
+later REPL support can share their validation and response ownership.

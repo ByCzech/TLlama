@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from ipaddress import IPv6Address
+import json
 import math
 import os
 from urllib.parse import urlsplit, urlunsplit
@@ -63,7 +64,7 @@ class TLlamaClient:
         try:
             self._http = httpx.AsyncClient(base_url=self.url, transport=transport,
                                            timeout=httpx.Timeout(timeout, connect=min(timeout, 10.0)))
-        except (ImportError, ValueError, OSError) as exc:
+        except (httpx.InvalidURL, ImportError, ValueError, OSError) as exc:
             raise ClientConfigError(f'Cannot initialize HTTP client: {exc}') from None
 
     async def __aenter__(self):
@@ -141,3 +142,45 @@ class TLlamaClient:
         if not isinstance(data.get('version'), str) or not data['version']:
             raise ClientError('Server response is missing its version string.')
         return data['version']
+
+    async def remove(self, model):
+        data = await self._request('DELETE', 'api/delete', json={'model': model})
+        if data.get('status') != 'success':
+            raise ClientError('Server did not confirm model definition deletion.')
+        return data
+
+    async def stop(self, model):
+        # Empty generate unloads before model-mode admission, including
+        # embedding and Decision definitions. It must never load a worker.
+        data = await self._request('POST', 'api/generate', json={
+            'model': model, 'prompt': '', 'keep_alive': 0, 'stream': False})
+        if data.get('done') is not True or data.get('done_reason') != 'unload':
+            raise ClientError('Server did not confirm the unload request.')
+        return data
+
+    async def pull(self, model):
+        """Yield validated progress; callers must consume or close the generator."""
+        try:
+            async with self._http.stream('POST', 'api/pull', json={'model': model, 'stream': True}) as response:
+                if not response.is_success:
+                    await response.aread()
+                    self._check_status(response)
+                async for line in response.aiter_lines():
+                    if not line.strip():
+                        continue
+                    try:
+                        event = json.loads(line)
+                    except ValueError:
+                        raise ClientError('Pull returned invalid NDJSON.') from None
+                    if not isinstance(event, dict):
+                        raise ClientError('Pull progress must be a JSON object.')
+                    if event.get('error'):
+                        raise ClientError(str(event['error']))
+                    if not isinstance(event.get('status'), str) or not event['status']:
+                        raise ClientError('Pull progress is missing its status.')
+                    yield event
+                    if event['status'] == 'success':
+                        return
+                raise ClientError('Pull stream ended without confirming success.')
+        except httpx.HTTPError as exc:
+            raise self._transport_error(exc) from None
