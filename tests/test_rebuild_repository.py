@@ -1,4 +1,4 @@
-"""`tllama rebuildrepo`: giving every .gguf on disk a definition.
+"""`tllamad rebuildrepo`: giving every .gguf on disk a definition.
 
 Not only a one-off migration for a repository that predates .toml. A file
 copied into Local/ by hand is invisible for exactly the same reason, so
@@ -9,7 +9,7 @@ default behaviour matter: without --force it only ever adds.
 import gguf
 import pytest
 
-from tllama.cli import build_parser, main as cli_main
+from tllama.daemon import build_parser, main as daemon_main
 from tllama.helpers.model_toml import parse_model_toml
 
 
@@ -250,7 +250,7 @@ class TestTheCommandItself:
         called = []
         monkeypatch.setattr("tllama.main.start_server", lambda: called.append(True))
 
-        cli_main([])
+        daemon_main([])
 
         assert called == [True]
 
@@ -265,7 +265,7 @@ class TestTheCommandItself:
         place_gguf("Local/fresh.gguf")
 
         monkeypatch.setattr("tllama.backend.model_manager", manager)
-        cli_main(["rebuildrepo", "--dryrun", "--force"])
+        daemon_main(["rebuildrepo", "--dryrun", "--force"])
 
         out = capsys.readouterr().out
         assert "would create: Local/fresh.toml" in out
@@ -277,6 +277,6 @@ class TestTheCommandItself:
         place_gguf("Local/model.gguf")
         monkeypatch.setattr("tllama.backend.model_manager", manager)
 
-        cli_main(["rebuildrepo", "--dryrun"])
+        daemon_main(["rebuildrepo", "--dryrun"])
 
         assert "Nothing was written." in capsys.readouterr().out

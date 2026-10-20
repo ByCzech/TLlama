@@ -99,13 +99,13 @@ export TLLAMA_HOST=127.0.0.1
 export TLLAMA_CONTEXT_LENGTH=4096
 export TLLAMA_MODELS=/var/lib/tllama/models
 
-tllama
+tllamad
 ```
 
 or:
 
 ```bash
-python -m tllama
+python -m tllama.daemon
 ```
 
 Default address:
@@ -318,7 +318,7 @@ python -m llama_cpp.server \
 ### TLlama
 
 ```bash
-tllama
+tllamad
 ```
 
 Then compare `/v1/chat/completions` behavior for:

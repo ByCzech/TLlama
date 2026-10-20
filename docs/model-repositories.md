@@ -163,11 +163,11 @@ If metadata cache does not exist yet, TLlama creates it lazily when the model is
 
 ## Writing the Missing `.toml` Definitions
 
-A `.gguf` that no `.toml` points at is not a model: it is not listed and cannot be loaded. `tllama rebuildrepo` writes the definitions that are missing, for a repository that predates them and equally for a file just copied into `Local/` by hand.
+A `.gguf` that no `.toml` points at is not a model: it is not listed and cannot be loaded. `tllamad rebuildrepo` writes the definitions that are missing, for a repository that predates them and equally for a file just copied into `Local/` by hand.
 
 ```bash
-tllama rebuildrepo --dryrun     # report only, writes nothing
-tllama rebuildrepo              # add the definitions that are absent
+tllamad rebuildrepo --dryrun     # report only, writes nothing
+tllamad rebuildrepo              # add the definitions that are absent
 ```
 
 Without `--force` it only adds; a `.toml` that already exists is left exactly as it is, so the command is safe to run at any time.
@@ -181,7 +181,7 @@ A second `--force` therefore finds a `.toml.bak` already there. It **skips that 
 Two ways forward from a skip. Move the `.toml.bak` somewhere else, which keeps it and lets the file be rebuilt; or say it is expendable:
 
 ```bash
-tllama rebuildrepo --force --overwrite-backups
+tllamad rebuildrepo --force --overwrite-backups
 ```
 
 That flag does nothing on its own and is refused without `--force`. `--dryrun` reports the skips exactly as the real run performs them.

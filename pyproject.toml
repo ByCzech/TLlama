@@ -45,8 +45,9 @@ test = [
 ]
 
 [project.scripts]
-# Register tllama cmdline command
-tllama = "tllama.main:main"
+# Keep client imports independent of the ASGI application.
+tllama = "tllama.cli:main"
+tllamad = "tllama.daemon:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

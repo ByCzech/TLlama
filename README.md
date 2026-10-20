@@ -240,13 +240,13 @@ Start TLlama using your installed entry point or module command.
 Example:
 
 ```bash
-tllama
+tllamad
 ```
 
 or, depending on your development setup:
 
 ```bash
-python -m tllama
+python -m tllama.daemon
 ```
 
 By default, TLlama listens on:

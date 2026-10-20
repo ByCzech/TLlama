@@ -167,22 +167,11 @@ def start_server():
     return
 
 
-def main() -> int:
-    """The `tllama` entry point named in pyproject.toml.
-
-    A thin forward: the command lives in cli.py so that adding a
-    subcommand does not mean editing the module that builds the
-    application.
-    """
-    from tllama.cli import main as cli_main
-
-    return cli_main()
+def main(argv=None) -> int:
+    """Retain `python -m tllama.main` as an explicit server spelling."""
+    from tllama.daemon import main as daemon_main
+    return daemon_main(argv)
 
 
-# Below main(), not above it. Running the module directly executes the
-# file top to bottom, so a __main__ block placed before the function it
-# calls raises NameError before anything else happens -- while the
-# installed console script, which imports the module and then looks the
-# name up, works perfectly and hides it.
 if __name__ == "__main__":
     raise SystemExit(main())

@@ -14,7 +14,7 @@ export TLLAMA_MODELS=/var/lib/tllama/models
 export TLLAMA_RUNTIME_FLASH_ATTN=true
 export TLLAMA_KV_CACHE_TYPE=q8_0
 
-tllama
+tllamad
 ```
 
 Then, against the Ollama-compatible API:
@@ -80,7 +80,7 @@ Sampling values are typed and must be finite. Disable modes such as `top_k <= 0`
 
 The exception is `mirostat_mode`, which is a choice rather than a range: `0`, `1` or `2`. Any other number is not clamped and does not fail — it falls through to the ordinary sampler chain, so mirostat ends up off without a word. Both layers refuse it.
 
-A model's `.toml` works the same way: a key in `[runtime]` or `[sampling]` that TLlama will not act on is refused when the file is read, and that model is not listed and cannot be loaded until the file is corrected. `tllama rebuildrepo --dryrun` reports which file and which key, and writes nothing.
+A model's `.toml` works the same way: a key in `[runtime]` or `[sampling]` that TLlama will not act on is refused when the file is read, and that model is not listed and cannot be loaded until the file is corrected. `tllamad rebuildrepo --dryrun` reports which file and which key, and writes nothing.
 
 Booleans accept `1`, `true`, `yes`, `on` and `0`, `false`, `no`, `off`, in any case. Anything else is refused.
 
@@ -177,7 +177,7 @@ Reload the application when its source changes. Default `false`. For development
 
 The repository root, holding `Local/`, `TLlama/` and `HuggingFace/`. Default `/var/lib/tllama/models`.
 
-A `.gguf` that no `.toml` points at is not a model: it is not listed and cannot be loaded. See `docs/model-repositories.md`; `tllama rebuildrepo` writes the missing definitions.
+A `.gguf` that no `.toml` points at is not a model: it is not listed and cannot be loaded. See `docs/model-repositories.md`; `tllamad rebuildrepo` writes the missing definitions.
 
 ### `TLLAMA_METADATA_CACHE_TTL`
 
@@ -423,7 +423,7 @@ Applied identically by `/api/generate`, `/api/chat` and `/v1/chat/completions`, 
 export TLLAMA_HOST=127.0.0.1:54800
 export TLLAMA_MODELS=/var/lib/tllama/models
 
-tllama
+tllamad
 ```
 
 ### Lower memory
@@ -434,7 +434,7 @@ export TLLAMA_KV_CACHE_TYPE=q4_0
 export TLLAMA_CONTEXT_LENGTH=8192
 export TLLAMA_MAX_LOADED_MODELS=1
 
-tllama
+tllamad
 ```
 
 Flash attention first: without it the cache type is ignored.
@@ -445,7 +445,7 @@ Flash attention first: without it the cache type is ignored.
 export TLLAMA_RUNTIME_TENSOR_SPLIT=0.7,0.3
 export TLLAMA_RUNTIME_N_GPU_LAYERS=-1
 
-tllama
+tllamad
 ```
 
 ### One GPU only, on a machine with several
@@ -454,7 +454,7 @@ tllama
 export TLLAMA_RUNTIME_SPLIT_MODE=0
 export TLLAMA_RUNTIME_MAIN_GPU=0
 
-tllama
+tllamad
 ```
 
 `main_gpu` indexes the device list *after* `llama.cpp` merges devices reporting the same PCI id, so one card visible under both CUDA and Vulkan counts once.
@@ -466,7 +466,7 @@ export TLLAMA_RUNTIME_N_THREADS=16
 export TLLAMA_RUNTIME_N_THREADS_BATCH=32
 export TLLAMA_RUNTIME_USE_MLOCK=true
 
-tllama
+tllamad
 ```
 
 ### LAN-accessible
@@ -474,7 +474,7 @@ tllama
 ```bash
 export TLLAMA_HOST=0.0.0.0:54800
 
-tllama
+tllamad
 ```
 
 Use a reverse proxy and access controls beyond localhost.
@@ -521,7 +521,7 @@ tllama: TLLAMA_HOST='0.0.0.0:http' is not valid: expected HOST:PORT with a numer
 Its `.toml` no longer parses, most likely because it carries a key TLlama will not act on. Nothing is deleted; the model is invisible until the file is fixed.
 
 ```bash
-tllama rebuildrepo --dryrun
+tllamad rebuildrepo --dryrun
 ```
 
 That names the file and the key, and writes nothing. A common case is a setting in the wrong section: context length is `n_ctx` in `[runtime]`, not `num_ctx` in `[sampling]`.
@@ -545,7 +545,7 @@ A browser caches a preflight for ten minutes, so a corrected origin list can tak
 ```bash
 echo "$TLLAMA_MODELS"
 find "$TLLAMA_MODELS" -name '*.gguf' | head
-tllama rebuildrepo --dryrun
+tllamad rebuildrepo --dryrun
 ```
 
 A `.gguf` with no `.toml` is not a model. `rebuildrepo` writes the missing definitions.
