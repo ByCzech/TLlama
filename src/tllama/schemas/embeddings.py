@@ -6,6 +6,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr, field_validator
 from tllama.helpers.common import normalize_keep_alive
 from tllama.embedding_media import content_entry, media_budget
+from tllama.ollama_options import RUNNER_ALIASES, ollama_runtime_overrides
 
 
 class EmbeddingRequestBase(BaseModel):
@@ -41,11 +42,11 @@ class OllamaEmbeddingBase(EmbeddingRequestBase):
 
     @field_validator('options')
     @classmethod
-    def context_only(cls, value):
-        if set(value) - {'num_ctx'}:
-            raise ValueError('Embedding options support only num_ctx')
-        if 'num_ctx' in value and (type(value['num_ctx']) is not int or not 0 <= value['num_ctx'] < 2**31):
-            raise ValueError('num_ctx must be a nonnegative int32')
+    def runner_options(cls, value):
+        if set(value) - RUNNER_ALIASES.keys():
+            raise ValueError('Embedding options support only runner settings: '
+                             + ', '.join(RUNNER_ALIASES))
+        ollama_runtime_overrides(value)
         return value
 
 
