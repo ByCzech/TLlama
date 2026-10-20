@@ -671,6 +671,7 @@ class ModelManager:
             projector_info = self._read_metadata_for_path(projector) if projector is not None else {}
             has_encoder = (projector_info or {}).get('metadata_raw', {}).get('clip.has_vision_encoder')
             overrides['vision_configured'] = projector is not None and has_encoder is not False
+            overrides['projector_info'] = (projector_info or {}).get('metadata_raw') or {}
 
             if overrides:
                 metadata = {**metadata, **overrides}

@@ -38,11 +38,13 @@ def _validate_runner(value) -> None:
     )
 
 
+@router.head("/version")
 @router.get("/version")
 async def get_version():
     return {"version": get_tllama_version()}
 
 
+@router.head("/tags")
 @router.get("/tags")
 async def list_models_ollama():
     local_models = await model_manager.list_local_models_with_metadata()
@@ -150,8 +152,18 @@ async def show_model_info(request: dict):
     if modelfile is None:
         modelfile = f'FROM {model_name}\nTEMPLATE """{template}"""'
 
+    definition = model_manager._toml_fingerprint_for_reference(model_name)
+    modified = ({"modified_at": datetime.fromtimestamp(
+        definition['mtime_ns'] / 1_000_000_000, timezone.utc).isoformat()}
+        if definition is not None else {})
+
     return {
         "modelfile": modelfile,
+        "system": metadata_info.get("default_system_prompt") or "",
+        # This is the identifier actually recorded in GGUF, not fetched or
+        # synthesized license text. An absent identifier stays empty.
+        "license": (metadata_info.get("metadata_raw") or {}).get("general.license") or "",
+        **modified,
         "parameters": format_ollama_parameters(metadata_info),
         "template": template,
         "details": {
@@ -172,6 +184,7 @@ async def show_model_info(request: dict):
         # whitelisted set of keys, since that is what TLlama currently
         # reads from a GGUF header.
         "model_info": metadata_info.get("metadata_raw") or {},
+        "projector_info": metadata_info.get("projector_info") or {},
         "capabilities": capabilities,
     }
 

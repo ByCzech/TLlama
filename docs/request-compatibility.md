@@ -41,3 +41,20 @@ the existing `num_keep` and runtime `context_shift` contract unchanged; see
 [ollama-options.md](ollama-options.md). These refusals do not emulate a native
 feature or alter the accepted upstream `num_predict=0` behavior. Other unknown
 SDK annotations retain the existing permissive schema behavior.
+
+## Offline model information
+
+`HEAD /api/version` and `HEAD /api/tags` provide the corresponding GET headers
+without a response body. Listing and show do not load inference workers.
+
+`/api/show` includes the current TOML system prompt, the definition's modification
+timestamp, compact metadata for the configured projector, and the GGUF
+`general.license` identifier when present. This identifier is not fetched full
+license text; absent licenses remain empty. License name/link metadata is
+available in `model_info`. TOML edits take effect without rewriting a GGUF cache.
+Header cache schema 8 refreshes old metadata; expensive content digests retain
+their independent cache version. `modelfile` remains the original TLlama TOML.
+
+This is still compact model information, not full Ollama show parity: verbose
+tensor inventories, arbitrary show-time options and multi-runner manifests
+remain separate work. No new API route is claimed by these metadata additions.
