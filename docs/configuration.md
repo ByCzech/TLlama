@@ -150,6 +150,13 @@ A request carrying an `Origin` header must send `Content-Type: application/json`
 
 Debug logging. Default `false`. Sets TLlama's own log level and uvicorn's to `debug`.
 
+Routine outbound HTTP request logs (`httpx`/`httpx2`) and transport diagnostics
+(`httpcore`/`httpcore2`) are shown only in debug mode. Warnings and errors remain
+visible normally. Native memory telemetry continues polling once per second per
+ready worker; disabling these log lines does not disable collection or `/api/ps`.
+The server entry point applies these levels even when the CLI configured logging
+earlier. Applications embedding the ASGI app retain control of their own logging.
+
 With it on, everything llama.cpp writes while loading a model is logged too -- around two thousand lines per load, which is why it is off by default. This includes what the projector says about itself on a vision model, which used to go to the console whatever this was set to: mtmd's own logger ignores the level it is given, so its several hundred lines of tensor inventory were unfilterable until TLlama pointed that logger at the same place as everything else. A load that fails, or one TLlama refuses because ggml could not allocate a buffer, logs the same output at `ERROR` regardless of this setting: it is the only account of why, and the model it describes is gone by the time anyone could turn a setting on.
 
 It also governs what llama.cpp says between loads, which is a separate matter. A load is loud on purpose — every figure `/api/ps` reports is parsed out of that output — but llama.cpp goes on talking through the same channel for the life of the process: per-request timings the API already carries in `prompt_eval_duration` and `eval_duration`, slot bookkeeping, and, on a vision model, the rendered prompt of every image request. With `TLLAMA_DEBUG` off, all of that is filtered out once the last load has finished. A server answering several people should not put a transcript of their requests on the console without being asked to.

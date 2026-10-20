@@ -18,7 +18,7 @@ from typing import AsyncIterator, Mapping, Any
 
 import httpx
 
-from tllama.worker_config import RUNTIME_FINGERPRINT, SUPPORTED_RUNTIME_FINGERPRINTS, ZERO_PREDICTION_RUNTIME, WorkerLaunchSpec
+from tllama.worker_config import RUNTIME_FINGERPRINT, SUPPORTED_RUNTIME_FINGERPRINTS, WorkerLaunchSpec
 from tllama.native_memory import NativeMemory
 from tllama.native_memory_api import MemoryReportError, NativeMemoryReport, UnsupportedMemorySchema
 from tllama.native_telemetry import MemoryTelemetry
@@ -216,7 +216,7 @@ class NativeWorker:
             observed = props.get("build_info")
             self.runtime_fingerprint = observed if isinstance(observed, str) and observed else None
             self.memory.identify_runtime(self.runtime_fingerprint)
-            supported = ({DECISION_RUNTIME, ZERO_PREDICTION_RUNTIME} if self.spec.decision_type is not None
+            supported = ({DECISION_RUNTIME} if self.spec.decision_type is not None
                          else {self.spec.runtime_fingerprint} if self.spec.runtime_fingerprint != RUNTIME_FINGERPRINT
                          else SUPPORTED_RUNTIME_FINGERPRINTS)
             if self.runtime_fingerprint not in supported:

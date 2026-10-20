@@ -139,6 +139,11 @@ def start_server():
         format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
     )
 
+    # The CLI may have already installed handlers at INFO before loading config.
+    logging.getLogger().setLevel(logging.DEBUG if config.debug else logging.INFO)
+    for name in ("httpx", "httpx2", "httpcore", "httpcore2"):
+        logging.getLogger(name).setLevel(logging.DEBUG if config.debug else logging.WARNING)
+
     # Said out loud because a browser reports a rejected origin as a bare
     # network failure, with nothing on the server side to look at. The list
     # is resolved at import, so this reports it rather than deciding it.

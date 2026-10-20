@@ -266,3 +266,21 @@ async def test_fill_context_reuses_worker_when_shifting_is_already_disabled(publ
     response = await client.post('/api/chat', json={**request_body(name, '/api/chat'), 'options': {'num_predict': -2}})
     assert response.status_code == 200
     assert len(manager.test.ledger) == 1 and manager.native_snapshot()[0]['generation'] == first
+
+
+@pytest.mark.parametrize('path', ['/api/chat', '/api/generate'])
+@pytest.mark.parametrize('stream', [False, True])
+def test_zero_limit_preserves_native_output_and_measured_counts(client, native_reply, path, stream):
+    import json
+    state = native_reply(content='A', usage={'prompt_tokens': 7, 'completion_tokens': 1, 'total_tokens': 8},
+        timings={'prompt_n': 7, 'cache_n': 0, 'predicted_n': 1, 'prompt_ms': 2.0, 'predicted_ms': .001})
+    body = request_body('m', path, stream)
+    body['options'] = {'num_predict': 0}
+    response = client.post(path, json=body)
+    assert response.status_code == 200
+    values = [json.loads(line) for line in response.text.splitlines()] if stream else [response.json()]
+    text = ''.join(value.get('response', '') if path.endswith('generate') else value['message']['content']
+                   for value in values)
+    assert text == 'A' and values[-1]['eval_count'] == 1
+    assert values[-1]['eval_duration'] == 1000
+    assert state.worker.calls[-1][1]['n_predict'] == 0

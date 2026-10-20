@@ -96,8 +96,8 @@ TOML round-trip content is retained; resolving does not rewrite supplied files.
 and TOML token-bias keys to a JSON token-ID map. An unset seed is omitted so the
 worker's configured seed applies; a request seed of 0 remains explicit.
 
-An unset or negative token limit maps to native -1. Public 0 remains zero-token
-prefill (requires native correction 0078); public -2 is translated to -1 with
+An unset or negative token limit maps to native -1. Public 0 is passed unchanged
+to the native runtime (including its current one-token behavior); public -2 is translated to -1 with
 context shifting disabled. See [ollama-options.md](ollama-options.md) for all
 20 client parameters, request runner overrides and reload behavior.
 Empty messages/prompts remain ModelManager preload/unload policy, not sampler work.

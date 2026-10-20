@@ -23,7 +23,7 @@ Omitting a previously supplied override returns to TOML/environment defaults.
 | `draft_num_predict` | Positive N selects embedded `draft-mtp` with `draft_n_max=N`; 0 selects `none` | On change |
 | `num_keep` | `n_keep`; -1 preserves the initial prompt, 0 keeps no ordinary prefix tokens | Enables context shifting when first requested; value changes do not reload |
 | `repeat_last_n` | Native repeat window; -1 = context, 0 = disabled; overrides runtime `last_n_tokens_size` | No |
-| `num_predict` | Positive token budget; 0 evaluates prompt without generation; -1 is unbounded; -2 fills remaining context with shifting disabled | -2 can change the worker's context-shift mode |
+| `num_predict` | Positive token budget; 0 passes native zero unchanged; -1 is unbounded; -2 fills remaining context with shifting disabled | -2 can change the worker's context-shift mode |
 | `seed` | Native request seed, including explicit 0 and random -1 | No |
 | `temperature` | Native temperature | No |
 | `top_k` | Native top-k; nonpositive disables it | No |
@@ -67,18 +67,21 @@ native context limitations still apply (for example, recurrent contexts without
 sequence removal). Backend/model startup failure remains an error; the server
 never retries with a requested MTP strategy silently disabled.
 
-## Zero limits and runtime correction
+## Zero limits and upstream behavior
 
 Ollama `draft_num_predict=0` means no speculative strategy. It is translated to
 `spec_type=none`, not a zero native MTP draft limit: the audited MTP loop allocates
 the MTP context and can produce its first candidate before checking that limit.
 Direct TOML `draft_n_max=0` remains a native setting, not a guaranteed off switch.
 
-Public `num_predict=0` is now passed as native zero. The original native pin
-`3144c167ef` incorrectly samples one token for that value despite its documented
-prefill-only contract. Apply native patch 0078 and rebuild to get zero generated
-tokens, evaluated/cached prompt, and normal terminal statistics in full/stream
-responses. TLlama does not hide or relabel the old runtime's generated token.
+Public `num_predict=0` is passed unchanged as native zero, including its output
+and measured statistics. In the audited native pin `3144c167ef`, zero can return
+one sampled token despite the documented prefill-only contract. The maintainer
+chose to leave this behavior to upstream: TLlama neither hides the token nor
+changes the counters, and has no prefill emulation or native correction requirement.
+Proposed native patch 0078 is not adopted. A separate upstream bug report is
+planned; see the project TODO. When upstream fixes it, native zero behavior will
+flow through this same adapter.
 
 Runner options also reach Ollama embedding workers. Generation-only modes such
 as MTP remain incompatible with embeddings and are rejected by the worker's

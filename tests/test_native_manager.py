@@ -24,7 +24,7 @@ async def native_manager(tmp_path):
     executable.chmod(0o700)
     managers = []
 
-    def make(*, limit=1, mode="normal", **config_values):
+    def make(*, limit=1, mode="normal", memory_report=None, **config_values):
         directory = tmp_path / str(len(managers))
         directory.mkdir()
         ledger, roots = [], []
@@ -33,6 +33,8 @@ async def native_manager(tmp_path):
         def factory(spec):
             root = directory / f"worker-{len(ledger)}"
             root.mkdir()
+            if memory_report is not None:
+                (root / "memory-report").write_text(json.dumps(memory_report))
             worker = NativeWorker(replace(spec, environment={**spec.environment, "STUB_ROOT": str(root),
                                                               "STUB_MODE": options["mode"]},
                                           terminate_timeout=0.2, kill_timeout=2))

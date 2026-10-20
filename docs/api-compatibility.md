@@ -458,5 +458,5 @@ curl -s http://127.0.0.1:54800/v1/chat/completions \
 
 
 The audited Ollama client parameter contract (20 options, including runner reloads)
-is documented in [ollama-options.md](ollama-options.md). Native patch 0078 is
-required for correct zero-token prompt evaluation.
+is documented in [ollama-options.md](ollama-options.md). `num_predict=0` follows
+the native runtime behavior unchanged; the proposed native patch 0078 is not adopted.
