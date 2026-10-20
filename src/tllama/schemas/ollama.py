@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field, StrictBool, StrictStr, field_validator
 from typing import List, Optional, Any, Dict, Union
+from tllama.schemas.generation import OllamaGenerationRequest
 
 ThinkValue = StrictBool | StrictStr | None
 FormatValue = Optional[Union[str, Dict[str, Any]]]
@@ -17,7 +18,7 @@ class Message(BaseModel):
     name: Optional[str] = None
 
 
-class OllamaChatRequest(BaseModel):
+class OllamaChatRequest(OllamaGenerationRequest):
     model: str
     runner: StrictStr | None = None
     messages: List[Message]
@@ -34,7 +35,7 @@ class OllamaChatRequest(BaseModel):
         return {} if v is None else v
 
 
-class OllamaGenerateRequest(BaseModel):
+class OllamaGenerateRequest(OllamaGenerationRequest):
     model: str
     runner: StrictStr | None = None
     prompt: Optional[str] = ""

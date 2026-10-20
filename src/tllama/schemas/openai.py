@@ -4,6 +4,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictFloat, Stri
 from typing import List, Optional, Any, Dict, Literal, Union
 
 from tllama.helpers.common import normalize_keep_alive
+from tllama.schemas.generation import GenerationRequest
 
 
 class StreamOptions(BaseModel):
@@ -26,7 +27,7 @@ class ChatMessage(BaseModel):
     function_call: Optional[Dict[str, Any]] = None
 
 
-class ChatCompletionRequest(BaseModel):
+class ChatCompletionRequest(GenerationRequest):
     model: str
     messages: List[ChatMessage]
 
