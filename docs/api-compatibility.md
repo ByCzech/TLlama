@@ -9,6 +9,9 @@ The goal is to make TLlama usable with existing clients and libraries while keep
 
 TLlama is not yet a complete implementation of every Ollama or OpenAI API feature. This document describes the intended compatibility surface and known limitations.
 
+See [request-compatibility.md](request-compatibility.md) for the current
+request controls and their validation, streaming and residency behavior.
+
 `POST /v1/systemone` is a separate native-compatible text Decision extension,
 not a standard OpenAI/Ollama SDK method. See [decision-api.md](decision-api.md)
 for its typed JSON,limits,usage and error/ownership contract.

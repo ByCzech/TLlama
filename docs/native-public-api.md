@@ -80,8 +80,9 @@ compatibility are documented in [native-tools.md](native-tools.md).
 Statistics keep the 05a measured-source rules: OpenAI full input usage, Ollama
 evaluated input count, separate measured cache count, and ms-to-ns durations.
 Unknown measurements stay absent. Native chat empty-choice usage frames are
-handled internally. Public OpenAI streams retain the existing request schema
-and terminal SSE shape; no new stream_options request extension is introduced.
+handled internally. Public OpenAI streams retain their terminal SSE shape;
+the current `stream_options.include_usage` request control is described in
+[request-compatibility.md](request-compatibility.md).
 
 ## Verification and user hardware check
 

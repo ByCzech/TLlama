@@ -1,5 +1,14 @@
-from pydantic import BaseModel, Field, StrictBool
+import math
+
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictFloat, StrictInt, StrictStr, field_validator
 from typing import List, Optional, Any, Dict, Literal, Union
+
+from tllama.helpers.common import normalize_keep_alive
+
+
+class StreamOptions(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    include_usage: StrictBool = False
 
 
 class ChatMessage(BaseModel):
@@ -32,6 +41,21 @@ class ChatCompletionRequest(BaseModel):
     temperature: Optional[float] = None
     top_p: Optional[float] = None
     max_tokens: Optional[int] = None
+    seed: StrictInt | None = None
+    frequency_penalty: StrictFloat | None = None
+    presence_penalty: StrictFloat | None = None
+    stream_options: StreamOptions | None = None
+    # Ollama-compatible extension, applied to residency rather than sampling.
+    keep_alive: StrictStr | StrictInt | float | None = None
+
+    @field_validator('keep_alive', mode='before')
+    @classmethod
+    def valid_keep_alive(cls, value):
+        if value is not None:
+            if type(value) not in (str, int, float) or type(value) is float and not math.isfinite(value):
+                raise ValueError('keep_alive must be a duration or finite seconds')
+            normalize_keep_alive(value)
+        return value
 
     stop: Optional[Union[str, List[str]]] = None
 

@@ -25,7 +25,7 @@ from tllama.native_fim import prepare_fim, validate_fim_input
 from tllama.native_tool_input import tool_options
 from tllama.native_requests import (NativeRequest, prepare_ollama_chat, prepare_openai_chat,
                                    prepare_completion, prepare_ollama_generate_images,
-                                   _response_format, normalize_chat_input)
+                                   _response_format, normalize_chat_input, openai_sampling_options)
 from tllama.residency import _settle_owned
 from tllama.worker import WorkerProtocolError
 
@@ -94,9 +94,7 @@ def _validate(request, api, kind):
                 messages.append({"role": "user", "content": request.prompt, "images": request.images})
                 return normalize_chat_input(messages)
     else:
-        validate_sampling_options({key: value for key, value in {
-            "temperature": request.temperature, "top_p": request.top_p, "num_predict": request.max_tokens,
-        }.items() if value is not None})
+        validate_sampling_options(openai_sampling_options(request))
         if request.response_format is not None:
             _response_format(request.response_format)
         if request.functions is not None or request.function_call is not None:
@@ -163,7 +161,7 @@ async def serve_native(manager, request, *, api, kind="chat"):
     phase = "prepare"
     try:
         normalized = _validate(request, api, kind)
-        keep_alive = request.keep_alive if api == "ollama" else None
+        keep_alive = request.keep_alive
         overrides = ollama_runtime_overrides(request.options) if api == "ollama" else {}
         load_kwargs = {"runtime_overrides": overrides} if overrides else {}
         if api == "ollama":
@@ -210,7 +208,9 @@ async def serve_native(manager, request, *, api, kind="chat"):
         async def body():
             try:
                 async with native.stream() as events:
-                    frames = ollama_stream(events, context, kind=kind) if api == "ollama" else openai_stream(events, context)
+                    frames = (ollama_stream(events, context, kind=kind) if api == "ollama" else
+                              openai_stream(events, context, include_usage=bool(
+                                  request.stream_options and request.stream_options.include_usage)))
                     async with aclosing(frames):
                         async for frame in frames:
                             yield frame

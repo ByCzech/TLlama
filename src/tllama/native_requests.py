@@ -170,14 +170,20 @@ def prepare_ollama_generate_images(request, *, resolved: ResolvedWorkerConfig, m
                         normalized_messages=normalized_messages)
 
 
+def openai_sampling_options(request):
+    return {name: value for name, value in {
+        "temperature": request.temperature, "top_p": request.top_p,
+        "num_predict": request.max_tokens, "stop": request.stop,
+        "seed": request.seed, "frequency_penalty": request.frequency_penalty,
+        "presence_penalty": request.presence_penalty,
+    }.items() if value is not None}
+
+
 def prepare_openai_chat(request, *, resolved: ResolvedWorkerConfig, metadata_info=None, normalized_messages=None):
     # Do not silently send names which the pinned native parser ignores.
     if request.functions is not None or request.function_call is not None:
         raise UnsupportedNativeInput("Deprecated functions/function_call needs an explicit native mapping; use tools/tool_choice")
-    opts = {name: value for name, value in {
-        "temperature": request.temperature, "top_p": request.top_p,
-        "num_predict": request.max_tokens, "stop": request.stop,
-    }.items() if value is not None}
+    opts = openai_sampling_options(request)
     effort = request.reasoning_effort
     if effort is None and isinstance(request.reasoning, dict):
         effort = request.reasoning.get("effort")
