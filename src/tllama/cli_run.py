@@ -9,6 +9,7 @@ import sys
 
 from tllama.client import ClientError
 from tllama.cli_status import WaitStatus
+from tllama.cli_reply import ReplyText
 
 
 def load_json(text):
@@ -118,8 +119,7 @@ class RunSession:
         request = ([{'role': 'system', 'content': self.system}] if self.system is not None else [])
         request += self.messages + [{'role': 'user', 'content': text}]
         reply = {'role': 'assistant', 'content': ''}
-        printed = False
-        reasoning = False
+        renderer = ReplyText()
         try:
             async with WaitStatus('Waiting for response…', enabled=not self.as_json) as status, \
                     aclosing(client.chat(self.model, request, **self.controls)) as stream:
@@ -137,19 +137,11 @@ class RunSession:
                                 or message.get('thinking') and not self.hide_thinking or data['done']):
                             status.stop()
                         if message.get('thinking') and not self.hide_thinking:
-                            print(message['thinking'], end='', file=sys.stderr, flush=True)
-                            reasoning = True
-                        if message.get('content'):
-                            print(message['content'], end='', flush=True)
-                            printed = True
-                        if message.get('tool_calls'):
-                            print('Tool calls: ' + json.dumps(message['tool_calls'], ensure_ascii=False),
-                                  file=sys.stderr, flush=True)
+                            renderer.thinking(message['thinking'])
+                        renderer.answer(message.get('content', ''))
+                        renderer.tools(message.get('tool_calls'))
         finally:
-            if printed:
-                print(flush=True)
-            if reasoning:
-                print(file=sys.stderr, flush=True)
+            renderer.close()
         # Commit only a completed turn. Failed/cancelled replies must not
         # silently become context for the next interactive request.
         self.messages.extend([{'role': 'user', 'content': text}, reply])

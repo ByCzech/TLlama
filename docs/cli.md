@@ -177,7 +177,14 @@ sets a session system message, `--think` accepts true/false or a supported level
 server residence duration. The server validates parameter names and supported
 values. Inappropriate controls for embedding/Decision modes fail explicitly.
 `--hide-thinking` affects display only: reasoning normally goes to stderr,
-answer text to stdout. Tool calls are reported on stderr, never executed.
+answer text to stdout. Thinking is grouped under `Thinking:` and followed by
+an `Answer:` separator before answer text starts. These labels go to stderr,
+so redirected stdout still contains only the answer. Reasoning uses the
+terminal's gray/bright-black color; `NO_COLOR`, non-TTY stderr and `TERM=dumb`
+disable color while retaining labels. Terminal color is restored on normal
+completion, errors and cancellation. Hidden thinking has no labels or styles;
+the original reasoning text remains in conversation messages. Tool calls are
+reported on stderr, never executed.
 `--json` emits original chat events as NDJSON, including reasoning and stats;
 embedding/Decision output is already JSON. Errors may follow partial streamed
 output and make the exit status nonzero; requests are never automatically retried.
