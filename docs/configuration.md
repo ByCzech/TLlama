@@ -334,7 +334,7 @@ A misspelt section name is the mistake this catches that the per-section checks 
 
 ### `[llm]` and `[mmproj]`
 
-`model` is a path relative to the repository root, including the category directory. `tllama create -f FILE` imports client-side `from` files into the server's `Local/imports/` storage and rewrites them to `model` in the stored TOML. Relative `from` paths are relative to FILE's directory on the client; the HTTP server does not read arbitrary server-side paths from this field. Exactly one of the two is required per section. A definition-only create with `model` reuses existing repository files without uploading them. See [CLI create/import](cli.md#create-and-import-models).
+`model` is a path relative to the repository root, including the category directory. `tllama create -f FILE` imports client-side `from` files into the server's `Local/imports/` storage and rewrites them to `model` in the stored TOML. Relative `from` paths are relative to the client's current working directory, regardless of FILE's location; the HTTP server does not read arbitrary server-side paths from this field. Exactly one of the two is required per section. A definition-only create with `model` reuses existing repository files without uploading them. See [CLI create/import](cli.md#create-and-import-models).
 
 A path escaping the repository root is refused. An `[mmproj]` is checked to be a projector.
 

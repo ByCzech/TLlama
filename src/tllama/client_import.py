@@ -90,6 +90,7 @@ def _groups(spec, directory, *, stop):
 
 
 async def create_from_file(client, model, path, *, force=False, as_json=False):
+    directory = Path.cwd()
     path = Path(path).expanduser().absolute()
     try:
         validate_definition_name(model)
@@ -103,7 +104,7 @@ async def create_from_file(client, model, path, *, force=False, as_json=False):
         # or transferring potentially many gigabytes. Publication rechecks
         # the same constraints atomically; preflight reserves no model name.
         await client.check_create(model, text, force=force)
-        groups = await _file_job(_groups, spec, path.parent) if spec.llm_from is not None or spec.mmproj_from is not None else {}
+        groups = await _file_job(_groups, spec, directory) if spec.llm_from is not None or spec.mmproj_from is not None else {}
         uploads = {}
         # Validate every source and hash before uploading any file, so a
         # missing projector/shard cannot leave a partly prepared model.

@@ -57,12 +57,18 @@ async def test_definition_only_create_preserves_text_and_changes_no_weights(crea
     assert manager.native_snapshot() == []
 
 
-async def test_from_uploads_model_and_projector_into_server_local(create_client, manager, tmp_path, monkeypatch):
+@pytest.mark.parametrize('absolute', [False, True])
+async def test_from_uploads_model_and_projector_into_server_local(create_client, manager, tmp_path, monkeypatch, absolute):
     source = tmp_path / 'client files'
     model = gguf_file(source / 'model.gguf')
     projector = gguf_file(source / 'projector.gguf', arch='clip')
-    definition = source / 'model.toml'
-    text = '# Keep comment\n[llm]\nfrom = "model.gguf" # weight comment\n[mmproj]\nfrom="projector.gguf"\n[system]\nprompt="Czech"\n'
+    definition = tmp_path / 'definitions' / 'model.toml'
+    gguf_file(definition.parent / model.name, arch='other-model')
+    gguf_file(definition.parent / projector.name, arch='other-projector')
+    monkeypatch.chdir(tmp_path if absolute else source)
+    model_from = str(model) if absolute else model.name
+    projector_from = str(projector) if absolute else projector.name
+    text = f'# Keep comment\n[llm]\nfrom = "{model_from}" # weight comment\n[mmproj]\nfrom="{projector_from}"\n[system]\nprompt="Czech"\n'
     definition.write_text(text)
     count = []
     receive = ollama.receive_blob
@@ -90,7 +96,8 @@ async def test_from_uploads_model_and_projector_into_server_local(create_client,
     assert {row['id'] for row in listed} == {'collection/created', 'another'}
 
 
-async def test_split_from_uploads_every_shard_and_preserves_names(create_client, manager, tmp_path):
+async def test_split_from_uploads_every_shard_and_preserves_names(create_client, manager, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     first = gguf_file(tmp_path / 'bundle-00001-of-00002.gguf', shard=0, count=2)
     second = gguf_file(tmp_path / 'bundle-00002-of-00002.gguf', shard=1, count=2)
     definition = tmp_path / 'split.toml'
@@ -103,7 +110,8 @@ async def test_split_from_uploads_every_shard_and_preserves_names(create_client,
 
 
 @pytest.mark.parametrize('broken', ['missing_shard', 'continuation', 'bad_projector', 'bad_name'])
-async def test_bad_inputs_do_not_upload_anything(create_client, manager, tmp_path, broken):
+async def test_bad_inputs_do_not_upload_anything(create_client, manager, tmp_path, monkeypatch, broken):
+    monkeypatch.chdir(tmp_path)
     first = gguf_file(tmp_path / 'bundle-00001-of-00002.gguf', shard=0, count=2)
     if broken != 'missing_shard':
         second = gguf_file(tmp_path / 'bundle-00002-of-00002.gguf', shard=1, count=2)
@@ -116,6 +124,17 @@ async def test_bad_inputs_do_not_upload_anything(create_client, manager, tmp_pat
     definition.write_text(text)
     with pytest.raises(ClientError):
         await create_from_file(create_client, '../bad' if broken == 'bad_name' else 'created', definition, as_json=True)
+    assert not (manager.local_models_dir / '.uploads').exists()
+    assert not list(manager.models_dir.rglob('*.toml'))
+
+
+async def test_relative_from_does_not_fall_back_to_toml_directory(create_client, manager, tmp_path, monkeypatch):
+    gguf_file(tmp_path / 'definitions' / 'model.gguf')
+    definition = tmp_path / 'definitions' / 'model.toml'
+    definition.write_text('[llm]\nfrom="model.gguf"\n')
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(ClientError, match='Import source is not a file'):
+        await create_from_file(create_client, 'created', definition, as_json=True)
     assert not (manager.local_models_dir / '.uploads').exists()
     assert not list(manager.models_dir.rglob('*.toml'))
 
@@ -203,7 +222,8 @@ async def test_changed_file_is_refused_before_upload(tmp_path):
 async def test_real_cli_uploads_from_over_tcp(manager, tmp_path, monkeypatch):
     monkeypatch.setattr(ollama, 'model_manager', manager)
     source = gguf_file(tmp_path / 'client' / 'remote.gguf')
-    definition = source.parent / 'model.toml'
+    definition = tmp_path / 'definitions' / 'model.toml'
+    gguf_file(definition.parent / source.name, arch='other-model')
     definition.write_text('[llm]\nfrom="remote.gguf"\n')
     listener = socket.socket()
     listener.bind(('127.0.0.1', 0))
@@ -222,7 +242,7 @@ async def test_real_cli_uploads_from_over_tcp(manager, tmp_path, monkeypatch):
                 await asyncio.sleep(0.01)
         await asyncio.wait_for(ready(), 5)
         child = await asyncio.create_subprocess_exec(sys.executable, '-m', 'tllama', 'create', 'tcp-model',
-            '--file', str(definition), '--host', address, '--json', env=env,
+            '--file', '../definitions/model.toml', '--host', address, '--json', env=env, cwd=source.parent,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         stdout, stderr = await asyncio.wait_for(child.communicate(), 15)
         assert child.returncode == 0, stderr.decode()

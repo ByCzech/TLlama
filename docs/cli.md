@@ -311,8 +311,9 @@ model = "Local/already-present.gguf"
 ```
 
 `from` instead uploads a client-side GGUF into the server's `Local` storage.
-Relative paths are relative to the TOML file's directory; absolute paths and
-`~` refer to the client machine. An optional projector is imported the same way:
+Relative `from` paths are relative to the client's current working directory,
+even when the TOML file is elsewhere. Absolute paths and `~` refer to the client
+machine. An optional projector is imported the same way:
 
 ```toml
 [llm]
