@@ -6,10 +6,12 @@ import argparse
 import json
 import math
 import sys
+import time
 
 from tllama.client import ClientError
 from tllama.cli_status import WaitStatus
 from tllama.cli_reply import ReplyText
+from tllama.cli_metrics import statistics
 
 
 def load_json(text):
@@ -65,6 +67,7 @@ def add_run_options(parser):
     parser.add_argument('--format', type=response_format, help='json or a JSON schema object.')
     parser.add_argument('--keep-alive', help='Server model residence duration, e.g. 5m or 0.')
     parser.add_argument('--hide-thinking', action='store_true', help='Hide reasoning text; does not disable thinking.')
+    parser.add_argument('--verbose', '-v', action='store_true', help='Print measured timings and token statistics to stderr.')
 
 
 @dataclass
@@ -76,6 +79,7 @@ class RunSession:
     messages: list = field(default_factory=list)
     as_json: bool = False
     hide_thinking: bool = False
+    verbose: bool = False
 
     @classmethod
     async def create(cls, client, args):
@@ -97,13 +101,15 @@ class RunSession:
         if mode == 'decision' and controls:
             raise ClientError('Decision models do not accept generation or residence controls.')
         return cls(args.model, mode, controls, args.system, as_json=getattr(args, 'json', False),
-                   hide_thinking=args.hide_thinking)
+                   hide_thinking=args.hide_thinking, verbose=getattr(args, 'verbose', False))
 
     async def submit(self, client, text):
+        started = time.perf_counter()
         if self.mode == 'embedding':
             async with WaitStatus('Waiting for response…', enabled=not self.as_json):
                 data = await client.embed(self.model, text, **self.controls)
             print(json.dumps(data, ensure_ascii=False), flush=True)
+            self._statistics(data, started)
             return
         if self.mode == 'decision':
             try:
@@ -115,16 +121,23 @@ class RunSession:
             async with WaitStatus('Waiting for response…', enabled=not self.as_json):
                 data = await client.decision(self.model, payload['state'], payload['questions'])
             print(json.dumps(data, ensure_ascii=False), flush=True)
+            self._statistics(data, started)
             return
         request = ([{'role': 'system', 'content': self.system}] if self.system is not None else [])
         request += self.messages + [{'role': 'user', 'content': text}]
         reply = {'role': 'assistant', 'content': ''}
         renderer = ReplyText()
+        terminal = None
+        first_text = None
         try:
             async with WaitStatus('Waiting for response…', enabled=not self.as_json) as status, \
                     aclosing(client.chat(self.model, request, **self.controls)) as stream:
                 async for data in stream:
                     message = data['message']
+                    if first_text is None and (message.get('content') or message.get('thinking')):
+                        first_text = time.perf_counter() - started
+                    if data['done']:
+                        terminal = data
                     for key in ('content', 'thinking'):
                         if key in message:
                             reply[key] = reply.get(key, '') + message[key]
@@ -145,13 +158,23 @@ class RunSession:
         # Commit only a completed turn. Failed/cancelled replies must not
         # silently become context for the next interactive request.
         self.messages.extend([{'role': 'user', 'content': text}, reply])
+        self._statistics(terminal or {}, started, first_text=first_text)
+
+    def _statistics(self, data, started, *, first_text=None):
+        if self.verbose:
+            print(statistics(data, elapsed=time.perf_counter() - started, first_text=first_text),
+                  file=sys.stderr, flush=True)
 
     async def preload(self, client):
+        started = time.perf_counter()
         async with WaitStatus('Loading model…', enabled=not self.as_json):
             loaded = await client.preload(self.model, options=self.controls.get('options'),
                                            keep_alive=self.controls.get('keep_alive'))
         if not loaded and not self.as_json:
             print('Preload not retained (keep_alive=0); the model will load on request.', file=sys.stderr)
+        if self.verbose:
+            print(f'Preload request: {time.perf_counter() - started:.3f} s'
+                  + ('' if loaded else ' (not retained)'), file=sys.stderr, flush=True)
 
 
 async def run(client, args):

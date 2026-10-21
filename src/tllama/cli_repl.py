@@ -20,6 +20,7 @@ Ctrl+C cancels input or the active request; Ctrl+D exits at an empty prompt.
 /set think VALUE          true, false, or a server-supported level
 /set format VALUE         json, a schema object, or off
 /set keep_alive VALUE     Server model residence duration (e.g. 5m or 0)
+/set verbose, /set quiet  Enable/disable measured request statistics
 Use //text to send a literal /text prompt. History stays in memory for this session.
 """
 
@@ -40,7 +41,8 @@ def terminal():
     completer = NestedCompleter.from_nested_dict({
         '/help': None, '/?': None, '/bye': None, '/exit': None, '/clear': None,
         '/show': {'model': None, 'parameters': None, 'system': None},
-        '/set': {'parameter': None, 'system': None, 'think': None, 'format': None, 'keep_alive': None},
+        '/set': {'parameter': None, 'system': None, 'think': None, 'format': None, 'keep_alive': None,
+                 'verbose': None, 'quiet': None},
     })
     return PromptSession(history=InMemoryHistory(), completer=completer, key_bindings=keys,
                          complete_while_typing=False, prompt_continuation='... ',
@@ -72,6 +74,10 @@ async def command(client, session, text):
             raise ClientError('Use /show model, /show parameters, or /show system.')
         print(json.dumps(data, ensure_ascii=False, indent=2), file=sys.stderr)
     elif name == '/set':
+        if argument in {'verbose', 'quiet'}:
+            session.verbose = argument == 'verbose'
+            print('Verbose mode ' + ('enabled.' if session.verbose else 'disabled.'), file=sys.stderr)
+            return True
         if not argument:
             raise ClientError('Use /set SETTING VALUE; see /help.')
         setting, *values = argument.split(maxsplit=1)

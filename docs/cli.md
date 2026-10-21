@@ -242,3 +242,29 @@ prompt. Server disconnect handling remains responsible for stopping native
 work; the client cannot promise immediate GPU cancellation. Only completed
 chat turns enter conversation history. Errors and cancelled partial replies
 are displayed but are not reused as context. There is no automatic retry.
+
+## Verbose timing and usage
+
+`tllama run MODEL --verbose` (or `-v`) prints statistics to stderr after each
+completed request. `/set verbose` and `/set quiet` toggle this locally in every
+REPL mode; they do not send model options or change stored definitions.
+
+Client total time covers the request from submission through completion.
+First-text time is measured at the first nonempty content or thinking chunk,
+including hidden thinking; empty stream events do not count. Initial REPL
+preload request time is reported separately before the first prompt when
+verbose was enabled at startup. One-shot requests have no separate preload.
+
+Where supplied, the summary shows server total/preparation time, evaluated and
+cached prompt tokens, generated tokens, prompt/generation durations and tok/s,
+and the stop reason. Server preparation is the reported load/admission span;
+it is not necessarily time spent reading weights. Rates use the matching
+evaluated/generated counts and measured durations, never cached token counts
+or total wall time. Missing measurements are omitted. Measured zero counts or
+durations remain zero; a zero duration has no calculated rate.
+
+Embedding/Decision results keep their JSON stdout and display only available
+statistics. Decision input/output usage is not presented as generation speed.
+JSON chat output also stays unchanged: explicit verbose output goes to stderr,
+and reasoning styles/spinner frames are never inserted into protocol events.
+Incomplete, failed or cancelled replies have no completed-request summary.
