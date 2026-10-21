@@ -80,7 +80,7 @@ class RunSession:
         from tllama.cli import _wait_for_model_info
         info = await _wait_for_model_info(client.show(args.model), notice=not getattr(args, 'json', False))
         capabilities = info.get('capabilities')
-        if not isinstance(capabilities, list):
+        if not isinstance(capabilities, list) or any(not isinstance(c, str) for c in capabilities):
             raise ClientError('Model information is missing its capabilities array.')
         modes = set(capabilities) & {'completion', 'embedding', 'decision'}
         if len(modes) != 1:
@@ -154,7 +154,9 @@ async def run(client, args):
         piped = sys.stdin.read()
         text = piped + ('\n\n' + text if text is not None else '')
     if text is None:
-        raise ClientError('Interactive run support is not installed yet; supply a prompt or stdin.')
+        from tllama.cli_repl import repl
+        session = await RunSession.create(client, args)
+        return await repl(client, session)
     session = await RunSession.create(client, args)
     await session.submit(client, text)
     return 0

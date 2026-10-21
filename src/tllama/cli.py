@@ -30,7 +30,7 @@ def _client_options(parser):
     parser.add_argument('--host', default=argparse.SUPPRESS,
                         help='Server HTTP(S) address (overrides TLLAMA_HOST; default 127.0.0.1:54800).')
     parser.add_argument('--timeout', type=_positive_timeout, default=argparse.SUPPRESS,
-                        help='HTTP inactivity limit in seconds (default: no read limit for list/show/pull, otherwise 30; connect at most 10).')
+                        help='HTTP inactivity limit in seconds (default: no read limit for list/show/pull/run, otherwise 30; connect at most 10).')
     parser.add_argument('--json', action='store_true', default=argparse.SUPPRESS,
                         help='Print the full server response as JSON.')
 

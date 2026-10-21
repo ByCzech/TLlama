@@ -59,10 +59,10 @@ the HTTP(S) scheme; the daemon's legacy environment parser does not enable TLS.
 Credentials, query strings and fragments in the address are refused.
 
 `--host`, `--timeout` and `--json` work before or after the subcommand.
-Without `--timeout`, list/show/pull have no response-read deadline: rebuilding
+Without `--timeout`, list/show/pull/run have no response-read deadline: rebuilding
 metadata or waiting for a server-side download lookup may take longer than a
 fixed limit. Other commands retain a 30-second HTTP inactivity timeout.
-Connection setup remains capped at 10 seconds, including for list/show/pull.
+Connection setup remains capped at 10 seconds, including for list/show/pull/run.
 `--timeout SECONDS` sets a positive finite inactivity limit explicitly, including
 response reads; shorter values also lower the connection deadline. This is not
 an overall command duration limit. Proxy and CA environment settings follow
@@ -133,7 +133,7 @@ Success means the unload was requested; active leases drain according to the
 existing lifecycle before the worker exits. It does not forcibly interrupt
 other clients' inference. `stop --json` returns the unload response.
 
-REPL, create/copy, server TOML/daemon switches and systemd packaging remain
+Create/copy, server TOML/daemon switches and systemd packaging remain
 subsequent planned work. The client layer uses async HTTPX operations so that
 later REPL support can share their validation and response ownership.
 
@@ -148,7 +148,7 @@ requires a boolean `done: true` event; EOF alone is an error. The shared HTTP
 reader closes before returning on completion, errors and cancellation. Chat
 reads have no default inactivity deadline during model loading or generation;
 an explicit client timeout still applies, and connection setup stays bounded.
-This is the transport shared by run and the planned REPL.
+This is the transport shared by run and the REPL.
 
 ## Run a model
 
@@ -182,3 +182,40 @@ answer text to stdout. Tool calls are reported on stderr, never executed.
 embedding/Decision output is already JSON. Errors may follow partial streamed
 output and make the exit status nonzero; requests are never automatically retried.
 Ctrl+C closes the request and exits with status 130 in one-shot mode.
+
+## Interactive run
+
+`tllama run MODEL` opens a prompt_toolkit REPL when stdin is a terminal and
+no prompt arguments were supplied. Enter sends a prompt; Alt+Enter inserts a
+newline. Bracketed paste preserves multiline text as one input. Tab completes
+slash commands; Up/Down recall input from this process's in-memory history.
+No prompts or messages are written to a history file. Prompts and REPL control
+messages go to stderr, including when `--json` is selected.
+
+- `/help` or `/?`: list commands and key bindings.
+- `/bye` or `/exit`: end the session. Ctrl+D also exits at an empty prompt.
+- `/clear`: forget conversation messages, retaining session settings and input
+  history. This does not unload the model or clear the server's KV cache.
+- `/show model`: fetch model information from the server.
+- `/show parameters`: display explicit session request controls, not merged
+  model/server defaults. `/show system` shows the session system override, or
+  null when the model/server supplies it.
+- `/set parameter NAME JSON`: update a request option for future turns.
+- `/set system TEXT`: replace the session system prompt and forget prior turns.
+- `/set think VALUE`, `/set format json|SCHEMA|off`, `/set keep_alive VALUE`:
+  update the corresponding session controls. Format off removes the override.
+
+Settings remain in the session and never rewrite a model definition. The server
+validates parameter names/values on the next request. Embedding models accept
+their supported runner options; Decision models accept no generation controls.
+Embedding/Decision REPL inputs are independent requests, not conversation turns.
+Use `//text` to send a prompt beginning with `/text`. Other ordinary prompt text
+is passed literally, without shell parsing. Save/load/create/copy are not part
+of this initial shell.
+
+Ctrl+C while editing discards current input. During inference it cancels and
+closes the active HTTP request, waits for client cleanup and returns to the
+prompt. Server disconnect handling remains responsible for stopping native
+work; the client cannot promise immediate GPU cancellation. Only completed
+chat turns enter conversation history. Errors and cancelled partial replies
+are displayed but are not reused as context. There is no automatic retry.
