@@ -162,7 +162,7 @@ class RunSession:
 
     def _statistics(self, data, started, *, first_text=None):
         if self.verbose:
-            print(statistics(data, elapsed=time.perf_counter() - started, first_text=first_text),
+            print('\n' + statistics(data, elapsed=time.perf_counter() - started, first_text=first_text),
                   file=sys.stderr, flush=True)
 
     async def preload(self, client):
