@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import aclosing
 from ipaddress import IPv6Address
 import json
@@ -173,33 +174,80 @@ class TLlamaClient:
             raise ClientError('Server did not confirm the unload request.')
         return data
 
+    async def _pull_response_lines(self, model):
+        # Drive the HTTPX iterator chain in one task. It always reaches EOF
+        # or receives cancellation inside __anext__, unwinding every layer.
+        # Cancelling at a queue.put instead would strand those iterators.
+        queue = asyncio.Queue(maxsize=1)
+        stopping = False
+        queue_wait = False
+
+        async def read():
+            nonlocal queue_wait
+            error = None
+            try:
+                async with self._http.stream('POST', 'api/pull', json={'model': model, 'stream': True},
+                                             timeout=self._request_timeout(wait_for_server_work=True)) as response:
+                    if not response.is_success:
+                        await response.aread()
+                        self._check_status(response)
+                    async for line in response.aiter_lines():
+                        if not stopping:
+                            queue_wait = True
+                            await queue.put((True, line))
+                            queue_wait = False
+                        if stopping:
+                            # Buffered lines may arrive without suspending.
+                            # Discard them until EOF or the next actual read,
+                            # where cancellation unwinds the nested iterators.
+                            asyncio.current_task().cancel()
+            except (Exception, asyncio.CancelledError) as exc:
+                error = exc
+            if not stopping:
+                queue_wait = True
+                await queue.put((False, error))
+                queue_wait = False
+
+        reader = asyncio.create_task(read())
+        try:
+            while True:
+                is_line, value = await queue.get()
+                if not is_line:
+                    if value is not None:
+                        raise value
+                    return
+                yield value
+        finally:
+            stopping = True
+            if queue_wait:
+                # Release the bounded handoff. The reader will then cancel
+                # itself at its next read, rather than inside queue.put.
+                while not queue.empty():
+                    queue.get_nowait()
+            else:
+                reader.cancel()
+            await asyncio.gather(reader, return_exceptions=True)
+
     async def pull(self, model):
         """Yield validated progress; callers must consume or close the generator."""
         try:
-            async with self._http.stream('POST', 'api/pull', json={'model': model, 'stream': True},
-                                         timeout=self._request_timeout(wait_for_server_work=True)) as response:
-                if not response.is_success:
-                    await response.aread()
-                    self._check_status(response)
-                # Close our iterator before the response, even when a terminal
-                # event returns early or the caller closes the pull generator.
-                async with aclosing(response.aiter_lines()) as lines:
-                    async for line in lines:
-                        if not line.strip():
-                            continue
-                        try:
-                            event = json.loads(line)
-                        except ValueError:
-                            raise ClientError('Pull returned invalid NDJSON.') from None
-                        if not isinstance(event, dict):
-                            raise ClientError('Pull progress must be a JSON object.')
-                        if event.get('error'):
-                            raise ClientError(str(event['error']))
-                        if not isinstance(event.get('status'), str) or not event['status']:
-                            raise ClientError('Pull progress is missing its status.')
-                        yield event
-                        if event['status'] == 'success':
-                            return
+            async with aclosing(self._pull_response_lines(model)) as lines:
+                async for line in lines:
+                    if not line.strip():
+                        continue
+                    try:
+                        event = json.loads(line)
+                    except ValueError:
+                        raise ClientError('Pull returned invalid NDJSON.') from None
+                    if not isinstance(event, dict):
+                        raise ClientError('Pull progress must be a JSON object.')
+                    if event.get('error'):
+                        raise ClientError(str(event['error']))
+                    if not isinstance(event.get('status'), str) or not event['status']:
+                        raise ClientError('Pull progress is missing its status.')
+                    yield event
+                    if event['status'] == 'success':
+                        return
                 raise ClientError('Pull stream ended without confirming success.')
         except httpx.HTTPError as exc:
             raise self._transport_error(exc) from None

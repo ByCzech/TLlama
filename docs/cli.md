@@ -116,7 +116,7 @@ by a success line on stdout. `--json` emits each progress object as one NDJSON
 line on stdout. HTTP errors, in-stream errors, invalid progress and a stream
 ending without success all fail the command. Ctrl+C closes the client stream;
 the server's existing downloader thread is not guaranteed to stop immediately.
-The client explicitly closes the NDJSON line iterator before its HTTP response,
+The client completes cleanup of the HTTP decoding chain before returning,
 including success, malformed progress and early termination.
 
 `rm` deletes definitions on the selected server and leaves weight files on disk.
