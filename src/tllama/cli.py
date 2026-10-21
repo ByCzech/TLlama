@@ -50,11 +50,16 @@ def build_parser() -> argparse.ArgumentParser:
         ('stop', [], 'Request unload after active inference leases drain.'),
         ('run', [], 'Run a model with a prompt, stdin, or an interactive session.'),
         ('cp', [], 'Copy a model definition; share existing weight files.'),
+        ('create', [], 'Create a model from TOML; upload from files into server Local.'),
     ]:
         command = commands.add_parser(name, aliases=aliases, help=help_text)
         _client_options(command)
         command.set_defaults(operation=name)
-        if name == 'cp':
+        if name == 'create':
+            command.add_argument('model')
+            command.add_argument('--file', '-f', required=True, help='Client-side TOML definition path.')
+            command.add_argument('--force', action='store_true', help='Replace an existing definition; never replace weights.')
+        elif name == 'cp':
             command.add_argument('source')
             command.add_argument('destination')
             command.add_argument('--force', action='store_true', help='Replace an existing destination definition.')
@@ -102,6 +107,11 @@ async def _execute(args):
         if args.operation == 'cp':
             data = await client.copy(args.source, args.destination, force=args.force)
             print(json.dumps(data, ensure_ascii=False) if as_json else f'copied: {args.source} -> {args.destination}')
+            return 0
+        if args.operation == 'create':
+            from tllama.client_import import create_from_file
+            data = await create_from_file(client, args.model, args.file, force=args.force, as_json=as_json)
+            print(json.dumps(data, ensure_ascii=False) if as_json else f'created: {args.model}')
             return 0
         if args.operation == 'pull':
             previous = None

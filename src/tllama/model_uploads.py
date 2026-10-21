@@ -8,6 +8,7 @@ import re
 import tempfile
 
 from tllama.residency import _settle_owned
+from tllama.helpers.metadata_cache import build_model_file_fingerprint, load_digest_cache, save_digest_cache
 
 
 def blob_path(manager, digest):
@@ -18,6 +19,18 @@ def blob_path(manager, digest):
     if path.is_symlink() or not path.resolve().is_relative_to(manager.models_dir.resolve()):
         raise ValueError('Upload staging must stay inside the model repository.')
     return path
+
+
+def verified_blob(manager, digest):
+    path = blob_path(manager, digest)
+    before = build_model_file_fingerprint(path)
+    cached = load_digest_cache(manager.metadata_cache_dir, path)
+    if cached is None:
+        cached = manager._build_model_digest_sync(path)
+    if cached.get('content_sha256') != digest[7:] or before != build_model_file_fingerprint(path):
+        raise ValueError('An uploaded blob changed or does not match its digest.')
+    save_digest_cache(manager.metadata_cache_dir, str(path), path, cached, fingerprint=before)
+    return path, before
 
 
 async def receive_blob(manager, digest, request):
@@ -59,6 +72,8 @@ async def receive_blob(manager, digest, request):
                 output.flush()
                 os.fsync(output.fileno())
             await _settle_owned(asyncio.create_task(asyncio.to_thread(finish)))
+        fingerprint = build_model_file_fingerprint(temporary)
+        fingerprint['path'] = str(target.resolve())
         try:
             os.link(temporary, target)
         except FileExistsError:
@@ -66,5 +81,12 @@ async def receive_blob(manager, digest, request):
             # replace its inode, which may already be used by a definition.
             if not target.is_file() or target.is_symlink():
                 raise ValueError('Invalid existing upload target.')
+            await _settle_owned(asyncio.create_task(asyncio.to_thread(verified_blob, manager, digest)))
+        else:
+            # Record our measured upload digest against the exact published
+            # file, so create/list do not read many gigabytes again to hash.
+            await _settle_owned(asyncio.create_task(asyncio.to_thread(
+                save_digest_cache, manager.metadata_cache_dir, str(target), target,
+                {'content_sha256': digest[7:], 'source': 'local'}, fingerprint=fingerprint)))
     finally:
         temporary.unlink(missing_ok=True)

@@ -229,6 +229,20 @@ class TLlamaClient:
         finally:
             await stream.aclose()
 
+    async def create(self, model, definition, *, uploads=None, force=False):
+        data = await self._request('POST', 'api/create', wait_for_server_work=True,
+                                   json={'model': model, 'definition': definition,
+                                         'uploads': uploads or {}, 'force': force})
+        if data.get('status') != 'success':
+            raise ClientError('Server did not confirm definition creation.')
+        return data
+
+    async def check_create(self, model, definition, *, force=False):
+        data = await self._request('POST', 'api/create', wait_for_server_work=True,
+                                   json={'model': model, 'definition': definition, 'force': force, 'dry_run': True})
+        if data.get('status') != 'ready':
+            raise ClientError('Server did not confirm definition preflight.')
+
     async def embed(self, model, text, *, options=None, keep_alive=None):
         payload = {'model': model, 'input': text}
         for key, value in (('options', options), ('keep_alive', keep_alive)):

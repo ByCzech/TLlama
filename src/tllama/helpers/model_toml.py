@@ -31,6 +31,14 @@ class TomlModelError(ValueError):
     """
 
 
+def validate_definition_name(name):
+    if (not isinstance(name, str) or not name or name != name.strip() or '\\' in name or '\0' in name
+            or any(part in {'', '.', '..'} for part in name.split('/'))):
+        raise ValueError('Invalid model name.')
+    if len(name.split('/')) > 3:
+        raise ValueError('Model names support one to three path components.')
+
+
 @dataclass
 class VirtualModelSpec:
     """The parsed contents of one virtual-model .toml file.
@@ -572,6 +580,7 @@ def write_model_toml(path: Path, text: str, *, overwrite: bool = False) -> Path:
     handle = tempfile.NamedTemporaryFile(
         mode="w",
         encoding="utf-8",
+        newline="",
         dir=str(path.parent),
         prefix=f".{path.name}.",
         suffix=".tmp",

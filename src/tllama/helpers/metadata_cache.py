@@ -270,6 +270,8 @@ def save_digest_cache(
     model_name: str,
     model_path: str | Path,
     digest: Dict[str, Any],
+    *,
+    fingerprint: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Save a model content digest to its JSON cache file."""
     cache_dir = Path(cache_dir)
@@ -283,6 +285,7 @@ def save_digest_cache(
         schema_version=DIGEST_SCHEMA_VERSION,
         section=_DIGEST_SECTION,
         payload=digest,
+        fingerprint=fingerprint,
     )
 
 

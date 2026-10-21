@@ -87,6 +87,13 @@ def test_atomic_no_clobber_for_concurrent_definitions(tmp_path):
     assert not list(tmp_path.glob('*.tmp'))
 
 
+def test_copy_preserves_crlf_newlines(manager, definition):
+    original = definition.replace('\n', '\r\n').encode()
+    (manager.local_models_dir / 'original.toml').write_bytes(original)
+    copy_definition(manager, 'original', 'copy')
+    assert (manager.local_models_dir / 'copy.toml').read_bytes() == original
+
+
 def test_cli_copy_posts_controls(cli_server, capsys):
     cli_server['responses']['/api/copy'] = (200, {'status': 'success'})
     assert main(['cp', 'source', 'destination', '--force', '--json', '--host', cli_server['url']]) == 0

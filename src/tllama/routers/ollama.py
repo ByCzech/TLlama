@@ -20,8 +20,8 @@ from tllama.embedding_contract import embedding_capable
 from tllama.decision_contract import has_decision_head, decision_capable
 from tllama.native_embeddings import embedding_response
 from tllama.schemas.embeddings import OllamaEmbedRequest, OllamaLegacyEmbeddingRequest
-from tllama.schemas.model_management import CopyRequest
-from tllama.model_definitions import copy_definition
+from tllama.schemas.model_management import CopyRequest, CreateRequest
+from tllama.model_definitions import copy_definition, create_definition
 from tllama.residency import _settle_owned
 from tllama.model_uploads import blob_path, receive_blob
 
@@ -401,3 +401,17 @@ async def upload_blob(digest: str, request: Request):
     except (ValueError, ClientDisconnect) as exc:
         raise HTTPException(400, str(exc)) from exc
     return Response(status_code=201)
+
+
+@router.post('/create')
+async def create_model(request: CreateRequest):
+    try:
+        return await _settle_owned(asyncio.create_task(asyncio.to_thread(
+            create_definition, model_manager, request.model, request.definition, request.uploads,
+            force=request.force, dry_run=request.dry_run)))
+    except FileExistsError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except (ValueError, UnicodeError) as exc:
+        raise HTTPException(400, str(exc)) from exc

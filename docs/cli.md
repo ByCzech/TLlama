@@ -133,7 +133,7 @@ Success means the unload was requested; active leases drain according to the
 existing lifecycle before the worker exits. It does not forcibly interrupt
 other clients' inference. `stop --json` returns the unload response.
 
-Create, server TOML/daemon switches and systemd packaging remain
+Server TOML/daemon switches and systemd packaging remain
 subsequent planned work. The client layer uses async HTTPX operations so that
 later REPL support can share their validation and response ownership.
 
@@ -293,3 +293,73 @@ does not register a model; create will publish named GGUF files into Local and
 a definition only after its validation succeeds. Completed staging entries
 are retained for reuse if a subsequent create fails; garbage collection is
 separate work. This binary API does not accept multipart/form-data.
+
+## Create and import models
+
+```sh
+tllama create MODEL -f model.toml
+tllama create MODEL -f model.toml --force
+tllama create MODEL -f model.toml --json
+```
+
+The file is **TLlama TOML**, read on the client. For a definition that refers to
+existing server repository files, create only writes the TOML:
+
+```toml
+[llm]
+model = "Local/already-present.gguf"
+```
+
+`from` instead uploads a client-side GGUF into the server's `Local` storage.
+Relative paths are relative to the TOML file's directory; absolute paths and
+`~` refer to the client machine. An optional projector is imported the same way:
+
+```toml
+[llm]
+from = "weights/model.gguf"
+
+[mmproj]
+from = "weights/projector.gguf"
+```
+
+Use exactly one of model/from in each section. Client files remain untouched.
+The server never interprets from as permission to read its own filesystem.
+Each source is validated, hashed and uploaded as a bounded stream; already
+uploaded digests are reused after HEAD. The staging directory is in Local so
+publication needs no second multi-gigabyte copy. Imported files are published
+under `Local/imports/FIRST_FILE_SHA256/original-filename.gguf`; from is replaced
+by that repository-relative model path in the server TOML, preserving comments.
+Definitions and weight/projector files retain their separate names and roles.
+
+For a split GGUF, from must name the first shard. The client automatically
+includes the complete sibling set described by split.count/split.no, with the
+standard NAME-00001-of-NNNNN.gguf names. Both sides verify shard positions and
+counts, and the server preserves filenames together so native shard discovery
+works. Missing, mismatched or continuation-only imports fail explicitly.
+Each group is limited to 2048 shards. GGUF structural checks do not prove a
+model's compatibility with a particular native backend/device.
+Verified upload digests and inspected headers warm the existing caches for
+the final Local paths; an unchanged imported file is not hashed or scanned
+again just to list it. Cache versions are unchanged. Changed staged bytes are
+rechecked and cannot be published under their old digest.
+
+Before hashing/uploading, create preflights the name, TOML and references to
+existing server files. It reserves no name: final publication still checks
+conflicts atomically. Existing definitions require --force; that flag never
+replaces weight bytes. A new TOML becomes visible only after all imports and
+references validate. Completed blobs/imported weights can remain for reuse
+after a late conflict/failure; they are not deleted behind other definitions.
+There is no automatic retry, model load, conversion or quantization.
+
+The native TLlama `POST /api/create` JSON contract is model, definition (TOML
+text), optional force and uploads. uploads maps llm/mmproj to ordered arrays
+of `{ "digest": "sha256:HEX", "filename": "original.gguf" }`, exactly for
+sections containing from. Upload every referenced digest through the blob API
+first. With no from, omit uploads. Success is `{ "status": "success", "model":
+"NAME" }`. A dry_run request without uploads performs the definition/name/ref
+preflight and returns status ready; it does not inspect pending local sources
+or publish anything. The definition limit is 2 MiB of UTF-8 text.
+
+This create contract does not parse Ollama Modelfile or accept Ollama's full
+structured create schema. Unsupported fields fail explicitly. Save/load of
+REPL conversations remains separate work.
