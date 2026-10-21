@@ -1,4 +1,4 @@
-"""Shared async HTTP operations for the CLI and future interactive client."""
+"""Shared async HTTP operations for command-line and interactive clients."""
 
 from __future__ import annotations
 
@@ -174,7 +174,7 @@ class TLlamaClient:
             raise ClientError('Server did not confirm the unload request.')
         return data
 
-    async def _pull_response_lines(self, model):
+    async def _response_lines(self, path, payload):
         # Drive the HTTPX iterator chain in one task. It always reaches EOF
         # or receives cancellation inside __anext__, unwinding every layer.
         # Cancelling at a queue.put instead would strand those iterators.
@@ -186,7 +186,7 @@ class TLlamaClient:
             nonlocal queue_wait
             error = None
             try:
-                async with self._http.stream('POST', 'api/pull', json={'model': model, 'stream': True},
+                async with self._http.stream('POST', path, json=payload,
                                              timeout=self._request_timeout(wait_for_server_work=True)) as response:
                     if not response.is_success:
                         await response.aread()
@@ -228,10 +228,49 @@ class TLlamaClient:
                 reader.cancel()
             await asyncio.gather(reader, return_exceptions=True)
 
+    async def chat(self, model, messages, *, options=None, think=None, format=None, keep_alive=None):
+        """Yield original chat events; consume or explicitly close this generator.
+
+        Omitted controls preserve server/model defaults. Conversation ownership
+        and rendering belong to the caller, including thinking/tool-call data.
+        """
+        payload = {'model': model, 'messages': messages, 'stream': True}
+        for key, value in (('options', options), ('think', think),
+                           ('format', format), ('keep_alive', keep_alive)):
+            if value is not None:
+                payload[key] = value
+        try:
+            async with aclosing(self._response_lines('api/chat', payload)) as lines:
+                async for line in lines:
+                    if not line.strip():
+                        continue
+                    try:
+                        event = json.loads(line)
+                    except ValueError:
+                        raise ClientError('Chat returned invalid NDJSON.') from None
+                    if not isinstance(event, dict):
+                        raise ClientError('Chat event must be a JSON object.')
+                    if event.get('error'):
+                        raise ClientError(str(event['error']))
+                    if not isinstance(event.get('done'), bool):
+                        raise ClientError('Chat event is missing a boolean done field.')
+                    message = event.get('message')
+                    if not isinstance(message, dict) or message.get('role') != 'assistant':
+                        raise ClientError('Chat event must contain an assistant message.')
+                    for field in ('content', 'thinking'):
+                        if field in message and not isinstance(message[field], str):
+                            raise ClientError(f'Chat message {field} must be a string.')
+                    yield event
+                    if event['done']:
+                        return
+                raise ClientError('Chat stream ended without confirming completion.')
+        except httpx.HTTPError as exc:
+            raise self._transport_error(exc) from None
+
     async def pull(self, model):
         """Yield validated progress; callers must consume or close the generator."""
         try:
-            async with aclosing(self._pull_response_lines(model)) as lines:
+            async with aclosing(self._response_lines('api/pull', {'model': model, 'stream': True})) as lines:
                 async for line in lines:
                     if not line.strip():
                         continue

@@ -136,3 +136,16 @@ other clients' inference. `stop --json` returns the unload response.
 `run`, REPL, create/copy, server TOML/daemon switches and systemd packaging remain
 subsequent planned work. The client layer uses async HTTPX operations so that
 later REPL support can share their validation and response ownership.
+
+The Python client layer now provides `TLlamaClient.chat(model, messages, ...)`
+as an async iterator over original `/api/chat` events. It preserves content,
+thinking, tool calls and terminal statistics for a caller to render/store.
+Optional `options`, `think`, `format` and `keep_alive` controls are omitted when
+unspecified, preserving server/model defaults; explicit false and zero values
+are sent unchanged. There is no automatic retry or model download.
+Use `contextlib.aclosing` when consuming a stream that may end early. Completion
+requires a boolean `done: true` event; EOF alone is an error. The shared HTTP
+reader closes before returning on completion, errors and cancellation. Chat
+reads have no default inactivity deadline during model loading or generation;
+an explicit client timeout still applies, and connection setup stays bounded.
+This is the transport foundation for run/REPL; it adds no new CLI command yet.
