@@ -186,7 +186,23 @@ Ctrl+C closes the request and exits with status 130 in one-shot mode.
 ## Interactive run
 
 `tllama run MODEL` opens a prompt_toolkit REPL when stdin is a terminal and
-no prompt arguments were supplied. Enter sends a prompt; Alt+Enter inserts a
+no prompt arguments were supplied. Before the first prompt it prepares the
+model through an empty, non-streaming generate request. Runtime options and
+keep-alive are forwarded without overriding server defaults. A zero effective
+keep-alive retains the existing server unload semantics: the client reports
+that preload was not retained, and the real request loads the model later.
+One-shot/stdin calls do not add this preliminary request.
+
+On a terminal, preparation displays `Loading model…` with the spinner
+`⣷⣯⣟⡿⢿⣻⣽⣾` (100 ms per frame). Each inference request displays
+`Waiting for response…` until visible text/tool calls arrive, or the request
+completes. With hidden thinking it continues through hidden reasoning. This
+general wait label does not claim to identify queueing, loading or prefill.
+The spinner clears and its task finishes on success, failure and cancellation.
+It writes only to stderr and is disabled for JSON, redirected stderr, dumb
+terminals and encodings that cannot display the selected frames.
+
+Enter sends a prompt; Alt+Enter inserts a
 newline. Bracketed paste preserves multiline text as one input. Tab completes
 slash commands; Up/Down recall input from this process's in-memory history.
 No prompts or messages are written to a history file. Prompts and REPL control

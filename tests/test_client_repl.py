@@ -189,13 +189,15 @@ async def test_run_selects_repl_only_without_arguments_on_tty(monkeypatch):
     monkeypatch.setattr('sys.stdin', TTY())
     async def show(model):
         return {'capabilities': ['embedding']}
+    async def preload(model, **kwargs):
+        return True
     called = []
     async def shell(client, session):
         called.append(session.mode)
         return 0
     monkeypatch.setattr('tllama.cli_repl.repl', shell)
     args = cli.build_parser().parse_args(['run', 'model'])
-    assert await run(SimpleNamespace(show=show), args) == 0
+    assert await run(SimpleNamespace(show=show, preload=preload), args) == 0
     assert called == ['embedding']
 
 
@@ -203,6 +205,7 @@ async def test_run_selects_repl_only_without_arguments_on_tty(monkeypatch):
 def test_real_cli_terminal_recovers_after_sigint(cli_server):
     import pty
     cli_server['responses']['/api/show'] = (200, {'capabilities': ['completion']})
+    cli_server['responses']['/api/generate'] = (200, {'done': True, 'done_reason': 'load'})
     def response(*args):
         # Keep the first request pending long enough for the parent to
         # observe admission and send a real SIGINT to the client process.

@@ -191,6 +191,18 @@ class TLlamaClient:
             raise ClientError('Server did not confirm the unload request.')
         return data
 
+    async def preload(self, model, *, options=None, keep_alive=None):
+        payload = {'model': model, 'prompt': '', 'stream': False}
+        for key, value in (('options', options), ('keep_alive', keep_alive)):
+            if value is not None:
+                payload[key] = value
+        data = await self._request('POST', 'api/generate', wait_for_server_work=True, json=payload)
+        if data.get('done') is not True or data.get('done_reason') not in {'load', 'unload'}:
+            raise ClientError('Server did not confirm model preparation.')
+        # Zero effective TTL means unload even on this empty-request path.
+        # Never override server/user residence policy to force a preload.
+        return data['done_reason'] == 'load'
+
     async def _response_lines(self, path, payload):
         # Drive the HTTPX iterator chain in one task. It always reaches EOF
         # or receives cancellation inside __anext__, unwinding every layer.

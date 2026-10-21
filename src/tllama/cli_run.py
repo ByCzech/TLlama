@@ -8,6 +8,7 @@ import math
 import sys
 
 from tllama.client import ClientError
+from tllama.cli_status import WaitStatus
 
 
 def load_json(text):
@@ -99,7 +100,8 @@ class RunSession:
 
     async def submit(self, client, text):
         if self.mode == 'embedding':
-            data = await client.embed(self.model, text, **self.controls)
+            async with WaitStatus('Waiting for response…', enabled=not self.as_json):
+                data = await client.embed(self.model, text, **self.controls)
             print(json.dumps(data, ensure_ascii=False), flush=True)
             return
         if self.mode == 'decision':
@@ -109,7 +111,8 @@ class RunSession:
                 raise ClientError(f'Decision input must be JSON: {exc}') from None
             if not isinstance(payload, dict) or set(payload) != {'state', 'questions'}:
                 raise ClientError('Decision input must be an object with exactly state and questions.')
-            data = await client.decision(self.model, payload['state'], payload['questions'])
+            async with WaitStatus('Waiting for response…', enabled=not self.as_json):
+                data = await client.decision(self.model, payload['state'], payload['questions'])
             print(json.dumps(data, ensure_ascii=False), flush=True)
             return
         request = ([{'role': 'system', 'content': self.system}] if self.system is not None else [])
@@ -118,7 +121,8 @@ class RunSession:
         printed = False
         reasoning = False
         try:
-            async with aclosing(client.chat(self.model, request, **self.controls)) as stream:
+            async with WaitStatus('Waiting for response…', enabled=not self.as_json) as status, \
+                    aclosing(client.chat(self.model, request, **self.controls)) as stream:
                 async for data in stream:
                     message = data['message']
                     for key in ('content', 'thinking'):
@@ -129,6 +133,9 @@ class RunSession:
                     if self.as_json:
                         print(json.dumps(data, ensure_ascii=False), flush=True)
                     else:
+                        if (message.get('content') or message.get('tool_calls')
+                                or message.get('thinking') and not self.hide_thinking or data['done']):
+                            status.stop()
                         if message.get('thinking') and not self.hide_thinking:
                             print(message['thinking'], end='', file=sys.stderr, flush=True)
                             reasoning = True
@@ -147,6 +154,13 @@ class RunSession:
         # silently become context for the next interactive request.
         self.messages.extend([{'role': 'user', 'content': text}, reply])
 
+    async def preload(self, client):
+        async with WaitStatus('Loading model…', enabled=not self.as_json):
+            loaded = await client.preload(self.model, options=self.controls.get('options'),
+                                           keep_alive=self.controls.get('keep_alive'))
+        if not loaded and not self.as_json:
+            print('Preload not retained (keep_alive=0); the model will load on request.', file=sys.stderr)
+
 
 async def run(client, args):
     text = ' '.join(args.prompt) if args.prompt else None
@@ -156,6 +170,7 @@ async def run(client, args):
     if text is None:
         from tllama.cli_repl import repl
         session = await RunSession.create(client, args)
+        await session.preload(client)
         return await repl(client, session)
     session = await RunSession.create(client, args)
     await session.submit(client, text)
