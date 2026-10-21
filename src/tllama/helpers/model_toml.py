@@ -583,7 +583,13 @@ def write_model_toml(path: Path, text: str, *, overwrite: bool = False) -> Path:
             handle.flush()
             os.fsync(handle.fileno())
 
-        os.replace(handle.name, path)
+        if overwrite:
+            os.replace(handle.name, path)
+        else:
+            # Unlike an exists/replace pair, link publishes without ever
+            # clobbering a concurrent writer's newly created definition.
+            os.link(handle.name, path)
+            Path(handle.name).unlink()
     except BaseException:
         Path(handle.name).unlink(missing_ok=True)
         raise

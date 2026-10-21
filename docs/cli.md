@@ -133,7 +133,7 @@ Success means the unload was requested; active leases drain according to the
 existing lifecycle before the worker exits. It does not forcibly interrupt
 other clients' inference. `stop --json` returns the unload response.
 
-Create/copy, server TOML/daemon switches and systemd packaging remain
+Create, server TOML/daemon switches and systemd packaging remain
 subsequent planned work. The client layer uses async HTTPX operations so that
 later REPL support can share their validation and response ownership.
 
@@ -268,3 +268,17 @@ statistics. Decision input/output usage is not presented as generation speed.
 JSON chat output also stays unchanged: explicit verbose output goes to stderr,
 and reasoning styles/spinner frames are never inserted into protocol events.
 Incomplete, failed or cancelled replies have no completed-request summary.
+
+## Copy model definitions
+
+`tllama cp SOURCE DESTINATION` uses `POST /api/copy` with source/destination
+names from the model list. It copies TOML text, preserving comments and shared
+repository weight/projector references. No worker loads and no weights are
+copied or downloaded. The new definition is independent of its source.
+An existing destination returns HTTP 409; `--force` explicitly replaces it.
+Source and destination cannot name the same definition. JSON output reports
+the original success object. Definition publication is atomic, including
+concurrent creates without force. Forced changes become visible through the
+existing definition fingerprint/reload mechanism; current leases retain their
+already acquired generation. A lost response is reported without an automatic
+retry or a claim that the operation did not complete.

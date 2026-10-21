@@ -165,6 +165,13 @@ class TLlamaClient:
             raise ClientError('Server did not confirm model definition deletion.')
         return data
 
+    async def copy(self, source, destination, *, force=False):
+        data = await self._request('POST', 'api/copy', wait_for_server_work=True,
+                                   json={'source': source, 'destination': destination, 'force': force})
+        if data.get('status') != 'success':
+            raise ClientError('Server did not confirm definition copy.')
+        return data
+
     async def embed(self, model, text, *, options=None, keep_alive=None):
         payload = {'model': model, 'input': text}
         for key, value in (('options', options), ('keep_alive', keep_alive)):

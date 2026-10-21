@@ -19,6 +19,9 @@ from tllama.embedding_contract import embedding_capable
 from tllama.decision_contract import has_decision_head, decision_capable
 from tllama.native_embeddings import embedding_response
 from tllama.schemas.embeddings import OllamaEmbedRequest, OllamaLegacyEmbeddingRequest
+from tllama.schemas.model_management import CopyRequest
+from tllama.model_definitions import copy_definition
+from tllama.residency import _settle_owned
 
 router = APIRouter(
     prefix="/api",
@@ -362,3 +365,16 @@ async def delete_model_ollama(request: Request):
         # infer from a bare success that several gigabytes just went away.
         "kept_model_file": result["kept_model_file"],
     }
+
+
+@router.post('/copy')
+async def copy_model(request: CopyRequest):
+    try:
+        return await _settle_owned(asyncio.create_task(asyncio.to_thread(
+            copy_definition, model_manager, request.source, request.destination, force=request.force)))
+    except FileExistsError as exc:
+        raise HTTPException(409, 'Destination already exists; use force to replace it.') from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except (ValueError, UnicodeError) as exc:
+        raise HTTPException(400, str(exc)) from exc

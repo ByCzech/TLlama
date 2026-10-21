@@ -49,11 +49,16 @@ def build_parser() -> argparse.ArgumentParser:
         ('rm', [], 'Delete model definitions; keep their weight files.'),
         ('stop', [], 'Request unload after active inference leases drain.'),
         ('run', [], 'Run a model with a prompt, stdin, or an interactive session.'),
+        ('cp', [], 'Copy a model definition; share existing weight files.'),
     ]:
         command = commands.add_parser(name, aliases=aliases, help=help_text)
         _client_options(command)
         command.set_defaults(operation=name)
-        if name == 'run':
+        if name == 'cp':
+            command.add_argument('source')
+            command.add_argument('destination')
+            command.add_argument('--force', action='store_true', help='Replace an existing destination definition.')
+        elif name == 'run':
             from tllama.cli_run import add_run_options
             add_run_options(command)
         elif name in {'pull', 'stop'}:
@@ -94,6 +99,10 @@ async def _execute(args):
         if args.operation == 'run':
             from tllama.cli_run import run
             return await run(client, args)
+        if args.operation == 'cp':
+            data = await client.copy(args.source, args.destination, force=args.force)
+            print(json.dumps(data, ensure_ascii=False) if as_json else f'copied: {args.source} -> {args.destination}')
+            return 0
         if args.operation == 'pull':
             previous = None
             async with aclosing(client.pull(args.model)) as progress:
