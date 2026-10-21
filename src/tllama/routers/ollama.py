@@ -2,7 +2,8 @@ import asyncio
 import json
 
 from datetime import datetime, timezone
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
+from starlette.requests import ClientDisconnect
 from fastapi.responses import StreamingResponse, JSONResponse
 from tllama.schemas.ollama import OllamaChatRequest, OllamaGenerateRequest
 from tllama.backend import model_manager, HF_LOOKUP_MISSING, PullProgress
@@ -22,6 +23,7 @@ from tllama.schemas.embeddings import OllamaEmbedRequest, OllamaLegacyEmbeddingR
 from tllama.schemas.model_management import CopyRequest
 from tllama.model_definitions import copy_definition
 from tllama.residency import _settle_owned
+from tllama.model_uploads import blob_path, receive_blob
 
 router = APIRouter(
     prefix="/api",
@@ -378,3 +380,24 @@ async def copy_model(request: CopyRequest):
         raise HTTPException(404, str(exc)) from exc
     except (ValueError, UnicodeError) as exc:
         raise HTTPException(400, str(exc)) from exc
+
+
+@router.head('/blobs/{digest}')
+async def has_blob(digest: str):
+    try:
+        path = blob_path(model_manager, digest)
+        return Response(status_code=200 if path.is_file() else 404)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post('/blobs/{digest}', status_code=201)
+async def upload_blob(digest: str, request: Request):
+    media = request.headers.get('content-type', '').split(';', 1)[0].lower()
+    if media != 'application/octet-stream':
+        raise HTTPException(415, 'GGUF uploads require application/octet-stream.')
+    try:
+        await receive_blob(model_manager, digest, request)
+    except (ValueError, ClientDisconnect) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return Response(status_code=201)

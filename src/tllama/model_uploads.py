@@ -1,0 +1,70 @@
+"""Verified streaming GGUF staging; only create publishes files into Local."""
+
+import asyncio
+from hashlib import sha256
+import os
+from pathlib import Path
+import re
+import tempfile
+
+from tllama.residency import _settle_owned
+
+
+def blob_path(manager, digest):
+    if not re.fullmatch(r'sha256:[0-9a-f]{64}', digest):
+        raise ValueError('Expected sha256: followed by 64 lowercase hexadecimal characters.')
+    directory = manager.local_models_dir / '.uploads'
+    path = directory / digest[7:]
+    if path.is_symlink() or not path.resolve().is_relative_to(manager.models_dir.resolve()):
+        raise ValueError('Upload staging must stay inside the model repository.')
+    return path
+
+
+async def receive_blob(manager, digest, request):
+    target = blob_path(manager, digest)
+    length = request.headers.get('content-length')
+    if length is not None:
+        try:
+            length = int(length)
+            if length < 0:
+                raise ValueError
+        except ValueError:
+            raise ValueError('Invalid upload Content-Length.') from None
+    target.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(prefix='.upload-', dir=target.parent)
+    temporary = Path(temporary)
+    digest_state = sha256()
+    prefix = bytearray()
+    size = 0
+    try:
+        with os.fdopen(descriptor, 'wb') as output:
+            def write(chunk):
+                output.write(chunk)
+                digest_state.update(chunk)
+            async for chunk in request.stream():
+                if not chunk:
+                    continue
+                prefix.extend(chunk[:max(0, 4 - len(prefix))])
+                if len(prefix) == 4 and prefix != b'GGUF':
+                    raise ValueError('Uploads must contain GGUF files.')
+                size += len(chunk)
+                # Join a pending disk write before cancellation can close or
+                # unlink its file. Hashing and file I/O stay off the event loop.
+                await _settle_owned(asyncio.create_task(asyncio.to_thread(write, chunk)))
+            if size < 24 or length is not None and length != size:
+                raise ValueError('Incomplete GGUF upload.')
+            if digest_state.hexdigest() != digest[7:]:
+                raise ValueError('Uploaded bytes do not match the requested SHA-256.')
+            def finish():
+                output.flush()
+                os.fsync(output.fileno())
+            await _settle_owned(asyncio.create_task(asyncio.to_thread(finish)))
+        try:
+            os.link(temporary, target)
+        except FileExistsError:
+            # Another identical verified upload won publication. Never
+            # replace its inode, which may already be used by a definition.
+            if not target.is_file() or target.is_symlink():
+                raise ValueError('Invalid existing upload target.')
+    finally:
+        temporary.unlink(missing_ok=True)

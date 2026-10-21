@@ -282,3 +282,14 @@ concurrent creates without force. Forced changes become visible through the
 existing definition fingerprint/reload mechanism; current leases retain their
 already acquired generation. A lost response is reported without an automatic
 retry or a claim that the operation did not complete.
+
+Large GGUF uploads use `HEAD /api/blobs/sha256:HEX` and binary
+`POST /api/blobs/sha256:HEX` with `Content-Type: application/octet-stream`.
+POST streams bytes to a temporary file, verifies the SHA-256 and basic GGUF
+header, then publishes an immutable staging entry. Wrong hashes, incomplete
+and interrupted bodies leave no published entry or temporary file. Identical
+uploads are idempotent and never replace an existing inode. Uploading alone
+does not register a model; create will publish named GGUF files into Local and
+a definition only after its validation succeeds. Completed staging entries
+are retained for reuse if a subsequent create fails; garbage collection is
+separate work. This binary API does not accept multipart/form-data.

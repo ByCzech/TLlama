@@ -24,6 +24,30 @@ class ClientConfigError(ValueError):
     """Invalid client configuration, independent of daemon configuration."""
 
 
+class _UploadStream(httpx.AsyncByteStream):
+    """Own the producer even if sending stops between its yielded chunks."""
+
+    def __init__(self, content):
+        self.content = content if isinstance(content, bytes) else None
+        self.iterator = None if isinstance(content, bytes) else content.__aiter__()
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if self.iterator is not None:
+            return await self.iterator.__anext__()
+        if self.content is None:
+            raise StopAsyncIteration
+        chunk, self.content = self.content, None
+        return chunk
+
+    async def aclose(self):
+        close = getattr(self.iterator, 'aclose', None)
+        if close is not None:
+            await close()
+
+
 def server_url(value: str | None = None) -> str:
     raw = value if value is not None else os.environ.get('TLLAMA_HOST', '')
     raw = raw.strip() or DEFAULT_HOST
@@ -171,6 +195,39 @@ class TLlamaClient:
         if data.get('status') != 'success':
             raise ClientError('Server did not confirm definition copy.')
         return data
+
+    async def blob_exists(self, digest):
+        try:
+            response = await self._http.head('api/blobs/' + digest)
+        except httpx.HTTPError as exc:
+            raise self._transport_error(exc) from None
+        if response.status_code == 404:
+            return False
+        self._check_status(response)
+        return True
+
+    async def upload_blob(self, digest, content):
+        """Upload bytes or an async byte iterator, closing its producer on exit."""
+        stream = _UploadStream(content)
+        try:
+            request = self._http.build_request('POST', 'api/blobs/' + digest, content=content,
+                                               headers={'Content-Type': 'application/octet-stream'},
+                                               timeout=self._request_timeout(wait_for_server_work=True))
+            # Keep HTTPX header/framing preparation while owning iteration
+            # directly: its generic async-generator wrapper can otherwise
+            # remain suspended when a write fails after a chunk was yielded.
+            request.stream = stream
+            response = await self._http.send(request, stream=True)
+            try:
+                if not response.is_success:
+                    await response.aread()
+                self._check_status(response)
+            finally:
+                await response.aclose()
+        except httpx.HTTPError as exc:
+            raise self._transport_error(exc) from None
+        finally:
+            await stream.aclose()
 
     async def embed(self, model, text, *, options=None, keep_alive=None):
         payload = {'model': model, 'input': text}
