@@ -56,16 +56,21 @@ def server_url(value: str | None = None) -> str:
 
 
 class TLlamaClient:
-    def __init__(self, host: str | None = None, *, timeout: float = DEFAULT_TIMEOUT, transport=None):
+    def __init__(self, host: str | None = None, *, timeout: float | None = None, transport=None):
         self.url = server_url(host)
-        if isinstance(timeout, bool) or not math.isfinite(timeout) or timeout <= 0:
+        if timeout is not None and (isinstance(timeout, bool) or not math.isfinite(timeout) or timeout <= 0):
             raise ClientConfigError('Client timeout must be a finite number greater than zero.')
         self.timeout = timeout
         try:
             self._http = httpx.AsyncClient(base_url=self.url, transport=transport,
-                                           timeout=httpx.Timeout(timeout, connect=min(timeout, 10.0)))
+                                           timeout=self._request_timeout())
         except (httpx.InvalidURL, ImportError, ValueError, OSError) as exc:
             raise ClientConfigError(f'Cannot initialize HTTP client: {exc}') from None
+
+    def _request_timeout(self, *, wait_for_server_work=False):
+        limit = self.timeout if self.timeout is not None else DEFAULT_TIMEOUT
+        read = None if wait_for_server_work and self.timeout is None else limit
+        return httpx.Timeout(connect=min(limit, 10.0), read=read, write=limit, pool=limit)
 
     async def __aenter__(self):
         await self._http.__aenter__()
@@ -75,8 +80,16 @@ class TLlamaClient:
         return await self._http.__aexit__(*args)
 
     def _transport_error(self, exc: httpx.HTTPError) -> ClientError:
+        if isinstance(exc, httpx.ConnectTimeout):
+            return ClientError(f'Timed out establishing a connection to {self.url}; check the server address and listener.')
+        if isinstance(exc, httpx.ReadTimeout):
+            return ClientError(f'Timed out waiting for an HTTP response from {self.url}; the server may still be processing the request.')
+        if isinstance(exc, httpx.WriteTimeout):
+            return ClientError(f'Timed out sending the HTTP request to {self.url}.')
+        if isinstance(exc, httpx.PoolTimeout):
+            return ClientError(f'Timed out waiting for an available client connection to {self.url}.')
         if isinstance(exc, httpx.TimeoutException):
-            return ClientError(f'Request to {self.url} timed out; adjust --timeout if needed.')
+            return ClientError(f'HTTP request to {self.url} timed out.')
         if isinstance(exc, httpx.ConnectError):
             return ClientError(f'Cannot connect to TLlama at {self.url}; start tllamad or select --host.')
         return ClientError(f'HTTP communication with {self.url} failed: {exc}')
@@ -109,9 +122,10 @@ class TLlamaClient:
             raise ClientError(str(data['error']))
         return data
 
-    async def _request(self, method, path, **kwargs):
+    async def _request(self, method, path, *, wait_for_server_work=False, **kwargs):
         try:
-            response = await self._http.request(method, path, **kwargs)
+            response = await self._http.request(method, path, timeout=self._request_timeout(
+                wait_for_server_work=wait_for_server_work), **kwargs)
         except httpx.HTTPError as exc:
             raise self._transport_error(exc) from None
         self._check_status(response)
@@ -125,12 +139,12 @@ class TLlamaClient:
         return models
 
     async def list_models(self):
-        data = await self._request('GET', 'api/tags')
+        data = await self._request('GET', 'api/tags', wait_for_server_work=True)
         self._models(data)
         return data
 
     async def show(self, model):
-        return await self._request('POST', 'api/show', json={'model': model})
+        return await self._request('POST', 'api/show', wait_for_server_work=True, json={'model': model})
 
     async def ps(self):
         data = await self._request('GET', 'api/ps')
@@ -161,7 +175,8 @@ class TLlamaClient:
     async def pull(self, model):
         """Yield validated progress; callers must consume or close the generator."""
         try:
-            async with self._http.stream('POST', 'api/pull', json={'model': model, 'stream': True}) as response:
+            async with self._http.stream('POST', 'api/pull', json={'model': model, 'stream': True},
+                                         timeout=self._request_timeout(wait_for_server_work=True)) as response:
                 if not response.is_success:
                     await response.aread()
                     self._check_status(response)

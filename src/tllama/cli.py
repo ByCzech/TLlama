@@ -12,6 +12,8 @@ from typing import Sequence
 
 from tllama.version import get_version
 
+WAIT_NOTICE_AFTER = 2.0
+
 
 def _positive_timeout(value):
     try:
@@ -28,7 +30,7 @@ def _client_options(parser):
     parser.add_argument('--host', default=argparse.SUPPRESS,
                         help='Server HTTP(S) address (overrides TLLAMA_HOST; default 127.0.0.1:54800).')
     parser.add_argument('--timeout', type=_positive_timeout, default=argparse.SUPPRESS,
-                        help='HTTP inactivity timeout in seconds (default 30; connect at most 10).')
+                        help='HTTP inactivity limit in seconds (default: no read limit for list/show/pull, otherwise 30; connect at most 10).')
     parser.add_argument('--json', action='store_true', default=argparse.SUPPRESS,
                         help='Print the full server response as JSON.')
 
@@ -63,12 +65,28 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+async def _wait_for_model_info(awaitable, *, notice):
+    if not notice:
+        return await awaitable
+    task = asyncio.create_task(awaitable)
+    try:
+        await asyncio.wait({task}, timeout=WAIT_NOTICE_AFTER)
+        if not task.done():
+            print('Waiting for TLlama to return model information; metadata indexing may take time. Ctrl+C cancels.',
+                  file=sys.stderr, flush=True)
+        return await task
+    finally:
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
 async def _execute(args):
     from tllama.client import ClientError, TLlamaClient
     from tllama.cli_output import models_text, processes_text, show_text
 
     as_json = getattr(args, 'json', False)
-    async with TLlamaClient(getattr(args, 'host', None), timeout=getattr(args, 'timeout', 30.0)) as client:
+    async with TLlamaClient(getattr(args, 'host', None), timeout=getattr(args, 'timeout', None)) as client:
         if args.operation == 'pull':
             previous = None
             async with aclosing(client.pull(args.model)) as progress:
@@ -107,13 +125,13 @@ async def _execute(args):
             data = await client.stop(args.model)
             text = f'unload requested: {args.model}'
         elif args.operation == 'list':
-            data = await client.list_models()
+            data = await _wait_for_model_info(client.list_models(), notice=not as_json)
             text = '' if as_json else models_text(data)
         elif args.operation == 'ps':
             data = await client.ps()
             text = '' if as_json else processes_text(data)
         elif args.operation == 'show':
-            data = await client.show(args.model)
+            data = await _wait_for_model_info(client.show(args.model), notice=not as_json)
             text = '' if as_json else show_text(args.model, data, args.field)
         else:
             data = {'client_version': get_version(), 'server_version': await client.version()}

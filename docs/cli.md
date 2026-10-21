@@ -59,13 +59,18 @@ the HTTP(S) scheme; the daemon's legacy environment parser does not enable TLS.
 Credentials, query strings and fragments in the address are refused.
 
 `--host`, `--timeout` and `--json` work before or after the subcommand.
-`--timeout SECONDS` is a positive finite HTTP inactivity timeout (default 30 s);
-connection setup is capped at 10 s. Proxy and CA environment settings follow
+Without `--timeout`, list/show/pull have no response-read deadline: rebuilding
+metadata or waiting for a server-side download lookup may take longer than a
+fixed limit. Other commands retain a 30-second HTTP inactivity timeout.
+Connection setup remains capped at 10 seconds, including for list/show/pull.
+`--timeout SECONDS` sets a positive finite inactivity limit explicitly, including
+response reads; shorter values also lower the connection deadline. This is not
+an overall command duration limit. Proxy and CA environment settings follow
 HTTPX; an optional proxy dependency must be installed if that proxy needs it.
 There is no automatic retry, server startup or model download. A connection
 failure tells the user which server to start or select.
 
-Human output goes to stdout; failures go to stderr. Exit status is 0 for
+Command results go to stdout; diagnostics and human progress go to stderr. Exit status is 0 for
 success/help, 1 for server/connection/protocol failures, 2 for usage/client
 configuration errors and 130 for interruption. `--version` is entirely local;
 the `version` command contacts the server and fails if it cannot be reached.
@@ -76,6 +81,25 @@ newline. `show --modelfile` returns TOML, not an Ollama Modelfile conversion.
 `ps` derives processor placement from the server's compatibility size fields;
 unknown values remain unknown. These fields are not a measurement of physical
 RAM/VRAM residency. Detailed memory/provenance remains available with `ps --json`.
+
+## Cold metadata and waiting
+
+For a human-readable list/show request taking more than two seconds, the client
+prints a single waiting notice to stderr, then keeps waiting. JSON output has no
+waiting notice. Ctrl+C cancels and drains the client's pending HTTP request.
+Connect, response-read, request-write and connection-pool timeouts have distinct
+messages. A response timeout does not establish that the server has stopped.
+
+The daemon logs start/completion of actual GGUF metadata reads and model SHA-256
+computation, including elapsed time. Cache hits do not produce those messages.
+The first listing can trigger this work; startup does not eagerly index models.
+
+Patch 0083 raised the metadata-cache revision from 7 to 8 because the extracted
+payload now includes general.license, general.license.name and general.license.link.
+The JSON envelope layout did not change, but old payloads do not contain those
+fields and must be refreshed. Digest-cache revision remains 1; this metadata
+refresh alone does not cause a full reread of weight contents for hashing.
+Existing valid persistent caches survive a daemon restart.
 
 ## Pull, remove and unload
 

@@ -552,10 +552,11 @@ class ModelManager:
         return digest.hexdigest()
 
     def _build_model_digest_sync(self, model_path: str | Path) -> Dict[str, Any]:
-        return {
-            "content_sha256": self._compute_content_sha256(model_path),
-            "source": "local",
-        }
+        started = time.monotonic()
+        logger.info("Computing model SHA-256: %s", model_path)
+        digest = self._compute_content_sha256(model_path)
+        logger.info("Model SHA-256 ready: %s (%.2f s)", model_path, time.monotonic() - started)
+        return {"content_sha256": digest, "source": "local"}
 
     async def get_model_digest(self, model_path: str | Path) -> Optional[Dict[str, Any]]:
         """
@@ -604,8 +605,12 @@ class ModelManager:
         return digest
 
     def _get_model_metadata_sync(self, model_path: str) -> Optional[Dict[str, Any]]:
+        started = time.monotonic()
+        logger.info("Reading GGUF metadata: %s", model_path)
         meta = read_gguf_metadata(model_path)
-        return build_model_metadata_payload(meta)
+        metadata = build_model_metadata_payload(meta)
+        logger.info("GGUF metadata ready: %s (%.2f s)", model_path, time.monotonic() - started)
+        return metadata
 
     async def get_model_metadata(
         self,
