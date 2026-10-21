@@ -17,6 +17,21 @@ The default port is:
 
 ---
 
+## Native TLlama client
+
+Start `tllamad` on the server host, then use:
+
+```sh
+tllama list
+tllama run MODEL
+tllama run MODEL "Explain GGUF."
+tllama --host http://server:54800 ps
+```
+
+The client/server command split, REPL controls, verbose output, model copy and
+TOML imports are documented in [cli.md](cli.md). Server configuration and
+systemd setup are in [daemon.md](daemon.md) and [systemd.md](systemd.md).
+
 ## Using TLlama with the Ollama CLI
 
 The official Ollama CLI can be pointed to TLlama with `OLLAMA_HOST`.
@@ -348,7 +363,10 @@ API Key:      tllama
 Model:        <TLlama model name>
 ```
 
-Tool-call support may be required by some agentic IDE workflows. Because automatic tool calls are currently limited by upstream `llama-cpp-python` behavior, some advanced agent workflows may not work correctly yet.
+Agentic IDE workflows may require function tools. TLlama maps modern tools and
+results through the native runtime on both chat APIs. The client executes the
+functions; model/template/parser support determines the calls produced. See
+[native-tools.md](native-tools.md) for streaming/history limitations.
 
 Basic chat/completion workflows should be the first thing to test.
 
@@ -389,17 +407,12 @@ Local:
 
 Some clients and IDE agents rely heavily on tool calls.
 
-Current TLlama behavior:
-
-```text
-Basic chat/generation: supported
-Forced tool calls: may work depending on backend/model
-Automatic tool calls: currently limited by upstream llama-cpp-python behavior
-Ollama API tool calls: planned
-OpenAI API tool calls: planned
-```
-
-For now, prefer simple chat/completion clients or IDE workflows that do not require automatic tool calls.
+Modern function tools are supported by `/api/chat` and `/v1/chat/completions`.
+OpenAI streams provide argument-string deltas; Ollama emits complete validated
+argument objects after successful native completion. The client must execute
+functions and return their results; neither the daemon nor the REPL executes
+model-selected tools. Verify model/template support for an IDE's exact history
+and tool schema. See [native-tools.md](native-tools.md).
 
 ---
 

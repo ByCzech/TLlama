@@ -1,4 +1,4 @@
-# Native configuration checkpoint (block 03)
+# Native configuration
 
 Runtime fingerprint: **b11552-ec2797836f**. The native configuration modules do
 not import llama-cpp-python. Their vocabulary is TLlama-owned and pinned to the
@@ -18,7 +18,7 @@ process. Missing device selection defers backend selection until worker startup.
 
 | Setting | Native migration policy |
 |---|---|
-| `device` | TOML `[runtime].device` > `TLLAMA_RUNTIME_DEVICE` > automatic backend priority |
+| `device` | Model TOML `[runtime].device` > global daemon configuration > automatic backend priority |
 | Context | Request `num_ctx` > TOML `n_ctx` > global context; global default 0 = trained maximum |
 | GPU layers | Explicit placement retains default `all`; automatic placement fits unset GPU layer count natively; explicit counts retained on GPU attempts |
 | CPU | `device=none` forces layers 0, operation/KV/projector offload disabled; explicit contradictory offload rejected |
@@ -31,10 +31,12 @@ process. Missing device selection defers backend selection until worker startup.
 | Sampling | Request > TOML > global explicitly configured values > GGUF recommendations supplied by caller > TLlama baseline |
 | Sampler chain | Native chain; no promise of identical floating-point/token results to the binding |
 
-Native device selectors (`none`, `Vulkan0`, `ROCm0`, `CUDA0`, comma-separated
-device names) are not persistent physical IDs. Backend visibility overrides
-remain per-child environment values. Device inventory, stable IDs and automatic
-placement are later work, not an implicit fallback in this resolver.
+Global daemon defaults resolve CLI > environment > server TOML > defaults;
+see [daemon.md](daemon.md). Native device selectors (`none`, `Vulkan0`, `ROCm0`,
+`CUDA0`, comma-separated device names) are not persistent physical IDs. Backend
+visibility overrides remain per-child environment values. Automatic placement
+and discovery follow [backend-priority.md](backend-priority.md) and
+[device-inventory.md](device-inventory.md), rather than a guessed physical ID.
 
 Within one KV layer, `type_k`/`type_v` override `type_kv`. A TOML shorthand overrides
 both global sides; a TOML side overrides only that side. Allowed names/enums:
@@ -101,8 +103,9 @@ to the native runtime (including its current one-token behavior); public -2 is t
 context shifting disabled. See [ollama-options.md](ollama-options.md) for all
 20 client parameters, request runner overrides and reload behavior.
 Empty messages/prompts remain ModelManager preload/unload policy, not sampler work.
-Format, thinking/template kwargs and public response mapping belong to their next
-integration milestones. Merely storing system_prompt does not insert it twice.
+Format, thinking/template kwargs and public response mapping follow the public
+adapter contract in [native-public-api.md](native-public-api.md). Model system
+prompts are inserted only when the request does not provide its own.
 
 | Removed/rejected setting | Reason or replacement |
 |---|---|

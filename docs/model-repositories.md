@@ -151,13 +151,20 @@ Copy a GGUF file into the `Local` directory:
 sudo cp ./model.gguf /var/lib/tllama/models/Local/my-local-model.gguf
 ```
 
-Then list models:
+Register the missing definition, then list models:
 
 ```bash
+tllamad rebuildrepo --dryrun
+tllamad rebuildrepo
 OLLAMA_HOST=127.0.0.1:54800 ollama list
 ```
 
-If metadata cache does not exist yet, TLlama creates it lazily when the model is listed or shown.
+A bare GGUF is not listed until a TOML definition points at it. Use the same
+server configuration/model store for `rebuildrepo` and the running daemon;
+global daemon flags precede the maintenance subcommand. Alternatively,
+`tllama create MODEL -f FILE` uploads client-side `from` files and writes the
+definition through HTTP; see [CLI create/import](cli.md#create-and-import-models).
+If metadata cache does not exist yet, listing/show creates it lazily.
 
 ---
 
