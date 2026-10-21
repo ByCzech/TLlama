@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import aclosing
 from ipaddress import IPv6Address
 import json
 import math
@@ -180,22 +181,25 @@ class TLlamaClient:
                 if not response.is_success:
                     await response.aread()
                     self._check_status(response)
-                async for line in response.aiter_lines():
-                    if not line.strip():
-                        continue
-                    try:
-                        event = json.loads(line)
-                    except ValueError:
-                        raise ClientError('Pull returned invalid NDJSON.') from None
-                    if not isinstance(event, dict):
-                        raise ClientError('Pull progress must be a JSON object.')
-                    if event.get('error'):
-                        raise ClientError(str(event['error']))
-                    if not isinstance(event.get('status'), str) or not event['status']:
-                        raise ClientError('Pull progress is missing its status.')
-                    yield event
-                    if event['status'] == 'success':
-                        return
+                # Close our iterator before the response, even when a terminal
+                # event returns early or the caller closes the pull generator.
+                async with aclosing(response.aiter_lines()) as lines:
+                    async for line in lines:
+                        if not line.strip():
+                            continue
+                        try:
+                            event = json.loads(line)
+                        except ValueError:
+                            raise ClientError('Pull returned invalid NDJSON.') from None
+                        if not isinstance(event, dict):
+                            raise ClientError('Pull progress must be a JSON object.')
+                        if event.get('error'):
+                            raise ClientError(str(event['error']))
+                        if not isinstance(event.get('status'), str) or not event['status']:
+                            raise ClientError('Pull progress is missing its status.')
+                        yield event
+                        if event['status'] == 'success':
+                            return
                 raise ClientError('Pull stream ended without confirming success.')
         except httpx.HTTPError as exc:
             raise self._transport_error(exc) from None
