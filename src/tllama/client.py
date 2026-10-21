@@ -165,6 +165,23 @@ class TLlamaClient:
             raise ClientError('Server did not confirm model definition deletion.')
         return data
 
+    async def embed(self, model, text, *, options=None, keep_alive=None):
+        payload = {'model': model, 'input': text}
+        for key, value in (('options', options), ('keep_alive', keep_alive)):
+            if value is not None:
+                payload[key] = value
+        data = await self._request('POST', 'api/embed', wait_for_server_work=True, json=payload)
+        if not isinstance(data.get('embeddings'), list):
+            raise ClientError('Embedding response is missing its embeddings array.')
+        return data
+
+    async def decision(self, model, state, questions):
+        data = await self._request('POST', 'v1/systemone', wait_for_server_work=True,
+                                   json={'model': model, 'state': state, 'questions': questions})
+        if not isinstance(data.get('answers'), dict):
+            raise ClientError('Decision response is missing its answers object.')
+        return data
+
     async def stop(self, model):
         # Empty generate unloads before model-mode admission, including
         # embedding and Decision definitions. It must never load a worker.

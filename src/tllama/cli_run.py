@@ -1,0 +1,160 @@
+"""Model-mode dispatch and conversation ownership, independent of terminal UI."""
+
+from contextlib import aclosing
+from dataclasses import dataclass, field
+import argparse
+import json
+import math
+import sys
+
+from tllama.client import ClientError
+
+
+def load_json(text):
+    def finite(value):
+        raise ValueError('JSON numbers must be finite')
+    def unique(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f'Duplicate JSON key: {key}')
+            result[key] = value
+        return result
+    def number(value):
+        result = float(value)
+        if not math.isfinite(result):
+            raise ValueError('JSON numbers must be finite')
+        return result
+    return json.loads(text, parse_constant=finite, parse_float=number, object_pairs_hook=unique)
+
+
+def option(text):
+    name, sep, value = text.partition('=')
+    if not sep or not name.strip():
+        raise argparse.ArgumentTypeError('use NAME=JSON, e.g. temperature=0.7')
+    try:
+        return name, load_json(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from None
+
+
+def response_format(text):
+    if text == 'json':
+        return text
+    try:
+        value = load_json(text)
+        if isinstance(value, dict):
+            return value
+    except ValueError:
+        pass
+    raise argparse.ArgumentTypeError('format must be json or a JSON schema object')
+
+
+def think_value(text):
+    return {'true': True, 'false': False}.get(text.lower(), text)
+
+
+def add_run_options(parser):
+    parser.add_argument('model')
+    parser.add_argument('prompt', nargs='*', help='Prompt text (stdin is prepended when piped).')
+    parser.add_argument('--system', help='Session system prompt; does not change the model definition.')
+    parser.add_argument('--option', action='append', type=option, default=[], metavar='NAME=JSON')
+    parser.add_argument('--think', type=think_value, help='true, false, or a server-supported reasoning level.')
+    parser.add_argument('--format', type=response_format, help='json or a JSON schema object.')
+    parser.add_argument('--keep-alive', help='Server model residence duration, e.g. 5m or 0.')
+    parser.add_argument('--hide-thinking', action='store_true', help='Hide reasoning text; does not disable thinking.')
+
+
+@dataclass
+class RunSession:
+    model: str
+    mode: str
+    controls: dict = field(default_factory=dict)
+    system: str | None = None
+    messages: list = field(default_factory=list)
+    as_json: bool = False
+    hide_thinking: bool = False
+
+    @classmethod
+    async def create(cls, client, args):
+        from tllama.cli import _wait_for_model_info
+        info = await _wait_for_model_info(client.show(args.model), notice=not getattr(args, 'json', False))
+        capabilities = info.get('capabilities')
+        if not isinstance(capabilities, list):
+            raise ClientError('Model information is missing its capabilities array.')
+        modes = set(capabilities) & {'completion', 'embedding', 'decision'}
+        if len(modes) != 1:
+            raise ClientError('Model must advertise exactly one supported mode: completion, embedding, or decision.')
+        controls = {key: value for key, value in (
+            ('options', dict(args.option) or None), ('think', args.think),
+            ('format', args.format), ('keep_alive', args.keep_alive)) if value is not None}
+        mode = modes.pop()
+        if mode != 'completion' and (args.system is not None or args.hide_thinking
+                                      or set(controls) & {'think', 'format'}):
+            raise ClientError('System, thinking and format controls require a completion model.')
+        if mode == 'decision' and controls:
+            raise ClientError('Decision models do not accept generation or residence controls.')
+        return cls(args.model, mode, controls, args.system, as_json=getattr(args, 'json', False),
+                   hide_thinking=args.hide_thinking)
+
+    async def submit(self, client, text):
+        if self.mode == 'embedding':
+            data = await client.embed(self.model, text, **self.controls)
+            print(json.dumps(data, ensure_ascii=False), flush=True)
+            return
+        if self.mode == 'decision':
+            try:
+                payload = load_json(text)
+            except ValueError as exc:
+                raise ClientError(f'Decision input must be JSON: {exc}') from None
+            if not isinstance(payload, dict) or set(payload) != {'state', 'questions'}:
+                raise ClientError('Decision input must be an object with exactly state and questions.')
+            data = await client.decision(self.model, payload['state'], payload['questions'])
+            print(json.dumps(data, ensure_ascii=False), flush=True)
+            return
+        request = ([{'role': 'system', 'content': self.system}] if self.system is not None else [])
+        request += self.messages + [{'role': 'user', 'content': text}]
+        reply = {'role': 'assistant', 'content': ''}
+        printed = False
+        reasoning = False
+        try:
+            async with aclosing(client.chat(self.model, request, **self.controls)) as stream:
+                async for data in stream:
+                    message = data['message']
+                    for key in ('content', 'thinking'):
+                        if key in message:
+                            reply[key] = reply.get(key, '') + message[key]
+                    if message.get('tool_calls'):
+                        reply.setdefault('tool_calls', []).extend(message['tool_calls'])
+                    if self.as_json:
+                        print(json.dumps(data, ensure_ascii=False), flush=True)
+                    else:
+                        if message.get('thinking') and not self.hide_thinking:
+                            print(message['thinking'], end='', file=sys.stderr, flush=True)
+                            reasoning = True
+                        if message.get('content'):
+                            print(message['content'], end='', flush=True)
+                            printed = True
+                        if message.get('tool_calls'):
+                            print('Tool calls: ' + json.dumps(message['tool_calls'], ensure_ascii=False),
+                                  file=sys.stderr, flush=True)
+        finally:
+            if printed:
+                print(flush=True)
+            if reasoning:
+                print(file=sys.stderr, flush=True)
+        # Commit only a completed turn. Failed/cancelled replies must not
+        # silently become context for the next interactive request.
+        self.messages.extend([{'role': 'user', 'content': text}, reply])
+
+
+async def run(client, args):
+    text = ' '.join(args.prompt) if args.prompt else None
+    if not sys.stdin.isatty():
+        piped = sys.stdin.read()
+        text = piped + ('\n\n' + text if text is not None else '')
+    if text is None:
+        raise ClientError('Interactive run support is not installed yet; supply a prompt or stdin.')
+    session = await RunSession.create(client, args)
+    await session.submit(client, text)
+    return 0

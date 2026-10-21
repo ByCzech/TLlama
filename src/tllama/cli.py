@@ -48,11 +48,15 @@ def build_parser() -> argparse.ArgumentParser:
         ('pull', [], 'Download a Hugging Face model through the server.'),
         ('rm', [], 'Delete model definitions; keep their weight files.'),
         ('stop', [], 'Request unload after active inference leases drain.'),
+        ('run', [], 'Run a model with a prompt, stdin, or an interactive session.'),
     ]:
         command = commands.add_parser(name, aliases=aliases, help=help_text)
         _client_options(command)
         command.set_defaults(operation=name)
-        if name in {'pull', 'stop'}:
+        if name == 'run':
+            from tllama.cli_run import add_run_options
+            add_run_options(command)
+        elif name in {'pull', 'stop'}:
             command.add_argument('model')
         elif name == 'rm':
             command.add_argument('models', nargs='+')
@@ -87,6 +91,9 @@ async def _execute(args):
 
     as_json = getattr(args, 'json', False)
     async with TLlamaClient(getattr(args, 'host', None), timeout=getattr(args, 'timeout', None)) as client:
+        if args.operation == 'run':
+            from tllama.cli_run import run
+            return await run(client, args)
         if args.operation == 'pull':
             previous = None
             async with aclosing(client.pull(args.model)) as progress:

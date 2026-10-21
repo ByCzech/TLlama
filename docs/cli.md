@@ -133,7 +133,7 @@ Success means the unload was requested; active leases drain according to the
 existing lifecycle before the worker exits. It does not forcibly interrupt
 other clients' inference. `stop --json` returns the unload response.
 
-`run`, REPL, create/copy, server TOML/daemon switches and systemd packaging remain
+REPL, create/copy, server TOML/daemon switches and systemd packaging remain
 subsequent planned work. The client layer uses async HTTPX operations so that
 later REPL support can share their validation and response ownership.
 
@@ -148,4 +148,37 @@ requires a boolean `done: true` event; EOF alone is an error. The shared HTTP
 reader closes before returning on completion, errors and cancellation. Chat
 reads have no default inactivity deadline during model loading or generation;
 an explicit client timeout still applies, and connection setup stays bounded.
-This is the transport foundation for run/REPL; it adds no new CLI command yet.
+This is the transport shared by run and the planned REPL.
+
+## Run a model
+
+```sh
+tllama run MODEL 'Explain this code.'
+cat source.py | tllama run MODEL 'Review the code above.'
+tllama run MODEL 'Return JSON.' --format json --option temperature=0
+cat decision.json | tllama run DECISION_MODEL
+```
+
+`run` checks `/api/show` capabilities first. Completion models use streamed
+`/api/chat`; embedding models use `/api/embed` and print a JSON result. Decision
+models use `/v1/systemone`: input must be a JSON object with exactly `state` and
+`questions`, and the result is JSON. The model name comes from the command.
+No model is automatically downloaded. Server/model defaults remain in effect
+unless a control is supplied.
+
+Prompt arguments are joined with spaces. When stdin is redirected, all of its
+text is read as one input and prepended to an argument prompt with two newlines.
+Whitespace and slash-prefixed text are otherwise preserved. An explicit empty
+prompt is still a request; stdin EOF does not open an interactive terminal.
+
+`--option NAME=JSON` can be repeated (last value for a name wins). `--system`
+sets a session system message, `--think` accepts true/false or a supported level,
+`--format` accepts json or a JSON schema object, and `--keep-alive` selects a
+server residence duration. The server validates parameter names and supported
+values. Inappropriate controls for embedding/Decision modes fail explicitly.
+`--hide-thinking` affects display only: reasoning normally goes to stderr,
+answer text to stdout. Tool calls are reported on stderr, never executed.
+`--json` emits original chat events as NDJSON, including reasoning and stats;
+embedding/Decision output is already JSON. Errors may follow partial streamed
+output and make the exit status nonzero; requests are never automatically retried.
+Ctrl+C closes the request and exits with status 130 in one-shot mode.
