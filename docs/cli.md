@@ -17,9 +17,9 @@ tllamad --version               # installed daemon version; no server startup
 
 Existing environments need their console scripts regenerated after this change
 (for example, reinstall the package or its editable installation). A source
-checkout can use the module commands immediately. The server TOML and additional
-daemon switches remain a separate planned block; the existing server
-configuration via environment variables is unchanged here.
+checkout can use the module commands immediately. The daemon accepts server TOML
+and CLI settings with `CLI > environment > TOML > defaults`; see
+[daemon configuration](daemon.md) for all options and inspection commands.
 
 ## Local repository maintenance
 
@@ -133,9 +133,8 @@ Success means the unload was requested; active leases drain according to the
 existing lifecycle before the worker exits. It does not forcibly interrupt
 other clients' inference. `stop --json` returns the unload response.
 
-Server TOML/daemon switches and systemd packaging remain
-subsequent planned work. The client layer uses async HTTPX operations so that
-later REPL support can share their validation and response ownership.
+The client layer uses async HTTPX operations shared with the REPL. Server
+configuration is covered in [daemon configuration](daemon.md).
 
 The Python client layer now provides `TLlamaClient.chat(model, messages, ...)`
 as an async iterator over original `/api/chat` events. It preserves content,

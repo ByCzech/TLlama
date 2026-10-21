@@ -26,8 +26,8 @@ def server_logging(monkeypatch):
     def start(debug=False):
         # Reproduce CLI logging setup before start_server reads TLLAMA_DEBUG.
         root.setLevel(logging.INFO)
-        monkeypatch.setattr(main, 'load_app_config_from_env', lambda: SimpleNamespace(
-            debug=debug, host='127.0.0.1', port=11434, reload=False))
+        monkeypatch.setattr(main, 'current_daemon_config', lambda: SimpleNamespace(app=SimpleNamespace(
+            debug=debug, log_level='debug' if debug else 'info', host='127.0.0.1', port=11434, reload=False)))
         main.start_server()
         return launches[-1]
 

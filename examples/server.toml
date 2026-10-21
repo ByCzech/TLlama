@@ -1,0 +1,33 @@
+# Server-wide defaults. Relative paths use the daemon's CWD.
+# Start: tllamad --config examples/server.toml
+[server]
+host = "127.0.0.1"
+port = 54800
+log_level = "info"
+
+[storage]
+models_dir = "/var/lib/tllama/models"
+
+[engine]
+executable = "/usr/lib/tllama/server/tllama-server"
+version_policy = "warn"
+backend_priority = ["CUDA", "ROCm", "SYCL", "Vulkan"]
+
+[lifecycle]
+keep_alive = "5m"
+max_loaded_models = 1
+janitor_interval = 10
+
+[cache]
+metadata_ttl = 300
+
+[runtime]
+n_ctx = 0
+# device = "Vulkan0" # Global default; individual model TOML can override it.
+# flash_attn = true
+# type_kv = "q8_0"
+# n_threads = 8
+
+[telemetry]
+memory_source = "auto"
+memory_compare = false

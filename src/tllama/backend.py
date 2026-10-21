@@ -1936,5 +1936,7 @@ class ModelManager:
             shutil.rmtree(cache_dir, ignore_errors=True)
 
 
-model_manager = ModelManager(load_backend_config_from_env())
+from tllama.daemon_config import current_daemon_config
+
+model_manager = ModelManager(current_daemon_config().backend)
 

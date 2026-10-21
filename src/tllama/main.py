@@ -1,3 +1,8 @@
+# Parse daemon arguments before importing the ASGI application or ModelManager.
+if __name__ == '__main__':
+    from tllama.daemon import main as daemon_main
+    raise SystemExit(daemon_main())
+
 import logging
 
 import uvicorn
@@ -10,7 +15,7 @@ from starlette.middleware.cors import CORSMiddleware
 
 from .routers import openai, ollama
 from tllama.backend import model_manager
-from tllama.config import load_app_config_from_env, resolve_cors_origins
+from tllama.daemon_config import current_daemon_config
 from tllama.helpers.cors import split_origin_patterns
 from tllama.middleware import UndeclaredJsonBodyMiddleware
 from tllama.errors import (
@@ -65,7 +70,7 @@ app.add_middleware(UndeclaredJsonBodyMiddleware)
 # list does not reach a browser that already has one, and half a day of
 # that during setup costs more than one extra request per ten minutes ever
 # will.
-_cors_origins = resolve_cors_origins()
+_cors_origins = current_daemon_config().cors_origins
 _cors_exact, _cors_regex = split_origin_patterns(_cors_origins)
 
 app.add_middleware(
@@ -129,20 +134,31 @@ async def health_check():
     return {"status": "ok"}
 
 
-def start_server():
-    config = load_app_config_from_env()
-
+def configure_logging(config):
+    level = config.log_level
+    python_level = logging.DEBUG if level == 'trace' else getattr(logging, level.upper())
     # Only the entry point configures logging. Importing the package must not
     # touch the root logger, because an embedder owns that decision.
     logging.basicConfig(
-        level=logging.DEBUG if config.debug else logging.INFO,
+        level=python_level,
         format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
     )
 
     # The CLI may have already installed handlers at INFO before loading config.
-    logging.getLogger().setLevel(logging.DEBUG if config.debug else logging.INFO)
+    logging.getLogger().setLevel(python_level)
     for name in ("httpx", "httpx2", "httpcore", "httpcore2"):
-        logging.getLogger(name).setLevel(logging.DEBUG if config.debug else logging.WARNING)
+        logging.getLogger(name).setLevel(logging.DEBUG if config.debug else max(python_level, logging.WARNING))
+
+
+def create_app():
+    # Uvicorn calls this factory again in reload children; imports stay passive.
+    configure_logging(current_daemon_config().app)
+    return app
+
+
+def start_server():
+    config = current_daemon_config().app
+    configure_logging(config)
 
     # Said out loud because a browser reports a rejected origin as a bare
     # network failure, with nothing on the server side to look at. The list
@@ -154,15 +170,14 @@ def start_server():
     kwargs = {
         "host": config.host,
         "port": config.port,
+        "factory": True,
+        "log_level": config.log_level,
     }
 
     if config.reload:
         kwargs["reload"] = True
 
-    if config.debug:
-        kwargs["log_level"] = "debug"
-
-    uvicorn.run("tllama.main:app", **kwargs)
+    uvicorn.run("tllama.main:create_app", **kwargs)
 
     return
 
@@ -171,7 +186,3 @@ def main(argv=None) -> int:
     """Retain `python -m tllama.main` as an explicit server spelling."""
     from tllama.daemon import main as daemon_main
     return daemon_main(argv)
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

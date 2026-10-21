@@ -13,7 +13,7 @@ DEFAULT_MODELS_DIR = "/var/lib/tllama/models"
 
 
 class ConfigError(ValueError):
-    """An environment variable holds something that cannot be used.
+    """A daemon configuration source holds something that cannot be used.
 
     Every one of these used to be swallowed: a value that failed to parse
     returned the default and the server came up as if nothing had been
@@ -313,7 +313,7 @@ BUILTIN_CORS_ORIGINS: tuple[str, ...] = (
 _ORIGIN_RE = re.compile(r"[A-Za-z][A-Za-z0-9+.\-]*://[^/?#]+\Z")
 
 
-def resolve_cors_origins() -> tuple[str, ...]:
+def resolve_cors_origins(value: str | None = None) -> tuple[str, ...]:
     """The origins a browser may reach TLlama from.
 
     TLLAMA_ORIGINS adds to the built-in list rather than replacing it, so
@@ -327,7 +327,7 @@ def resolve_cors_origins() -> tuple[str, ...]:
     """
     configured = []
 
-    for entry in _env_str("TLLAMA_ORIGINS", "").split(","):
+    for entry in (value if value is not None else _env_str("TLLAMA_ORIGINS", "")).split(","):
         entry = entry.strip()
         if not entry:
             # 'a,,b' and a trailing comma are formatting, not a mistake
@@ -397,15 +397,16 @@ class BackendConfig:
     max_loaded_models: int = 1
     janitor_interval_seconds: float = 10.0
     metadata_cache_ttl_seconds: float = 300.0
-    # Runtime values stay strings here; native_params defines their types.
+    # Legacy environment callers retain strings; daemon TOML/CLI values are typed.
     # A model's [runtime] overrides these globals.
-    runtime_overrides: Mapping[str, str] = field(default_factory=dict)
+    runtime_overrides: Mapping[str, object] = field(default_factory=dict)
 
-    # Sampling values set server-wide, still as strings. Empty by default
+    # Sampling values set server-wide; legacy environment callers keep strings.
+    # Empty by default
     # and deliberately so: a global sampling value overrules what a model
     # recommends, for every model at once, so it has to be something a
     # person asked for rather than a number TLlama shipped.
-    sampling_overrides: Mapping[str, str] = field(default_factory=dict)
+    sampling_overrides: Mapping[str, object] = field(default_factory=dict)
 
     # kv_cache_type sets both sides; k_cache_type/v_cache_type override it
     # for one side each, mirroring type_kv/type_k/type_v in a .toml
@@ -441,6 +442,7 @@ class AppConfig:
     port: int = 54800
     reload: bool = False
     debug: bool = False
+    log_level: str = "info"
 
 
 def load_backend_config_from_env() -> BackendConfig:

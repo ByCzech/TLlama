@@ -177,8 +177,9 @@ def coerce_runtime_overrides(raw: Mapping[str, str]) -> Dict[str, Any]:
                 f"{variable}: {runtime_problem(name, value)}."
             )
 
-        coerced[name] = _coerce(variable, annotation, value,
-                                unsupported_hint=" Set it in a model's .toml [runtime] instead.")
+        coerced[name] = (_coerce(variable, annotation, value,
+                                 unsupported_hint=" Set it in a model's .toml [runtime] instead.")
+                         if isinstance(value, str) else value)
         problem = runtime_problem(name, coerced[name])
         if problem:
             raise ConfigError(f"{variable}: {problem}.")

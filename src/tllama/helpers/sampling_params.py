@@ -34,7 +34,8 @@ def coerce_sampling_overrides(raw: Mapping[str, str]) -> Dict[str, Any]:
             if name == "stream":
                 raise ConfigError(f"{variable}: TLlama does not apply stream as a sampling setting.")
             raise ConfigError(f"{variable}: {sampling_problem(name, value)}.")
-        result[name] = coerce_from_annotation(variable, annotation, value, unsupported_hint=_TOML_HINT)
+        result[name] = (coerce_from_annotation(variable, annotation, value, unsupported_hint=_TOML_HINT)
+                        if isinstance(value, str) else value)
         problem = sampling_problem(name, result[name])
         if problem:
             raise ConfigError(f"{variable}: {problem}.")
