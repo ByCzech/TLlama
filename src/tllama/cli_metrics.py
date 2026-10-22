@@ -1,6 +1,7 @@
 """Display measured client/server timings without inventing missing statistics."""
 
 import math
+from tllama.cli_locale import number_text
 
 
 def _seconds(value):
@@ -18,35 +19,35 @@ def _count(value):
 
 
 def statistics(data, *, elapsed, first_text=None):
-    rows = [('Client total', f'{elapsed:.3f} s')]
+    rows = [('Client total', f'{number_text(elapsed, 3)} s')]
     if first_text is not None:
-        rows.append(('First text', f'{first_text:.3f} s'))
+        rows.append(('First text', f'{number_text(first_text, 3)} s'))
     for key, label in (('total_duration', 'Server total'), ('load_duration', 'Server preparation')):
         duration = _seconds(data.get(key))
         if duration is not None:
-            rows.append((label, f'{duration:.3f} s'))
+            rows.append((label, f'{number_text(duration, 3)} s'))
     for key, label in (('prompt_eval_count', 'Prompt evaluated'),
                        ('prompt_eval_cached_count', 'Prompt cached'), ('eval_count', 'Generated')):
         count = _count(data.get(key))
         if count is not None:
-            rows.append((label, f'{count} tokens'))
+            rows.append((label, f'{number_text(count)} tokens'))
     usage = data.get('usage')
     if isinstance(usage, dict):
         for key, label in (('input_tokens', 'Input'), ('output_tokens', 'Output')):
             count = _count(usage.get(key))
             if count is not None:
-                rows.append((label, f'{count} tokens'))
+                rows.append((label, f'{number_text(count)} tokens'))
     for key, count_key, label in (('prompt_eval_duration', 'prompt_eval_count', 'Prompt evaluation'),
                                   ('eval_duration', 'eval_count', 'Generation')):
         duration = _seconds(data.get(key))
         if duration is not None:
-            text = f'{duration:.3f} s'
+            text = f'{number_text(duration, 3)} s'
             count = _count(data.get(count_key))
             if duration > 0 and count is not None:
                 try:
                     rate = count / duration
                     if math.isfinite(rate):
-                        text += f' ({rate:.2f} tok/s)'
+                        text += f' ({number_text(rate, 2)} tok/s)'
                 except OverflowError:
                     pass
             rows.append((label, text))

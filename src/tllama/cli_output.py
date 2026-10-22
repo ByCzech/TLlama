@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 
 from tllama.client import ClientError
+from tllama.cli_locale import number_text, timestamp_text
 
 
 def size_text(value):
@@ -12,7 +13,7 @@ def size_text(value):
         return 'unknown'
     for unit in ('B', 'KB', 'MB', 'GB', 'TB'):
         if value < 1000 or unit == 'TB':
-            return f'{value:.0f} B' if unit == 'B' else f'{value:.1f} {unit}'
+            return f'{number_text(value, 0)} B' if unit == 'B' else f'{number_text(value, 1)} {unit}'
         value /= 1000
 
 
@@ -29,7 +30,8 @@ def _table(headers, rows):
 
 def models_text(data):
     return _table(['NAME', 'ID', 'SIZE', 'MODIFIED'], [
-        [m.get('name') or m.get('model', '-'), _id(m), size_text(m.get('size')), m.get('modified_at') or '-']
+        [m.get('name') or m.get('model', '-'), _id(m), size_text(m.get('size')),
+         timestamp_text(m['modified_at']) if m.get('modified_at') else '-']
         for m in data['models']])
 
 
@@ -43,14 +45,14 @@ def _processor(model):
     if device == 0:
         return '100% CPU'
     gpu = 100 * device / total
-    return f'{100 - gpu:.1f}% CPU / {gpu:.1f}% GPU'
+    return f'{number_text(100 - gpu, 1)}% CPU / {number_text(gpu, 1)}% GPU'
 
 
 def processes_text(data):
     return _table(['NAME', 'ID', 'SIZE', 'PROCESSOR', 'CONTEXT', 'RUNNER', 'EXPIRES'], [
         [m.get('name') or m.get('model', '-'), _id(m), size_text(m.get('size')), _processor(m),
-         m.get('context_length') if m.get('context_length') is not None else 'unknown',
-         m.get('runner') or 'unknown', m.get('expires_at') or 'pinned']
+         number_text(m['context_length']) if type(m.get('context_length')) is int else 'unknown',
+         m.get('runner') or 'unknown', timestamp_text(m['expires_at']) if m.get('expires_at') else 'pinned']
         for m in data['models']])
 
 

@@ -82,6 +82,21 @@ newline. `show --modelfile` returns TOML, not an Ollama Modelfile conversion.
 unknown values remain unknown. These fields are not a measurement of physical
 RAM/VRAM residency. Detailed memory/provenance remains available with `ps --json`.
 
+Human tables and verbose statistics use the client's numeric locale for decimal
+and grouping separators. `list` modification times and `ps` expiry times use the
+client's local timezone and locale date/time order, with minute precision and
+no timezone suffix. Today's date is omitted; other dates in the current local
+year omit the year. `LC_ALL` overrides `LC_NUMERIC`/`LC_TIME`, which override
+`LANG`. An unavailable OS locale falls back to C; no extra formatting dependency
+is needed. JSON, request numbers and verbatim model/template/parameter text keep
+their original machine-readable representation.
+
+`PROCESSOR` is derived from compatibility bytes, not measured execution time.
+Even with all non-input model weights on the accelerator, genuine host compute,
+state and projector buffers remain counted. The input-weight and identified
+staging-buffer exclusions do not hide those components; inspect `ps --json`
+for the precise owners and reasons.
+
 ## Cold metadata and waiting
 
 For a human-readable list/show request taking more than two seconds, the client

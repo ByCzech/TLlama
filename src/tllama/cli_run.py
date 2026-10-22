@@ -173,7 +173,8 @@ class RunSession:
         if not loaded and not self.as_json:
             print('Preload not retained (keep_alive=0); the model will load on request.', file=sys.stderr)
         if self.verbose:
-            print(f'Preload request: {time.perf_counter() - started:.3f} s'
+            from tllama.cli_locale import number_text
+            print(f'Preload request: {number_text(time.perf_counter() - started, 3)} s'
                   + ('' if loaded else ' (not retained)'), file=sys.stderr, flush=True)
 
 

@@ -1,25 +1,37 @@
-# Private native worker (development)
+# Private native worker
 
-The worker adapter is being developed on `refactor/tllama-server`. It does not
-replace ModelManager or route public inference requests yet.
+ModelManager and native residency manage private worker generations for public
+inference. Each generation owns its launch settings, process and transports.
 
 `tllama.worker_config.WorkerLaunchSpec` describes one resolved launch without
 importing llama-cpp-python. The caller supplies absolute model/projector paths,
 a native device selector, load parameters and optional child environment values.
 CPU, CUDA, ROCm, Vulkan and other server device names use the same contract.
-TOML/environment resolution is available through `native_config.resolve_worker_config`; see [native-config.md](native-config.md). ModelManager/public-route integration is the next milestone.
+Model/default/request resolution is handled by `native_config.resolve_worker_config`;
+see [native-config.md](native-config.md).
 
-The initial contract uses one slot, explicit context size, fit disabled and
-context shifting disabled. Its default 2048 context is for standalone testing,
-not a change to TLlama's public context default. KV K/V types remain independent;
-unset flash attention/cache types use the native defaults.
+Workers use one slot and resolved context settings. The standalone launch
+contract's default 2048 context does not change the public default of 0
+(trained maximum). Automatic placement permits native fitting; explicit
+placement and context shifting follow the model/request contract. K/V types
+remain independent; public defaults are documented in [native-config.md](native-config.md).
 
 CPU placement is `device="none"`, which disables GPU layers, operation offload
 and projector offload. A GPU selector with unset layers, or legacy `-1`, maps to
 native `all`; native numeric `-1` would mean auto instead. Conflicting CPU/GPU
 layer settings are refused.
 
-The supervisor owns a private cwd and API key file. The loopback server normally
+The supervisor owns a private cwd and API key file. Each worker gets a fresh
+`secrets.token_urlsafe(32)` bearer token (256 bits of randomness). The file holds
+that token as plaintext followed by a newline, with mode `0600` in a `0700`
+temporary directory. Native `--api-key-file` exposes only its path in argv;
+the Python client sends the token in the Authorization bearer header. The
+directory and file are removed when the worker closes, and diagnostic text
+redacts the token. This protects the private loopback API from unrelated local
+users; it is not public TLlama API authentication, encryption, or isolation
+from another process running as the same service user or root.
+
+The loopback server normally
 uses port 0; its announced bound address is discovered from the pinned native
 log. A fixed loopback port can be supplied for controlled tests. Parent native
 server settings (`LLAMA_ARG_*`, `LLAMA_API_KEY`, `MTMD_BACKEND_DEVICE`, Vertex
@@ -30,8 +42,9 @@ This does not isolate SDK plugins. Installed plugin loading and system
 alternatives retain their current packaging behavior; do not switch alternatives
 per request or interpret `GGML_BACKEND_PATH` as an SDK selection override.
 
-The supported native fingerprint is `b11552-ec2797836f`; changing it is an
-explicit launch decision and requires confirming protocol/CLI compatibility.
+The default native fingerprint is `b11552-ec2797836f`; additional audited builds
+are listed in `worker_config.SUPPORTED_RUNTIME_FINGERPRINTS`. New builds require
+confirming protocol/CLI compatibility under the configured version policy.
 An executable alone is not proof of usable kernels on every discovered device.
 
 ## Lifecycle and transport
@@ -43,9 +56,10 @@ against native `/props`. Startup failures and cancelled starts clean up the chil
 `close()` closes HTTP connections, sends TERM, escalates to KILL if necessary,
 reaps the process and removes its private directory. The supervisor is Linux/POSIX.
 
-The initial API serializes inference per worker. `chat()` and `completion()`
+The transport serializes inference per worker. `chat()` and `completion()`
 return native response objects, preserving usage/timings and reasoning. They do
-not yet translate public TLlama API shapes. Use streams as context managers:
+not themselves translate public TLlama API shapes; public adapters own that
+mapping. Use streams as context managers:
 
 ```python
 async with NativeWorker(spec) as worker:
@@ -65,8 +79,9 @@ of requiring OpenAI `[DONE]`.
 
 Both log pipes are drained continuously. Startup log capture and diagnostic tail
 are bounded; `load_log_complete` indicates whether capture hit a truncation limit.
-Private keys are redacted. Buffer allocation parsing and residency reporting
-remain for the ModelManager/reporting milestone.
+Private keys are redacted. Memory telemetry selects native inventory or the
+supported log fallback; public reporting preserves provenance and unknown
+values. See [native-memory.md](native-memory.md).
 
 ## Hardware smoke test
 
@@ -98,6 +113,6 @@ needed. A successful run ends with `stage=closed`, a reaped return code and
 deadline and external cancellation. Model-specific template/vision/API parity,
 multi-model management and memory accounting are not asserted by this smoke test.
 
-The managed lifecycle checkpoint and its single-load hardware check are in
-[native-residency.md](native-residency.md). Public inference migration and
-allocation reporting remain separate milestones.
+See [native-residency.md](native-residency.md),
+[native-public-api.md](native-public-api.md) and [native-memory.md](native-memory.md)
+for managed lifecycle, public request/response mapping and allocation reporting.

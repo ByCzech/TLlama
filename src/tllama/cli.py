@@ -173,6 +173,8 @@ async def _execute(args):
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    from tllama.cli_locale import configure_locale
+    configure_locale()
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command is None:
