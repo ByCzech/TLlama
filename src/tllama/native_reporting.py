@@ -18,14 +18,10 @@ def _log_memory_sizes(memory):
     if not any(kinds.get('model', 0) > 0 and buffer_location(backend) == 'device'
                for backend, kinds in buffers.items()):
         return total, device
-    # The pinned runtime always keeps input tensors on the host. Once every
-    # layer is offloaded, host model buffers cannot describe CPU layers.
-    # Output buffers hold results; *_Host compute buffers are device staging.
-    # Preserve CPU compute, KV/recurrent state, and projector allocations.
-    excluded = sum(kinds.get('model', 0) + kinds.get('output', 0)
-                   + (kinds.get('compute', 0) if backend.upper().endswith('_HOST') else 0)
-                   for backend, kinds in buffers.items() if buffer_location(backend) == 'host')
-    return total - excluded, device
+    # Ollama reports full model-layer offload as 100% GPU, including when
+    # projector compute, state or staging still allocates host buffers.
+    # Keep those real allocations in the independent detailed inventory.
+    return device, device
 
 
 def _native_memory_sizes(memory):
@@ -74,24 +70,10 @@ def _native_memory_sizes(memory):
                and any(rel['owner_id'] in models and rel['component'] == 'model_weights'
                        for rel in buffer['owners']) for buffer in memory['buffers']):
         return None, None, 'inconsistent_placement'
-    host_input = {owner for owner, values in groups.items()
-                  if any(group['component'] == 'input_weights' and group['location'] in {'cpu', 'mixed'}
-                         for group in values)}
-    contexts = {owner['id'] for owner in memory['owners'] if owner['kind'] == 'context'}
-
-    def helper(rel, kind):
-        component, owner = rel['component'], rel['owner_id']
-        return ((component == 'model_weights' and owner in host_input)
-                or (owner in contexts and (component == 'output'
-                                          or component == 'compute' and kind == 'host_pinned')))
-
-    # Every relationship must be removable: a shared leaf must not hide CPU
-    # state, projector/adapter weights or other host computation through one
-    # otherwise removable owner. Provider names and requested layers are unused.
-    excluded = sum(buffer['size_bytes'] for buffer in memory['buffers']
-                   if buffer['memory_kind'] in {'host', 'host_pinned'} and buffer['owners']
-                   and all(helper(rel, buffer['memory_kind']) for rel in buffer['owners']))
-    return total - excluded, device, 'full_accelerator_weights'
+    # Match Ollama's full-offload summary, not an allocation ratio. The full
+    # inventory (including CPU projector compute and shared buffers) is kept
+    # verbatim; excluded_host_bytes explains the compatibility-only difference.
+    return device, device, 'full_accelerator_weights'
 
 
 def ollama_memory_sizes(memory):

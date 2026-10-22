@@ -35,7 +35,7 @@ def host_buffer(payload, component, *, owner='context', kind='host', size=7):
 
 
 @pytest.mark.parametrize('backend,device_type', [('Vulkan', 'igpu'), ('CUDA', 'gpu'), ('ROCm', 'gpu')])
-def test_full_accelerator_placement_excludes_helpers_but_preserves_complete_inventory(accelerator, backend, device_type):
+def test_full_accelerator_placement_matches_ollama_but_preserves_complete_inventory(accelerator, backend, device_type):
     accelerator['devices'][1].update(backend=backend, type=device_type, name='arbitrary name')
     report = memory(accelerator)
     before = deepcopy(report)
@@ -54,10 +54,13 @@ def test_full_accelerator_placement_excludes_helpers_but_preserves_complete_inve
     ('projector_weights', 'projector', 'host'), ('projector_compute', 'projector', 'host'),
     ('projector_compute', 'projector', 'host_pinned'),
 ])
-def test_full_gpu_weights_do_not_hide_host_state_compute_or_projector(accelerator, component, owner, kind):
+@pytest.mark.parametrize('full', [True, False])
+def test_ollama_full_offload_summary_keeps_host_allocations_only_in_detail(accelerator, component, owner, kind, full):
+    if not full:
+        accelerator['placement']['layer_groups'][-1].update(location='cpu', device_ids=['cpu'])
     host_buffer(accelerator, component, owner=owner, kind=kind)
     report = memory(accelerator)
-    assert ollama_memory_sizes(report) == (1307, 1300)
+    assert ollama_memory_sizes(report) == ((1300 if full else 1357), 1300)
     assert report['allocated_bytes'] == 1357 and report['host_bytes'] == 57
 
 
@@ -67,9 +70,9 @@ def test_positively_identified_pinned_context_compute_is_staging(accelerator):
 
 
 @pytest.mark.parametrize('component', ['kv_cache', 'compute', 'unknown_component'])
-def test_shared_host_leaf_cannot_be_removed_through_its_input_weight_relationship(accelerator, component):
+def test_ollama_full_offload_summary_does_not_reclassify_shared_host_leaves(accelerator, component):
     accelerator['buffers'][2]['owners'].append({'owner_id':'context', 'component':component})
-    assert ollama_memory_sizes(memory(accelerator)) == (1330, 1300)
+    assert ollama_memory_sizes(memory(accelerator)) == (1300, 1300)
 
 
 def test_shared_staging_with_two_removable_owners_is_subtracted_only_once(accelerator):
@@ -77,10 +80,13 @@ def test_shared_staging_with_two_removable_owners_is_subtracted_only_once(accele
     assert ollama_memory_sizes(memory(accelerator)) == (1300, 1300)
 
 
-def test_loaded_host_adapter_is_not_hidden_as_input_or_output_staging(accelerator):
+def test_full_offload_host_adapter_remains_in_detailed_inventory(accelerator):
     accelerator['owners'].append({'id':'adapter', 'kind':'adapter', 'roles':['lora']})
     host_buffer(accelerator, 'adapter_weights', owner='adapter')
-    assert ollama_memory_sizes(memory(accelerator)) == (1307, 1300)
+    report = memory(accelerator)
+    assert ollama_memory_sizes(report) == (1300, 1300)
+    assert report['host_bytes'] == 57
+    assert report['buffers'][-1]['owners'] == [{'owner_id':'adapter', 'component':'adapter_weights'}]
 
 
 @pytest.mark.parametrize('component', ['repeating_layers', 'output_weights', 'mtp_layers', 'other_weights'])
@@ -144,9 +150,9 @@ def test_missing_model_placement_is_not_inferred_from_allocations(accelerator):
     assert ollama_memory_sizes(memory(accelerator)) == (None, None)
 
 
-def test_unclassified_host_weights_are_not_excluded_without_input_group_evidence(accelerator):
+def test_full_noninput_offload_does_not_require_an_input_group_for_the_compatibility_summary(accelerator):
     accelerator['placement']['layer_groups'].pop(0)
-    assert ollama_memory_sizes(memory(accelerator)) == (1330, 1300)
+    assert ollama_memory_sizes(memory(accelerator)) == (1300, 1300)
 
 
 def test_empty_sleeping_inventory_is_zero_instead_of_unavailable(accelerator):
@@ -230,3 +236,22 @@ def test_captured_qwen_vulkan_apu_capacities_and_placement_retain_full_gpu_displ
     assert report['allocated_bytes'] == 13861655112
     assert report['host_bytes'] == 439457856 and report['device_bytes'] == 13422197256
     assert ollama_memory_sizes(report) == (13422197256, 13422197256)
+
+
+def test_vision_cpu_compute_regression_reports_full_gpu_without_rewriting_inventory(accelerator):
+    from tllama.cli_output import processes_text
+
+    host_buffer(accelerator, 'projector_compute', owner='projector', size=26136832)
+    before = deepcopy(accelerator)
+    entry = {'metadata':{}, 'file_info':{}, 'memory':selected(accelerator), 'model':'vision',
+             'generation':1, 'context_length':262144, 'expires_at':None, 'state':'ready',
+             'pid':123, 'leases':0, 'retirement_reason':None}
+    result = ollama_processes([entry])
+    [model] = result['models']
+    assert model['size'] == model['size_vram'] == 1300
+    assert model['memory']['allocated_bytes'] == 26138182
+    assert model['memory']['host_bytes'] == 26136882
+    assert model['memory']['buffers'] == before['buffers']
+    assert model['memory']['ollama_compatibility']['excluded_host_bytes'] == 26136882
+    assert accelerator == before
+    assert '100% GPU' in processes_text(result)

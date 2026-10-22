@@ -1,4 +1,26 @@
-# Native memory reporting checkpoint (06a)
+# Native memory reporting
+
+## Ollama-compatible process summary
+
+`size` and `size_vram` are compatibility fields, separate from the detailed
+allocation inventory in `memory`. Like Ollama, an observed full model-layer
+offload is reported as `size = size_vram`, yielding **100% GPU**. CPU input
+weights, projector compute, host state and staging still appear unchanged in
+`memory.buffers`, `allocated_bytes` and `host_bytes`. This describes model-layer
+placement, not a claim that every allocation or operation is on the GPU.
+
+Native inventory requires complete known placement for every loaded model,
+including draft/MTP weights, and actual device model buffers. Partial CPU/mixed
+noninput placement uses allocation totals; incomplete/unknown inventory stays
+unavailable. The verified log fallback requires a complete allocation report
+and an exact full-offload layer count. Requested GPU settings alone are not
+evidence. `memory.ollama_compatibility` explains the selected sizes, basis and
+`excluded_host_bytes`; physical residency remains unmeasured.
+
+The following historical 06a checkpoint describes the load-log source before
+native inventory and the full-offload compatibility policy were added.
+
+## Historical load-log checkpoint (06a)
 
 `GET /api/ps` reports owned native generations. It performs no model loading,
 header/TOML reread, hashing, inference request or lease acquisition. Polling does

@@ -202,10 +202,11 @@ def test_ps_keeps_host_weights_without_proven_full_offload(summary):
 @pytest.mark.parametrize('origin,backend,kind', [('llama_kv_cache', 'CPU', 'KV'),
     ('llama_memory_recurrent', 'CPU', 'RS'), ('sched_reserve', 'CPU', 'compute'),
     ('llama_kv_cache', 'Vulkan_Host', 'KV'), ('llama_memory_recurrent', 'Vulkan_Host', 'RS')])
-def test_full_layer_offload_cannot_hide_cpu_state_or_cpu_computation(origin, backend, kind):
+def test_ollama_full_layer_offload_summary_keeps_cpu_state_in_detailed_inventory(origin, backend, kind):
     log = VULKAN + f'\n{origin}: {backend} {kind} buffer size = 50 MiB\nload_tensors: offloaded 41/41 layers to GPU'
     memory = observe(log).snapshot()
-    assert ollama_memory_sizes(memory) == (memory['device_bytes'] + 50 * MIB, memory['device_bytes'])
+    assert ollama_memory_sizes(memory) == (memory['device_bytes'], memory['device_bytes'])
+    assert memory['host_bytes'] >= 50 * MIB
 
 
 def test_full_offload_cpu_output_is_a_result_buffer_not_cpu_layer_execution():

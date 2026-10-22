@@ -207,8 +207,8 @@ def test_locality_only_snapshot_change_and_sleep_reload_do_not_join_old_ids(exte
     ('no-mmap',13861655144,439457888,13422197256,13422197256,'known',19),
     ('cpu',13840372288,13840372288,0,13840372288,'unavailable',0),
     ('partial',14001074752,7230632000,6770442752,14001074752,'partial',12),
-    ('vision',14801355656,465594688,14335760968,14361897800,'partial',20),
-    ('vision-after-images',14801355656,465594688,14335760968,14361897800,'partial',20),
+    ('vision',14801355656,465594688,14335760968,14335760968,'partial',20),
+    ('vision-after-images',14801355656,465594688,14335760968,14335760968,'partial',20),
 ])
 def test_captured_native_reports_survive_adapter_and_public_projection(profile,total,host,device,display,status,count):
     raw = json.loads((Path(__file__).with_name('fixtures')/'native_memory_locality'/f'{profile}.json').read_text())
