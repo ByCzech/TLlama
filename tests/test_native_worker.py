@@ -1,4 +1,4 @@
-"""Exercise owned subprocesses and real loopback sockets without a model/GPU."""
+"""Exercise owned subprocesses and real UDS/TCP sockets without a model/GPU."""
 
 import asyncio
 import json
@@ -14,8 +14,8 @@ from tllama.worker import (NativeWorker, WorkerError, WorkerExited, WorkerProtoc
 from tllama.worker_config import WorkerLaunchSpec
 
 
-@pytest.fixture
-async def factory(tmp_path):
+@pytest.fixture(params=["uds", "tcp"])
+async def factory(tmp_path, request):
     executable = tmp_path / "native-stub"
     stub = Path(__file__).with_name("native_worker_stub.py")
     executable.write_text(f"#!{sys.executable}\n" + stub.read_text())
@@ -27,7 +27,8 @@ async def factory(tmp_path):
         root.mkdir()
         env = {"STUB_MODE": mode, "STUB_ROOT": str(root), **kwargs.pop("environment", {})}
         values = {"model": tmp_path / "m.gguf", "device": "none", "executable": executable,
-                  "load_timeout": 5, "terminate_timeout": 0.2, "kill_timeout": 2, **kwargs}
+                  "load_timeout": 5, "terminate_timeout": 0.2, "kill_timeout": 2,
+                  "transport": request.param, **kwargs}
         worker = NativeWorker(WorkerLaunchSpec(environment=env, **values))
         children.append(worker)
         return worker, root
@@ -57,7 +58,14 @@ async def test_ready_and_close_own_all_resources(factory, monkeypatch):
     async with worker:
         assert worker.state == "ready"
         assert worker.pid
-        assert worker.base_url.startswith("http://127.0.0.1:")
+        if worker.spec.transport == 'uds':
+            assert worker.address == f'unix://{worker.runtime_directory}/worker.sock'
+            assert worker.socket_path.is_socket()
+            assert worker.socket_path.stat().st_mode & 0o777 == 0o600
+        else:
+            assert worker.socket_path is None
+            assert worker.address.startswith('http://127.0.0.1:')
+        assert not (worker.runtime_directory / 'api-key').exists()
         assert worker.props["default_generation_settings"]["n_ctx"] == 2048
         launch = records(root, "launch")[0]
         assert launch["cwd"] == str(worker.runtime_directory)
@@ -192,7 +200,7 @@ async def test_both_log_pipes_are_drained_and_capture_is_bounded(factory, mode):
 async def test_private_authentication_key_is_redacted_from_logs(factory):
     worker, _ = factory("key-log")
     async with worker:
-        key = (worker.runtime_directory / "api-key").read_text().strip()
+        key = worker._api_key
         assert key not in worker.load_log and key not in worker.diagnostics
         assert "[redacted]" in worker.load_log
 
@@ -388,6 +396,7 @@ async def test_hardware_smoke_entry_point(factory, case):
     repo = Path(__file__).resolve().parents[1]
     command = [sys.executable, str(repo / "scripts" / "worker-smoke.py"),
                "--model", str(worker.spec.model), "--executable", str(worker.spec.executable),
+               "--transport", worker.spec.transport,
                "--load-timeout", "5", "--request-timeout", "2"]
     if case == "crash":
         command.append("--crash")

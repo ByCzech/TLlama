@@ -65,12 +65,12 @@ class DiagnosticManager(ModelManager):
 
 
 def stable_command(argv):
-    """Only port and owned credential-file location differ between launches."""
+    """Ignore owned listener and credential locations when comparing launches."""
     result, skip = [], False
     for value in argv:
         if skip:
             skip = False
-        elif value in ('--api-key-file', '--port'):
+        elif value in ('--api-key-file', '--port', '--host'):
             skip = True
         else:
             result.append(value)

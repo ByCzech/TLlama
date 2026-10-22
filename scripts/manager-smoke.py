@@ -36,7 +36,7 @@ async def exercise(args):
             if lease.generation != generation:
                 raise WorkerError("Definition changed between preload and use; repeat with a stable TOML")
             worker = lease.worker
-            report("ready", pid=worker.pid, generation=lease.generation, address=worker.base_url,
+            report("ready", pid=worker.pid, generation=lease.generation, address=worker.address,
                    fingerprint=worker.props["build_info"],
                    context=worker.props["default_generation_settings"]["n_ctx"], argv=worker.command)
             await worker.refresh_memory()

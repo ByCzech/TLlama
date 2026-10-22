@@ -97,10 +97,10 @@ class ProbeLaunchSpec(WorkerLaunchSpec):
     speculation: str = 'none'
     draft_tokens: int = 3
 
-    def command(self, api_key_file, template_file=None):
+    def command(self, api_key_file, template_file=None, socket_file=None):
         require(self.speculation in {'none', 'draft-mtp'}, 'Invalid diagnostic speculation type')
         require(type(self.draft_tokens) is int and 1 <= self.draft_tokens <= 32, 'Invalid draft token limit')
-        return super().command(api_key_file, template_file) + (
+        return super().command(api_key_file, template_file, socket_file) + (
             '--spec-type', self.speculation, '--spec-draft-n-max', str(self.draft_tokens))
 
 

@@ -21,19 +21,41 @@ and projector offload. A GPU selector with unset layers, or legacy `-1`, maps to
 native `all`; native numeric `-1` would mean auto instead. Conflicting CPU/GPU
 layer settings are refused.
 
-The supervisor owns a private cwd and API key file. Each worker gets a fresh
-`secrets.token_urlsafe(32)` bearer token (256 bits of randomness). The file holds
-that token as plaintext followed by a newline, with mode `0600` in a `0700`
-temporary directory. Native `--api-key-file` exposes only its path in argv;
-the Python client sends the token in the Authorization bearer header. The
-directory and file are removed when the worker closes, and diagnostic text
-redacts the token. This protects the private loopback API from unrelated local
-users; it is not public TLlama API authentication, encryption, or isolation
-from another process running as the same service user or root.
+The supervisor owns a private `0700` cwd and a fresh
+`secrets.token_urlsafe(32)` bearer token (256 bits of randomness). On Linux with
+`memfd_create` and procfs, `--api-key-file /proc/self/fd/N` reads the token from
+an anonymous memory file inherited through `pass_fds`. The parent closes its
+descriptor after spawn; the child retains its copy until exit. Where Python
+exposes file-sealing constants, the memory file is sealed against writes and
+resizing. No named credential file is created in this mode. The portable
+fallback is an exclusively created `0600` file, unlinked after authenticated
+readiness or during failed-start cleanup. Its contents are the plaintext token
+plus a newline. Token values never enter argv or the child environment; the
+HTTP client sends an Authorization bearer header and diagnostic text redacts
+the token. This is not public TLlama API authentication, encryption, or isolation
+from another process running as the same service user or root. Anonymous memory
+is not a guarantee against swap, core dumps or privileged process inspection.
 
-The loopback server normally
-uses port 0; its announced bound address is discovered from the pinned native
-log. A fixed loopback port can be supplied for controlled tests. Parent native
+The default local transport is HTTP over a private Unix domain socket:
+`--host /PRIVATE/worker.sock`. Generation, tokenization, embeddings, Decision and
+the independent memory-telemetry client use that same socket with bearer auth.
+No TCP listener or DNS lookup is involved. `worker.address` reports its
+`unix://` location; `worker.base_url` is only the HTTP origin used by the client.
+The parent prefers an absolute, service-user-owned private `RUNTIME_DIRECTORY`,
+then `XDG_RUNTIME_DIR`, otherwise a private temporary directory. The supplied
+systemd unit creates `/run/tllama` with mode `0700`. The socket is set to `0600`
+after readiness and the worker directory is removed on close. Overlong paths
+fail before spawn with a request to select a shorter runtime directory/TMPDIR.
+UDS failures never silently switch to TCP.
+
+`WorkerLaunchSpec(transport="tcp")` retains the explicitly selected **local
+loopback** adapter. It normally uses port 0; its announced bound address is
+discovered from the pinned native log. A fixed loopback port can be supplied
+for controlled tests. `scripts/worker-smoke.py --transport tcp` exercises this
+alternative; `--port` requires it. This is not remote worker support: process
+ownership, model paths and teardown remain local. A future remote adapter must
+define authenticated/encrypted transport, remote lifecycle and model placement
+separately. Parent native
 server settings (`LLAMA_ARG_*`, `LLAMA_API_KEY`, `MTMD_BACKEND_DEVICE`, Vertex
 `AIP_*`) and `GGML_BACKEND_PATH` are removed. Per-worker GPU visibility variables
 can override inherited values without changing global `os.environ`.

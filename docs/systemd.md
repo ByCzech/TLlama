@@ -32,7 +32,9 @@ systemctl status tllamad.service
 journalctl -u tllamad.service -f
 ```
 
-Systemd creates `/var/lib/tllama` and `/var/cache/tllama`, owned by `tllama`.
+Systemd creates `/var/lib/tllama`, `/var/cache/tllama` and the private runtime
+directory `/run/tllama`, owned by `tllama`. Per-worker Unix sockets and temporary
+files live beneath that runtime directory; it is removed when the unit stops.
 The daemon creates the default `models` store under its state directory. The
 Hugging Face cache uses `/var/cache/tllama/huggingface`. Pre-existing models and
 custom storage paths must be readable/writable as required by the service

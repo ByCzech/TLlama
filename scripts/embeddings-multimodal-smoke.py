@@ -39,8 +39,8 @@ def require(condition, message):
 class ProbeLaunchSpec(WorkerLaunchSpec):
     """Diagnostic-only projector launch; production embedding guards stay intact."""
 
-    def command(self, api_key_file, template_file=None):
-        return super().command(api_key_file, template_file) + ('--embeddings', '--pooling', 'last')
+    def command(self, api_key_file, template_file=None, socket_file=None):
+        return super().command(api_key_file, template_file, socket_file) + ('--embeddings', '--pooling', 'last')
 
 
 def probe_launch(spec, args):

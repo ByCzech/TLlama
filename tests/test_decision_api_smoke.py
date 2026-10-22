@@ -155,9 +155,11 @@ def test_usage_is_exact_even_with_large_probability_tolerance():
     assert rows == []
 
 
-def test_launch_comparison_ignores_only_port_and_owned_credential_file():
-    a = ['native', '--model', 'a.gguf', '--port', '12', '--api-key-file', '/private/a', '--ctx-size', '1024']
-    b = ['native', '--model', 'a.gguf', '--port', '34', '--api-key-file', '/private/b', '--ctx-size', '1024']
+def test_launch_comparison_ignores_only_listener_and_owned_credential_file():
+    a = ['native', '--model', 'a.gguf', '--host', '/private/a/worker.sock',
+         '--port', '12', '--api-key-file', '/private/a', '--ctx-size', '1024']
+    b = ['native', '--model', 'a.gguf', '--host', '/private/b/worker.sock',
+         '--port', '34', '--api-key-file', '/private/b', '--ctx-size', '1024']
     assert smoke.stable_command(a) == smoke.stable_command(b)
     b[-1] = '2048'
     assert smoke.stable_command(a) != smoke.stable_command(b)

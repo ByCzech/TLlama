@@ -43,6 +43,7 @@ class WorkerLaunchSpec:
     embedding: bool = False
     pooling_type: int = -1
     decision_type: str | None = None
+    transport: str = "uds"
     port: int = 0
     environment: Mapping[str, str] = field(default_factory=dict, repr=False)
     runtime_options: Mapping[str, Any] = field(default_factory=dict)
@@ -68,6 +69,10 @@ class WorkerLaunchSpec:
             raise ValueError("memory_source must be auto, native or log")
         if type(self.memory_compare) is not bool:
             raise ValueError("memory_compare must be a boolean")
+        if self.transport not in ("uds", "tcp"):
+            raise ValueError("transport must be uds or tcp")
+        if self.transport == "uds" and self.port != 0:
+            raise ValueError("port requires transport=tcp")
         for name in ("model", "executable", "mmproj"):
             value = getattr(self, name)
             if value is None and name == "mmproj":
@@ -167,15 +172,20 @@ class WorkerLaunchSpec:
         env.update(self.environment)
         return env
 
-    def command(self, api_key_file: Path, template_file: Path | None = None) -> tuple[str, ...]:
+    def command(self, api_key_file: Path, template_file: Path | None = None,
+                socket_file: Path | None = None) -> tuple[str, ...]:
         if self.device is None:
             raise ValueError("Automatic device selection must resolve before building a worker command")
         if not api_key_file.is_absolute():
             raise ValueError("api_key_file must be an absolute path")
+        if socket_file is not None and (not socket_file.is_absolute() or "\0" in str(socket_file)
+                                        or not str(socket_file).endswith('.sock')):
+            raise ValueError("socket_file must be an absolute .sock path")
+        host = str(socket_file or api_key_file.parent / 'worker.sock') if self.transport == 'uds' else '127.0.0.1'
         layers = 0 if self.device == "none" else self.n_gpu_layers
         layers_arg = "auto" if self.fit and layers is None else "all" if layers in (None, -1) else str(layers)
         args = [str(self.executable), "--model", str(self.model), "--alias", self.alias,
-                "--host", "127.0.0.1", "--port", str(self.port), "--parallel", "1",
+                "--host", host, "--port", str(self.port), "--parallel", "1",
                 "--device", self.device, "--n-gpu-layers", layers_arg,
                 "--ctx-size", str(self.n_ctx), "--fit", "on" if self.fit else "off", "--sleep-idle-seconds", "-1",
                 "--api-key-file", str(api_key_file), "--offline",

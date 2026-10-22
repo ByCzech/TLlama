@@ -41,10 +41,10 @@ class ProbeLaunchSpec(WorkerLaunchSpec):
 
     pooling: str = 'auto'
 
-    def command(self, api_key_file, template_file=None):
+    def command(self, api_key_file, template_file=None, socket_file=None):
         require(self.pooling in {'auto', 'mean', 'cls', 'last'}, 'Invalid diagnostic pooling')
         extra = () if self.pooling == 'auto' else ('--pooling', self.pooling)
-        return super().command(api_key_file, template_file) + ('--embeddings',) + extra
+        return super().command(api_key_file, template_file, socket_file) + ('--embeddings',) + extra
 
 
 def probe_launch(spec, args):

@@ -78,6 +78,7 @@ def test_worker_environments_are_independent_and_do_not_mutate_the_parent():
     {"environment": {"MTMD_BACKEND_DEVICE": "Vulkan0"}},
     {"environment": {"BAD=NAME": "x"}}, {"environment": {"X": "a\0b"}},
     {"device": "none,Vulkan0"}, {"device": ""}, {"alias": "one,two"},
+    {"transport": "remote"}, {"transport": "uds", "port": 1234},
 ])
 def test_invalid_launch_configuration_is_rejected(kwargs):
     values = {"model": Path("/models/m.gguf"), "device": "none", **kwargs}
@@ -89,3 +90,18 @@ def test_launch_module_does_not_import_inference_bindings():
     env = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1] / "src"))
     subprocess.run([sys.executable, "-c", "import sys; import tllama.worker_config; "
                     "assert 'llama_cpp' not in sys.modules"], env=env, check=True)
+
+
+def test_default_command_uses_a_private_socket_and_explicit_tcp_keeps_loopback():
+    args = spec().command(Path('/private/key'), socket_file=Path('/private/worker.sock'))
+    assert args[args.index('--host') + 1] == '/private/worker.sock'
+    assert args[args.index('--api-key-file') + 1] == '/private/key'
+    args = options(spec(transport='tcp', port=1234))
+    assert args[args.index('--host') + 1] == '127.0.0.1'
+    assert args[args.index('--port') + 1] == '1234'
+
+
+@pytest.mark.parametrize('path', [Path('relative.sock'), Path('/private/no-extension'), Path('/private/a\0.sock')])
+def test_socket_paths_must_be_absolute_and_use_the_native_sock_suffix(path):
+    with pytest.raises(ValueError, match='socket_file'):
+        spec().command(Path('/private/key'), socket_file=path)

@@ -35,7 +35,7 @@ async def exercise(args):
         mmproj=args.mmproj.expanduser().resolve() if args.mmproj else None,
         n_ctx=args.ctx, n_gpu_layers=args.gpu_layers, type_k=args.type_k, type_v=args.type_v,
         flash_attn=None if args.flash_attn is None else args.flash_attn == "on",
-        environment=environment, load_timeout=args.load_timeout, port=args.port,
+        environment=environment, load_timeout=args.load_timeout, transport=args.transport, port=args.port,
         request_timeout=args.request_timeout,
     )
     worker = NativeWorker(spec)
@@ -62,7 +62,7 @@ async def exercise(args):
             return
 
         await worker.start()
-        report("ready", pid=worker.pid, address=worker.base_url,
+        report("ready", pid=worker.pid, address=worker.address,
                load_seconds=round(time.monotonic() - started, 3),
                device=spec.device, argv=worker.command,
                fingerprint=worker.props["build_info"],
@@ -143,7 +143,8 @@ def main():
     parser.add_argument("--type-v")
     parser.add_argument("--flash-attn", choices=("on", "off"))
     parser.add_argument("--env", action="append", default=[], metavar="NAME=VALUE")
-    parser.add_argument("--port", type=int, default=0)
+    parser.add_argument("--transport", choices=("uds", "tcp"), default="uds")
+    parser.add_argument("--port", type=int, default=0, help="Fixed loopback port; requires --transport tcp")
     parser.add_argument("--load-timeout", type=float, default=600)
     parser.add_argument("--request-timeout", type=float, default=120)
     parser.add_argument("--log", type=Path, help="Capture redacted native debug logs to this file")

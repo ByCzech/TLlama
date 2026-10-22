@@ -52,7 +52,8 @@ production configuration, metadata admission and `NativeWorker`, without
 post-resolution mutation. Its answer and exact usage must match the independent
 combined control. All later private/public calls reuse that worker. The effective
 native command must equal the independent recipe after excluding only dynamic
-port and owned API-key-file location. Both require audited native fingerprint
+listener location (UDS path or loopback port) and owned API-key-file location.
+Both require audited native fingerprint
 `b11552-3144c167ef` and live `output_modalities=["decisions"]`. Ready rows retain
 argv, props, metadata, runtime, PID and generation for independent review against
 the accepted native archives as well as the fresh reference.

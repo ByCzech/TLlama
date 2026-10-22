@@ -8,7 +8,6 @@ import json
 import logging
 import os
 import re
-import secrets
 import signal
 import tempfile
 from collections import deque
@@ -19,6 +18,7 @@ from typing import AsyncIterator, Mapping, Any
 import httpx
 
 from tllama.worker_config import RUNTIME_FINGERPRINT, SUPPORTED_RUNTIME_FINGERPRINTS, WorkerLaunchSpec
+from tllama.worker_ipc import WorkerCredentials, runtime_directory
 from tllama.native_memory import NativeMemory
 from tllama.native_memory_api import MemoryReportError, NativeMemoryReport, UnsupportedMemorySchema
 from tllama.native_telemetry import MemoryTelemetry
@@ -76,6 +76,7 @@ class NativeWorker:
         self.spec = spec
         self.process: asyncio.subprocess.Process | None = None
         self.base_url: str | None = None
+        self.socket_path: Path | None = None
         self.props: dict | None = None
         self.runtime_directory: Path | None = None
         self.command: tuple[str, ...] | None = None
@@ -84,6 +85,7 @@ class NativeWorker:
         self._closing = False
         self._client: httpx.AsyncClient | None = None
         self._api_key = ""
+        self._credentials: WorkerCredentials | None = None
         self._directory: tempfile.TemporaryDirectory | None = None
         self._spawn_task: asyncio.Task | None = None
         self._exit_task: asyncio.Task | None = None
@@ -113,6 +115,22 @@ class NativeWorker:
     @property
     def pid(self) -> int | None:
         return self.process.pid if self.process is not None else None
+
+    @property
+    def address(self) -> str | None:
+        return f"unix://{self.socket_path}" if self.socket_path is not None else self.base_url
+
+    def _http_client(self, *, timeout, limits):
+        # Each client owns its own pool, including the independent telemetry
+        # pool. A dummy HTTP origin supplies Host/relative URL handling only;
+        # the UDS transport never resolves it or connects to a TCP address.
+        kwargs = {}
+        if self.socket_path is not None:
+            kwargs['transport'] = httpx.AsyncHTTPTransport(
+                uds=str(self.socket_path), trust_env=False, limits=limits)
+        return httpx.AsyncClient(
+            base_url=self.base_url, headers={"Authorization": f"Bearer {self._api_key}"},
+            trust_env=False, follow_redirects=False, timeout=timeout, limits=limits, **kwargs)
 
     @property
     def diagnostics(self) -> str:
@@ -147,11 +165,14 @@ class NativeWorker:
         return self
 
     async def _spawn(self, env: dict[str, str]):
-        self.process = await asyncio.create_subprocess_exec(
-            *self.command, cwd=self.runtime_directory, env=env,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-            start_new_session=True,
-        )
+        try:
+            self.process = await asyncio.create_subprocess_exec(
+                *self.command, cwd=self.runtime_directory, env=env,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                start_new_session=True, pass_fds=self._credentials.pass_fds,
+            )
+        finally:
+            self._credentials.close_fd()
         self._drainers = [asyncio.create_task(self._drain(pipe, name)) for pipe, name in
                           ((self.process.stdout, "stdout"), (self.process.stderr, "stderr"))]
         self._exit_task = asyncio.create_task(self.process.wait())
@@ -159,27 +180,31 @@ class NativeWorker:
     async def _start_impl(self):
         if self._closing:
             raise WorkerError("Worker is closing")
-        self._directory = tempfile.TemporaryDirectory(prefix="tllama-worker-")
+        self._directory = runtime_directory()
         self.runtime_directory = Path(self._directory.name)
-        key_file = self.runtime_directory / "api-key"
-        self._api_key = secrets.token_urlsafe(32)
-        fd = os.open(key_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(fd, "w") as file:
-            file.write(self._api_key + "\n")
+        if self.spec.transport == "uds":
+            self.socket_path = self.runtime_directory / "worker.sock"
+            # macOS/BSD sun_path is shorter than Linux's. Refuse a long path
+            # explicitly instead of failing opaquely after spawning the child.
+            if len(os.fsencode(self.socket_path)) > 103:
+                raise WorkerError("Worker UDS path is too long; select a shorter TMPDIR or runtime directory")
+            self.base_url = "http://tllama-worker"
+        self._credentials = WorkerCredentials(self.runtime_directory)
+        self._api_key = self._credentials.token
         template_file = None
         if self.spec.template is not None:
             template_file = self.runtime_directory / "chat-template.jinja"
             fd = os.open(template_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             with os.fdopen(fd, "w") as file:
                 file.write(self.spec.template)
-        self.command = self.spec.command(key_file, template_file)
+        self.command = self.spec.command(self._credentials.path, template_file, self.socket_path)
         env = self.spec.child_environment(os.environ)
         # Shield creation so cancellation cannot abandon a child before its handle arrives.
         self._spawn_task = asyncio.create_task(self._spawn(env))
         await asyncio.shield(self._spawn_task)
         if self._closing:
             raise WorkerError("Worker is closing")
-        if self.spec.port:
+        if self.spec.transport == "tcp" and self.spec.port:
             self.base_url = f"http://127.0.0.1:{self.spec.port}"
         while self.base_url is None:
             self._check_alive()
@@ -187,9 +212,7 @@ class NativeWorker:
                 await asyncio.wait_for(self._address_seen.wait(), timeout=0.1)
             except asyncio.TimeoutError:
                 pass
-        self._client = httpx.AsyncClient(
-            base_url=self.base_url, headers={"Authorization": f"Bearer {self._api_key}"},
-            trust_env=False, follow_redirects=False,
+        self._client = self._http_client(
             timeout=httpx.Timeout(self.spec.request_timeout, connect=5, write=30, pool=5),
             limits=httpx.Limits(max_connections=4, max_keepalive_connections=4),
         )
@@ -243,13 +266,15 @@ class NativeWorker:
             if self._closing:
                 raise WorkerError("Worker is closing")
             self.props = props
+            if self.socket_path is not None:
+                self.socket_path.chmod(0o600)
+            self._credentials.close()
             self._capture_load = False
             self._state = "ready"
             if self.telemetry.needs_native:
                 try:
-                    self._memory_client = httpx.AsyncClient(
-                        base_url=self.base_url, headers={"Authorization": f"Bearer {self._api_key}"},
-                        trust_env=False, follow_redirects=False, timeout=_MEMORY_TIMEOUT,
+                    self._memory_client = self._http_client(
+                        timeout=_MEMORY_TIMEOUT,
                         limits=httpx.Limits(max_connections=1, max_keepalive_connections=1),
                     )
                     self._memory_task = asyncio.create_task(self._poll_memory())
@@ -337,7 +362,7 @@ class NativeWorker:
             else:
                 self.load_log_complete = False
                 self.memory.invalidate('truncated_load_log')
-        if self.base_url is None:
+        if self.spec.transport == "tcp" and self.base_url is None:
             match = _ADDRESS.fullmatch(line.rstrip("\r\n"))
             if match and 1 <= int(match[1]) <= 65535:
                 self.base_url = f"http://127.0.0.1:{int(match[1])}"
@@ -426,6 +451,8 @@ class NativeWorker:
                     except asyncio.TimeoutError:
                         task.cancel()
             await asyncio.gather(*self._drainers, return_exceptions=True)
+            if self._credentials is not None:
+                self._credentials.close()
             if self._directory is not None:
                 self._directory.cleanup()
             self._state = "closed" if self.process is None or self.process.returncode is not None else "failed"
