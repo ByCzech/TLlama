@@ -1,0 +1,58 @@
+Source: tllama
+Section: utils
+Priority: optional
+Maintainer: NemaChybu team APT archive <maintainers@nemachybu.cz>
+Uploaders: ByCzech <byczech@malyjarda.cz>
+Build-Depends:
+ debhelper-compat (= 13),
+ dh-sequence-python3,
+ pybuild-plugin-pyproject,
+ python3-all (>= 3.10),
+ python3-packaging,
+ python3-setuptools,
+ python3-setuptools-scm,
+ python3-wheel,
+ python3-anyio (>= 4.9) <!nocheck>,
+ python3-fastapi (>= 0.115.0) <!nocheck>,
+ python3-filetype (>= 1.2.0) <!nocheck>,
+ python3-gguf (>= 0.17.1) <!nocheck>,
+ python3-httpx (>= 0.28.0) <!nocheck>,
+ python3-huggingface-hub (>= 0.30.0) <!nocheck>,
+ python3-jinja2 (>= 3.0.0) <!nocheck>,
+ python3-prompt-toolkit (>= 3.0.51) <!nocheck>,
+ python3-pydantic (>= 2.0.0) <!nocheck>,
+ python3-tomlkit (>= 0.13.0) <!nocheck>,
+ python3-uvicorn (>= 0.23.0) <!nocheck>
+Standards-Version: 4.7.2
+Rules-Requires-Root: no
+X-Python3-Version: >= 3.10
+Homepage: https://github.com/ByCzech/TLlama
+Vcs-Git: https://github.com/ByCzech/TLlama.git -b packaging/debian
+Vcs-Browser: https://github.com/ByCzech/TLlama/tree/packaging/debian
+
+Package: tllama
+Architecture: all
+Depends:
+ ${misc:Depends},
+ ${python3:Depends},
+ adduser,
+ tllama-server,
+ python3-anyio (>= 4.9),
+ python3-fastapi (>= 0.115.0),
+ python3-filetype (>= 1.2.0),
+ python3-gguf (>= 0.17.1),
+ python3-httpx (>= 0.28.0),
+ python3-huggingface-hub (>= 0.30.0),
+ python3-jinja2 (>= 3.0.0),
+ python3-prompt-toolkit (>= 3.0.51),
+ python3-pydantic (>= 2.0.0),
+ python3-tomlkit (>= 0.13.0),
+ python3-uvicorn (>= 0.23.0)
+Description: local model inference daemon and command-line client
+ TLlama serves Ollama-compatible and OpenAI-compatible inference APIs using
+ private native tllama-server workers. It manages model definitions, model
+ storage, accelerator selection and worker lifetimes.
+ .
+ This package provides the tllamad foreground daemon, its systemd service and
+ server configuration, and the tllama client with an interactive prompt.
+ Native inference backends are supplied by separate tllama-server packages.

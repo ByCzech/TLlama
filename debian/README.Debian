@@ -1,0 +1,80 @@
+TLlama for Debian
+=================
+
+The tllama package installs both /usr/bin/tllama (client) and /usr/bin/tllamad
+(foreground daemon), using the system Python. It depends on tllama-server,
+whose metapackage supplies the private native runtime and CPU backend. Install
+additional tllama-server backend packages for GPU acceleration. Models are
+not included and are not downloaded by package installation.
+
+Configuration and service
+-------------------------
+
+/etc/tllama/server.toml is a dpkg-managed conffile. Local edits are retained
+on upgrade through the normal dpkg configuration-file mechanism. The unit
+reads this file explicitly; CLI > environment > TOML > built-in defaults.
+Use systemctl edit tllamad.service for unit overrides.
+
+The service is enabled and started on installation, subject to the host's
+service policy. It listens on 127.0.0.1:54800 by default, without preloading
+a model. Upgrades stop the old daemon and its workers before replacing code,
+then start the service through debhelper's standard service-policy handling.
+Removal stops the service; purge clears its packaged registration. A local
+systemd mask remains effective.
+
+The package creates a static system account and group named tllama. If the
+render and/or video device groups exist, the account is added to them on
+configuration. Backend driver permissions may require further local setup.
+The package does not create device groups or change device-node permissions.
+
+Systemd manages these directories:
+
+  /var/lib/tllama       persistent state, including models/ (mode 0750)
+  /var/cache/tllama     cache, including huggingface/ (mode 0750)
+  /run/tllama           private worker IPC (mode 0700)
+
+They are owned by tllama. Custom model paths require appropriate access for
+that account. Configuration paths are relative to the service working
+directory, /var/lib/tllama. Purge removes packaged configuration and service
+registration, but deliberately retains downloaded models, state, caches and
+the service account. Remove retained data manually only when no longer needed.
+
+If upgrading from a manual unit installed at
+/etc/systemd/system/tllamad.service, that local unit takes precedence over the
+packaged unit in /usr/lib/systemd/system. Review and remove the manual copy
+when adopting the packaged unit, then run systemctl daemon-reload. Preserve
+intentional customizations as a systemd drop-in.
+
+Build and versioning
+--------------------
+
+Build on Debian 13 with the required dependencies available in the configured
+APT repositories. Some upstream dependency floors need local backports;
+notably AnyIO >= 4.9 and GGUF >= 0.17.1. The build does not use pip or download
+Python dependencies. A missing or too-old dependency must be packaged first.
+Hugging Face support is installed as a runtime dependency so pull works.
+
+  sudo apt-get build-dep .
+  debuild -us -uc -b
+
+For a source build, supply the matching tllama_<upstream>.orig.tar.gz alongside
+the checkout, then use debuild -us -uc. For the initial candidate:
+
+  git archive --format=tar --prefix=tllama-1.0.0~rc1/ master |
+    gzip -n > ../tllama_1.0.0~rc1.orig.tar.gz
+  debuild -us -uc
+
+The package uses source format 3.0 (quilt). debian/changelog owns the Debian
+version. Debian's epoch and revision are excluded from the Python metadata;
+the prerelease tilde is removed for PEP 440. The rules export
+SETUPTOOLS_SCM_PRETEND_VERSION_FOR_TLLAMA, so a Git-less source build produces
+the same version: 1.0.0~rc1-1 reports 1.0.0rc1, and 1.0.0-1 reports 1.0.0.
+This does not create or move a Git release tag. Bump the changelog when the
+final release is ready.
+
+The build runs a small offline application smoke against the built package;
+DEB_BUILD_OPTIONS=nocheck / DEB_BUILD_PROFILES=nocheck can skip it in the usual
+Debian way. The full development pytest suite is separate. The same smoke is
+registered as an autopkgtest and checks installed metadata, entry points,
+configuration validation and the in-process /api/version endpoint. It loads
+no model, starts no listener and requires no GPU.

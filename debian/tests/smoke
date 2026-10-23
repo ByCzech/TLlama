@@ -1,0 +1,82 @@
+#!/usr/bin/python3
+"""Check the built/installed application without a model, GPU or daemon."""
+
+import argparse
+from importlib import import_module, metadata
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+
+
+def run(module, *arguments, env):
+    result = subprocess.run(
+        [sys.executable, "-m", module, *arguments], env=env,
+        capture_output=True, text=True, timeout=30, check=True,
+    )
+    return result.stdout.strip()
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--expected-version")
+    args = parser.parse_args()
+    version = metadata.version("tllama")
+    assert version != "0.0.0.dev0", version
+    if args.expected_version is not None:
+        from packaging.version import Version
+        assert version == str(Version(args.expected_version)), (version, args.expected_version)
+    scripts = {entry.name: entry.value for entry in
+               metadata.distribution("tllama").entry_points
+               if entry.group == "console_scripts"}
+    assert scripts == {"tllama": "tllama.cli:main", "tllamad": "tllama.daemon:main"}, scripts
+    if args.expected_version is None:
+        for command in ("tllama", "tllamad"):
+            reply = subprocess.check_output(["/usr/bin/" + command, "--version"], text=True)
+            assert reply.strip() == command + " " + version, reply
+
+    # An installed package must supply every supported CLI path, including pull
+    # and REPL dependencies, without consulting a user's configuration or store.
+    for module in ("anyio", "fastapi", "filetype", "gguf", "httpx",
+                   "huggingface_hub", "jinja2", "prompt_toolkit", "pydantic",
+                   "tomlkit", "uvicorn"):
+        import_module(module)
+    with tempfile.TemporaryDirectory(prefix="tllama-package-") as temporary:
+        root = Path(temporary)
+        env = {name: value for name, value in os.environ.items()
+               if not name.startswith("TLLAMA_")}
+        env.update(HOME=temporary, XDG_CONFIG_HOME=str(root / "config"),
+                   TLLAMA_MODELS=str(root / "models"))
+        assert run("tllama", "--version", env=env) == "tllama " + version
+        assert run("tllama.daemon", "--version", env=env) == "tllamad " + version
+        assert "HTTP client" in run("tllama", "--help", env=env)
+        assert "--config" in run("tllama.daemon", "--help", env=env)
+        config = root / "server.toml"
+        config.write_text('[server]\nhost = "127.0.0.1"\nport = 54801\n', encoding="utf-8")
+        assert run("tllama.daemon", "--config", str(config), "--check-config", env=env) == "Configuration is valid."
+        report = json.loads(run("tllama.daemon", "--config", str(config), "--print-config", env=env))
+        assert report["settings"]["server.port"]["value"] == 54801, report
+        assert not (root / "models").exists()
+
+        # Exercise the actual ASGI application and version endpoint in process.
+        # No listener or native worker is started, and the store stays temporary.
+        probe = '''
+import asyncio
+import httpx
+from tllama.main import app
+from tllama.version import get_version
+async def check():
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        reply = await client.get("/api/version")
+        assert reply.status_code == 200, reply.text
+        assert reply.json() == {"version": get_version()}, reply.text
+asyncio.run(check())
+'''
+        subprocess.run([sys.executable, "-c", probe], env=env, check=True, timeout=30)
+    print("TLlama package smoke passed: " + version)
+
+
+if __name__ == "__main__":
+    main()

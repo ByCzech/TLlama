@@ -1,0 +1,8 @@
+tllama (1.0.0~rc1-1) unstable; urgency=medium
+
+  * Initial Debian packaging of the TLlama client and daemon.
+  * Depend on the separate tllama-server native runtime package.
+  * Install server configuration and manage the tllamad systemd service.
+  * Preserve upstream version metadata when building without Git history.
+
+ -- ByCzech <byczech@malyjarda.cz>  Fri, 23 Oct 2026 21:00:00 +0200

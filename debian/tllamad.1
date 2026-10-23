@@ -1,0 +1,79 @@
+.TH TLLAMAD 1 "October 2026" "TLlama" "User Commands"
+.SH NAME
+tllamad \- foreground TLlama inference daemon
+.SH SYNOPSIS
+.B tllamad
+.RI [ options ]
+.br
+.B tllamad
+.RI [ options ] " rebuildrepo " [ options ]
+.SH DESCRIPTION
+.B tllamad
+serves model APIs and supervises private native tllama-server workers.
+It stays in the foreground. The Debian package supplies tllamad.service.
+.SH OPTIONS
+.TP
+.B --config FILE
+Select a server TOML configuration file explicitly.
+.TP
+.B --no-config
+Skip configuration-file discovery.
+.TP
+.B --check-config
+Validate the effective configuration and exit without starting a server.
+.TP
+.B --print-config
+Print effective configuration values and their sources, then exit.
+.TP
+.B --host ADDRESS
+Listener address. Default: 127.0.0.1.
+.TP
+.B --port PORT
+Listener port. Default: 54800.
+.TP
+.B --models-dir DIRECTORY
+Model repository root. Default: /var/lib/tllama/models.
+.TP
+.B --runtime-path FILE
+Absolute path to the private native runtime executable.
+.TP
+.B --device DEVICE
+Global default native device selection.
+.TP
+.B --backend-priority LIST
+Comma-separated backend priority.
+.TP
+.B --help
+Show all options and corresponding environment variables.
+.TP
+.B --version
+Show the installed daemon version.
+.SH CONFIGURATION
+Global precedence is command line, environment, server TOML, built-in defaults.
+File selection is --config, TLLAMA_CONFIG, the user's tllama/server.toml under
+XDG_CONFIG_HOME (or ~/.config), then /etc/tllama/server.toml.
+The first existing default file is used, without merging files.
+Relative paths use the daemon's working directory.
+.SH FILES
+.TP
+.I /etc/tllama/server.toml
+System service configuration.
+.TP
+.I /var/lib/tllama/models
+Default model repository.
+.TP
+.I /var/cache/tllama/huggingface
+Hugging Face cache used by the packaged service.
+.TP
+.I /run/tllama
+Private worker runtime directory used by the packaged service.
+.TP
+.I /usr/lib/tllama/server/tllama-server
+Native runtime supplied by the separate tllama-server package.
+.SH SEE ALSO
+.BR tllama (1),
+.BR systemctl (1)
+.br
+/usr/share/doc/tllama/README.Debian
+.br
+/usr/share/doc/tllama/docs/daemon.md

@@ -1,0 +1,63 @@
+.TH TLLAMA 1 "October 2026" "TLlama" "User Commands"
+.SH NAME
+tllama \- command-line client for a TLlama or Ollama-compatible server
+.SH SYNOPSIS
+.B tllama
+.RI [ options ] " command " [ arguments ]
+.SH DESCRIPTION
+.B tllama
+connects to an existing server. With no command it displays help.
+It does not launch a daemon.
+.SH COMMANDS
+.TP
+.B list, ls
+List available models.
+.TP
+.B show MODEL
+Show a model's definition and metadata.
+.TP
+.B ps
+List loaded models.
+.TP
+.B pull MODEL
+Download a model through the selected server.
+.TP
+.B rm MODEL...
+Remove model definitions.
+.TP
+.B stop MODEL
+Unload a model.
+.TP
+.B run MODEL [PROMPT...]
+Run inference, or open an interactive prompt when no prompt or redirected
+input is supplied. Enter /help for interactive commands.
+.TP
+.B cp SOURCE DESTINATION
+Copy a model definition.
+.TP
+.B create MODEL -f FILE
+Create a model from a TOML definition. Referenced client input files use the
+client working directory unless their paths are absolute.
+.TP
+.B version
+Show version information.
+.SH OPTIONS
+.TP
+.B --host ADDRESS
+Server address; overrides TLLAMA_HOST. Default: http://127.0.0.1:54800.
+.TP
+.B --timeout SECONDS
+Override the request timeout policy.
+.TP
+.B --json
+Use machine-readable output where supported.
+.TP
+.B --help
+Show help. Each command has its own --help.
+.TP
+.B --version
+Show the installed client version.
+.SH FILES
+.I /usr/share/doc/tllama/docs/cli.md
+.SH SEE ALSO
+.BR tllamad (1)

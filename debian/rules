@@ -1,0 +1,21 @@
+#!/usr/bin/make -f
+
+include /usr/share/dpkg/pkg-info.mk
+
+export PYBUILD_NAME = tllama
+export PYBUILD_SYSTEM = pyproject
+export PYBUILD_DESTDIR = debian/tllama
+# Debian's epoch/revision are excluded by pkg-info.mk. Remove the prerelease
+# tilde so setuptools receives a PEP 440 version, also in Git-less source builds.
+export SETUPTOOLS_SCM_PRETEND_VERSION_FOR_TLLAMA = $(subst ~,,$(DEB_VERSION_UPSTREAM))
+
+%:
+	dh $@ --buildsystem=pybuild
+
+override_dh_auto_test:
+	# Build/install smoke only; the full inference suite is a development check.
+	dh_auto_test -- --system=custom --test-args='PYTHONPATH={build_dir}:$$PYTHONPATH {interpreter} {dir}/debian/tests/smoke --expected-version $(SETUPTOOLS_SCM_PRETEND_VERSION_FOR_TLLAMA)'
+
+override_dh_installsystemd:
+	# Drain owned workers before replacing Python modules, then start the new code.
+	dh_installsystemd --no-restart-after-upgrade

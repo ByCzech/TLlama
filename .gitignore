@@ -22,3 +22,14 @@ env.bak/
 venv.bak/
 
 /models/
+
+# Debian packaging build products.
+/.pybuild/
+/.pc/
+/debian/.debhelper/
+/debian/debhelper-build-stamp
+/debian/files
+/debian/*.debhelper
+/debian/*.substvars
+/debian/autoreconf.*
+/debian/tllama/

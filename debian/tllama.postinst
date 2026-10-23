@@ -1,0 +1,22 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    configure)
+        addgroup --quiet --system tllama
+        adduser --quiet --system --ingroup tllama \
+            --home /var/lib/tllama --no-create-home \
+            --shell /usr/sbin/nologin tllama
+
+        # GPU device groups vary by driver and may not exist on CPU-only hosts.
+        for device_group in render video; do
+            if getent group "$device_group" >/dev/null; then
+                adduser --quiet tllama "$device_group"
+            fi
+        done
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0
