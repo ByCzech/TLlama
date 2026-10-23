@@ -40,16 +40,16 @@ def run_module(module, *args, models_dir, extra_env=None):
     )
 
 
-@pytest.mark.parametrize("module", ["tllama", "tllama.main", "tllama.cli"])
+@pytest.mark.parametrize("module", ["tllama.daemon", "tllama.main"])
 def test_the_command_runs_from_a_checkout(module, tmp_path):
-    """Three spellings a person reaches for during development. All of
+    """Both server spellings a person reaches for during development. All of
     them have to work; one of them silently did not."""
     result = run_module(module, "rebuildrepo", "--dryrun", models_dir=tmp_path)
 
     assert result.returncode == 0, result.stderr
 
 
-@pytest.mark.parametrize("module", ["tllama", "tllama.main", "tllama.cli"])
+@pytest.mark.parametrize("module", ["tllama.daemon", "tllama.main"])
 def test_nothing_is_raised_before_the_command_is_reached(module, tmp_path):
     """A NameError at import time is invisible to every test that imports
     the module normally, so it is asserted on directly."""
@@ -63,7 +63,7 @@ def test_help_does_not_need_a_model_store(tmp_path):
     result = run_module("tllama", "--help", models_dir=tmp_path)
 
     assert result.returncode == 0
-    assert "rebuildrepo" in result.stdout
+    assert "HTTP client" in result.stdout
 
 
 def test_a_bad_environment_variable_stops_the_command_with_a_message(tmp_path):
@@ -74,7 +74,7 @@ def test_a_bad_environment_variable_stops_the_command_with_a_message(tmp_path):
     server that comes up having quietly ignored the setting.
     """
     result = run_module(
-        "tllama",
+        "tllama.daemon",
         "rebuildrepo",
         "--dryrun",
         models_dir=tmp_path,
@@ -87,14 +87,9 @@ def test_a_bad_environment_variable_stops_the_command_with_a_message(tmp_path):
 
 
 def test_a_kv_cache_type_no_ggml_type_matches_stops_the_command(tmp_path):
-    """This one is resolved against llama_cpp rather than parsed, so it
-    reaches the same refusal by a different route.
-
-    It used to survive startup and surface as an HTTP 400 on the first
-    request that needed a model, reported as that model failing to load.
-    """
+    """The native KV contract is checked before a command starts work."""
     result = run_module(
-        "tllama",
+        "tllama.daemon",
         "rebuildrepo",
         "--dryrun",
         models_dir=tmp_path,
@@ -115,7 +110,7 @@ def test_overwrite_backups_without_force_is_refused(tmp_path):
     saw a clean run, and learnt nothing about why nothing happened.
     """
     result = run_module(
-        "tllama.cli", "rebuildrepo", "--overwrite-backups", models_dir=tmp_path
+        "tllama.daemon", "rebuildrepo", "--overwrite-backups", models_dir=tmp_path
     )
 
     assert result.returncode == 2
@@ -124,7 +119,7 @@ def test_overwrite_backups_without_force_is_refused(tmp_path):
 
 def test_overwrite_backups_with_force_is_accepted(tmp_path):
     result = run_module(
-        "tllama.cli",
+        "tllama.daemon",
         "rebuildrepo",
         "--force",
         "--overwrite-backups",
@@ -133,3 +128,48 @@ def test_overwrite_backups_with_force_is_accepted(tmp_path):
     )
 
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("module", ["tllama", "tllama.cli", "tllama.daemon"])
+@pytest.mark.parametrize("argument", ["--help", "--version"])
+def test_lightweight_entry_points_do_not_import_server_dependencies(module, argument, tmp_path):
+    code = '''
+import importlib.abc
+import runpy
+import sys
+class RefuseServer(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.split('.')[0] in {'fastapi', 'uvicorn', 'gguf', 'llama_cpp'} or fullname in {
+            'tllama.main', 'tllama.backend', 'tllama.config', 'tllama.worker'}:
+            raise AssertionError('Server dependency imported: ' + fullname)
+sys.meta_path.insert(0, RefuseServer())
+sys.argv = ['command', ARGUMENT]
+runpy.run_module(MODULE, run_name='__main__')
+'''.replace('ARGUMENT', repr(argument)).replace('MODULE', repr(module))
+    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True,
+                            env={**os.environ, 'PYTHONPATH': REPO_SRC}, timeout=15)
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize('module', ['tllama', 'tllama.cli'])
+def test_bare_client_shows_help_without_server_configuration(module, tmp_path):
+    models = tmp_path / 'absent'
+    result = run_module(module, models_dir=models,
+                        extra_env={'TLLAMA_MAX_LOADED_MODELS': 'invalid'})
+    assert result.returncode == 0, result.stderr
+    assert 'HTTP client' in result.stdout
+    assert not models.exists()
+
+
+@pytest.mark.parametrize('command', ['serve', 'start', 'rebuildrepo'])
+def test_client_does_not_launch_or_maintain_a_local_server(command, tmp_path):
+    result = run_module('tllama', command, models_dir=tmp_path / 'absent')
+    assert result.returncode == 2
+    assert 'Traceback' not in result.stderr
+
+
+def test_installed_commands_target_separate_lightweight_entry_points():
+    from pathlib import Path
+    import tomlkit
+    scripts = tomlkit.parse((Path(REPO_SRC).parent / 'pyproject.toml').read_text())['project']['scripts']
+    assert scripts == {'tllama': 'tllama.cli:main', 'tllamad': 'tllama.daemon:main'}

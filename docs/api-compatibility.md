@@ -9,6 +9,13 @@ The goal is to make TLlama usable with existing clients and libraries while keep
 
 TLlama is not yet a complete implementation of every Ollama or OpenAI API feature. This document describes the intended compatibility surface and known limitations.
 
+See [request-compatibility.md](request-compatibility.md) for the current
+request controls and their validation, streaming and residency behavior.
+
+`POST /v1/systemone` is a separate native-compatible text Decision extension,
+not a standard OpenAI/Ollama SDK method. See [decision-api.md](decision-api.md)
+for its typed JSON,limits,usage and error/ownership contract.
+
 ---
 
 ## Default Server Address
@@ -354,48 +361,28 @@ Exact setup depends on the client library.
 
 ## Tool Calls
 
-Tool call support is currently limited.
+Modern function tools are mapped through managed native workers on `/api/chat`
+and `/v1/chat/completions`. Tool choices and result histories are validated
+before model work. Clients execute the functions; TLlama does not.
 
-TLlama can accept OpenAI-compatible tool fields and pass them to `llama-cpp-python`.
-
-However, full automatic tool call support depends on upstream `llama-cpp-python` behavior.
-
-Observed behavior during testing:
-
-```text
-raw llama-server --jinja:
-  tool_choice forced   -> message.tool_calls
-  tool_choice auto     -> message.tool_calls
-  tool_choice required -> message.tool_calls
-
-llama-cpp-python server:
-  tool_choice forced   -> message.tool_calls
-  tool_choice auto     -> generated tool call returned as message.content
-  tool_choice required -> generated tool call returned as message.content
-```
-
-Because TLlama uses `llama-cpp-python` as the backend, this limitation currently affects TLlama too.
-
-TLlama intentionally avoids adding fragile heuristic parsing for model-generated tool calls as a workaround.
-
-Planned work:
-
-- investigate upstream `llama-cpp-python` parser behavior,
-- support tool calls in OpenAI-compatible endpoints,
-- support tool calls in Ollama-compatible endpoints.
-
----
+OpenAI streams expose appendable argument-string deltas with call IDs. Ollama
+emits complete validated argument objects after native completion, because
+partial JSON cannot prove a committed tool call. Model/template/native parser
+support determines the calls actually produced. See
+[native-tools.md](native-tools.md) for exact history, streaming and error rules.
 
 ## Vision and Audio
 
-Vision and audio support are planned but not currently stable.
+Inline images are supported on chat APIs when the selected worker has the
+required projector and live vision capability. Remote image URLs and arbitrary
+local paths are refused. Modern embedding routes also support their audited
+inline-image contract on compatible embedding models. See
+[native-vision.md](native-vision.md), [native-public-api.md](native-public-api.md)
+and [embedding-api.md](embedding-api.md). Attaching a projector does not select
+a model's generation/embedding mode automatically.
 
-Future work may include:
-
-- multimodal projector support,
-- image input handling,
-- audio input/output support,
-- model-specific multimodal routing.
+Audio APIs remain separate work. Do not infer an audio contract from upstream
+native capabilities alone.
 
 ---
 
@@ -451,3 +438,8 @@ curl -s http://127.0.0.1:54800/v1/chat/completions \
 - `docs/model-repositories.md`
 - `docs/metadata-cache.md`
 - `docs/development.md`
+
+
+The audited Ollama client parameter contract (20 options, including runner reloads)
+is documented in [ollama-options.md](ollama-options.md). `num_predict=0` follows
+the native runtime behavior unchanged; the proposed native patch 0078 is not adopted.

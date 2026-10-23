@@ -9,8 +9,15 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 8
 """Layout version of the GGUF metadata cache document.
+
+Bumped to 8 for GGUF license metadata; content digest caches remain valid.
+Bumped to 7 for Decision templates, head limits, token IDs and calibration.
+Bumped to 6 for explicit embedding output width, distinct from hidden width.
+Bumped to 5 for embedding pooling/dimensions, decision type and compact vocab size.
+Bumped to 4 for the named tool-use template. Digest caches remain valid.
+Bumped to 3 for the compact FIM inventory.
 
 Bumped to 2 when build_model_metadata_payload() gained is_projector,
 the shard position and recommended_sampling. A cached document written
@@ -128,6 +135,7 @@ def _save_cache_document(
     schema_version: int,
     section: str,
     payload: Dict[str, Any],
+    fingerprint: Optional[Dict[str, Any]] = None,
 ) -> None:
     """
     Save one cache document using an atomic replace.
@@ -137,7 +145,8 @@ def _save_cache_document(
     try:
         cache_dir.mkdir(parents=True, exist_ok=True)
 
-        fingerprint = build_model_file_fingerprint(model_path)
+        if fingerprint is None:
+            fingerprint = build_model_file_fingerprint(model_path)
 
         document = {
             "schema_version": schema_version,
@@ -208,8 +217,15 @@ def save_metadata_cache(
     model_name: str,
     model_path: str | Path,
     metadata: Dict[str, Any],
+    *,
+    fingerprint: Optional[Dict[str, Any]] = None,
 ) -> None:
-    """Save GGUF metadata to its JSON cache file."""
+    """Save GGUF metadata with the fingerprint of the file actually scanned.
+
+    A supplied fingerprint prevents a delayed write from labeling old metadata
+    with the identity of weights replaced after the scan. The cache loader will
+    reject that old snapshot for the new file.
+    """
     cache_dir = Path(cache_dir)
     model_path = Path(model_path)
 
@@ -221,6 +237,7 @@ def save_metadata_cache(
         schema_version=SCHEMA_VERSION,
         section=_METADATA_SECTION,
         payload=metadata,
+        fingerprint=fingerprint,
     )
 
 
@@ -253,6 +270,8 @@ def save_digest_cache(
     model_name: str,
     model_path: str | Path,
     digest: Dict[str, Any],
+    *,
+    fingerprint: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Save a model content digest to its JSON cache file."""
     cache_dir = Path(cache_dir)
@@ -266,6 +285,7 @@ def save_digest_cache(
         schema_version=DIGEST_SCHEMA_VERSION,
         section=_DIGEST_SECTION,
         payload=digest,
+        fingerprint=fingerprint,
     )
 
 

@@ -50,6 +50,8 @@ class TestClientOverridesToml:
             client_value = 999 if not isinstance(baseline, float) else 0.999
             toml_value = 888 if not isinstance(baseline, float) else 0.888
 
+            if key == "mirostat_mode":
+                client_value, toml_value = 2, 1
             kwargs = build_sampling_kwargs({client_key: client_value}, {"sampling_defaults": {key: toml_value}})
             assert kwargs[key] == client_value, f"{key}: client should win"
 
@@ -109,7 +111,7 @@ class TestMaxTokens:
 
         kwargs = build_sampling_kwargs(opts, metadata_info)
 
-        assert kwargs["max_tokens"] is None
+        assert kwargs["max_tokens"] == 0
 
 
 class TestStop:

@@ -151,23 +151,30 @@ Copy a GGUF file into the `Local` directory:
 sudo cp ./model.gguf /var/lib/tllama/models/Local/my-local-model.gguf
 ```
 
-Then list models:
+Register the missing definition, then list models:
 
 ```bash
+tllamad rebuildrepo --dryrun
+tllamad rebuildrepo
 OLLAMA_HOST=127.0.0.1:54800 ollama list
 ```
 
-If metadata cache does not exist yet, TLlama creates it lazily when the model is listed or shown.
+A bare GGUF is not listed until a TOML definition points at it. Use the same
+server configuration/model store for `rebuildrepo` and the running daemon;
+global daemon flags precede the maintenance subcommand. Alternatively,
+`tllama create MODEL -f FILE` uploads client-side `from` files and writes the
+definition through HTTP; see [CLI create/import](cli.md#create-and-import-models).
+If metadata cache does not exist yet, listing/show creates it lazily.
 
 ---
 
 ## Writing the Missing `.toml` Definitions
 
-A `.gguf` that no `.toml` points at is not a model: it is not listed and cannot be loaded. `tllama rebuildrepo` writes the definitions that are missing, for a repository that predates them and equally for a file just copied into `Local/` by hand.
+A `.gguf` that no `.toml` points at is not a model: it is not listed and cannot be loaded. `tllamad rebuildrepo` writes the definitions that are missing, for a repository that predates them and equally for a file just copied into `Local/` by hand.
 
 ```bash
-tllama rebuildrepo --dryrun     # report only, writes nothing
-tllama rebuildrepo              # add the definitions that are absent
+tllamad rebuildrepo --dryrun     # report only, writes nothing
+tllamad rebuildrepo              # add the definitions that are absent
 ```
 
 Without `--force` it only adds; a `.toml` that already exists is left exactly as it is, so the command is safe to run at any time.
@@ -181,7 +188,7 @@ A second `--force` therefore finds a `.toml.bak` already there. It **skips that 
 Two ways forward from a skip. Move the `.toml.bak` somewhere else, which keeps it and lets the file be rebuilt; or say it is expendable:
 
 ```bash
-tllama rebuildrepo --force --overwrite-backups
+tllamad rebuildrepo --force --overwrite-backups
 ```
 
 That flag does nothing on its own and is refused without `--force`. `--dryrun` reports the skips exactly as the real run performs them.

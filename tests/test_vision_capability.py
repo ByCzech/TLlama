@@ -23,7 +23,10 @@ def place_gguf(manager):
 
         writer = gguf.GGUFWriter(path=str(path), arch=architecture)
         for key, value in keys.items():
-            writer.add_string(key.replace("__", "."), str(value))
+            if type(value) is bool:
+                writer.add_bool(key.replace('__', '.'), value)
+            else:
+                writer.add_string(key.replace("__", "."), str(value))
         writer.write_header_to_file()
         writer.write_kv_data_to_file()
         writer.close()
@@ -61,6 +64,13 @@ from = "/mimo/repo/mmproj.gguf"
 
 
 class TestWhatTheMetadataSays:
+    async def test_an_explicit_audio_only_projector_does_not_declare_vision(self, manager, place_gguf, define):
+        place_gguf('Local/model.gguf')
+        place_gguf('Local/mmproj.gguf', architecture='clip', clip__has_vision_encoder=False)
+        define('model', WITH_PROJECTOR)
+        metadata = await manager.get_model_metadata('model')
+        assert metadata['has_projector'] is True and metadata['vision_configured'] is False
+
     async def test_a_working_projector_is_reported(
         self, manager, place_gguf, define
     ):
@@ -126,8 +136,11 @@ class TestWhatTheEndpointReports:
 
         return factory
 
-    def test_vision_is_listed_for_a_model_with_a_projector(self, show):
+    def test_configured_vision_is_advertised_without_loading(self, show):
         assert "vision" in show({"has_projector": True})
+
+    def test_explicit_audio_only_projector_is_not_vision(self, show):
+        assert 'vision' not in show({'has_projector':True, 'vision_configured':False})
 
     def test_vision_is_not_listed_without_one(self, show):
         assert "vision" not in show({"has_projector": False})

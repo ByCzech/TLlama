@@ -1,179 +1,200 @@
-"""The `tllama` command.
-
-Kept apart from main.py so that adding a subcommand does not mean editing
-the module that also builds the FastAPI application. The entry point in
-pyproject.toml has named tllama.main:main since before there was a main
-to name; this is what it now reaches.
-"""
+"""Client entry point; importing it never constructs a server."""
 
 from __future__ import annotations
 
 import argparse
-import logging
+import asyncio
+from contextlib import aclosing
+import json
+import math
 import sys
+from typing import Sequence
 
-from typing import Any, Dict, List, Optional, Sequence
+from tllama.version import get_version
 
-from tllama.config import ConfigError
-
-
-def _rebuild_repo(args: argparse.Namespace) -> int:
-    # Imported here rather than at module scope: `tllama --help` should
-    # not have to load llama_cpp and construct a ModelManager first.
-    from tllama.backend import model_manager
-
-    # argparse cannot say "this one depends on that one", and letting it
-    # pass silently would be the worse half of the same fault this whole
-    # option exists to fix: a person who typed the destructive flag and
-    # got no destruction, and no word about why.
-    if args.overwrite_backups and not args.force:
-        print(
-            "tllama: --overwrite-backups only means something with --force; "
-            "on its own there is nothing to back up.",
-            file=sys.stderr,
-        )
-        return 2
-
-    model_manager.ensure_storage()
-
-    results = model_manager.rebuild_repository(
-        force=args.force,
-        overwrite_backups=args.overwrite_backups,
-        dry_run=args.dryrun,
-    )
-
-    return _report(results, models_dir=model_manager.models_dir, dry_run=args.dryrun)
+WAIT_NOTICE_AFTER = 2.0
 
 
-def _report(results: List[Dict[str, Any]], *, models_dir, dry_run: bool) -> int:
-    """Print what happened, grouped so the destructive part cannot hide.
-
-    Overwrites are listed separately from creations on purpose. Forty new
-    definitions and three replaced ones in one list means the three nobody
-    can afford to miss are the three least likely to be read.
-    """
-    def shown(path) -> str:
-        try:
-            return str(path.relative_to(models_dir))
-        except (ValueError, AttributeError):
-            return str(path)
-
-    created = [r for r in results if r["action"] == "create"]
-    overwritten = [r for r in results if r["action"] == "overwrite"]
-    skipped = [r for r in results if r["action"] == "skip"]
-
-    verb = "would create" if dry_run else "created"
-    for entry in created:
-        print(f"{verb}: {shown(entry['toml'])}")
-
-    if overwritten:
-        print()
-        verb = "WOULD OVERWRITE" if dry_run else "overwrote"
-        for entry in overwritten:
-            print(f"{verb}: {shown(entry['toml'])}")
-
-    if skipped:
-        print()
-        for entry in skipped:
-            print(f"skipped: {shown(entry['file'])} -- {entry['reason']}")
-
-    print()
-    print(
-        f"{len(created)} to create, {len(overwritten)} to overwrite, "
-        f"{len(skipped)} skipped"
-        if dry_run
-        else f"{len(created)} created, {len(overwritten)} overwritten, "
-             f"{len(skipped)} skipped"
-    )
-
-    if dry_run:
-        print("Nothing was written.")
-
-    return 0
+def _positive_timeout(value):
+    try:
+        number = float(value)
+        if math.isfinite(number) and number > 0:
+            return number
+    except ValueError:
+        pass
+    raise argparse.ArgumentTypeError('timeout must be a finite number greater than zero')
 
 
-def _serve(args: argparse.Namespace) -> int:
-    from tllama.main import start_server
-
-    start_server()
-    return 0
+def _client_options(parser):
+    # Suppressed subparser defaults preserve flags supplied before the command.
+    parser.add_argument('--host', default=argparse.SUPPRESS,
+                        help='Server HTTP(S) address (overrides TLLAMA_HOST; default 127.0.0.1:54800).')
+    parser.add_argument('--timeout', type=_positive_timeout, default=argparse.SUPPRESS,
+                        help='HTTP inactivity limit in seconds (default: no read limit for list/show/pull/run, otherwise 30; connect at most 10).')
+    parser.add_argument('--json', action='store_true', default=argparse.SUPPRESS,
+                        help='Print the full server response as JSON.')
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="tllama",
-        description="TLlama server and model repository tools.",
-    )
-
-    subcommands = parser.add_subparsers(dest="command")
-
-    serve = subcommands.add_parser("serve", help="Run the TLlama server.")
-    serve.set_defaults(handler=_serve)
-
-    rebuild = subcommands.add_parser(
-        "rebuildrepo",
-        help="Write the .toml definitions that make .gguf files into models.",
-        description=(
-            "A .gguf that no .toml points at is not a model: it is not "
-            "listed and cannot be loaded. This writes the missing "
-            "definitions, for a repository that predates them and equally "
-            "for a file copied into Local/ by hand. Safe to run at any "
-            "time: without --force it only adds files that were not there."
-        ),
-    )
-    rebuild.add_argument(
-        "--dryrun",
-        action="store_true",
-        help="Show what would happen and write nothing.",
-    )
-    rebuild.add_argument(
-        "--force",
-        action="store_true",
-        help=(
-            "Also replace definitions that already exist. Each replaced "
-            "file is kept as a .toml.bak alongside it, and a file whose "
-            ".toml.bak is already there is skipped rather than losing it."
-        ),
-    )
-    rebuild.add_argument(
-        "--overwrite-backups",
-        action="store_true",
-        help=(
-            "Replace an existing .toml.bak instead of skipping the file. "
-            "Says the previous backup is expendable; needs --force."
-        ),
-    )
-    rebuild.set_defaults(handler=_rebuild_repo)
-
+    parser = argparse.ArgumentParser(prog='tllama', description='TLlama HTTP client.')
+    parser.add_argument('--version', action='version', version=f'tllama {get_version()}')
+    _client_options(parser)
+    commands = parser.add_subparsers(dest='command')
+    for name, aliases, help_text in [
+        ('list', ['ls'], 'List models available on the server.'),
+        ('show', [], 'Show model information or its definition.'),
+        ('ps', [], 'Show resident models and reported memory placement.'),
+        ('version', [], 'Show client and server versions.'),
+        ('pull', [], 'Download a Hugging Face model through the server.'),
+        ('rm', [], 'Delete model definitions; keep their weight files.'),
+        ('stop', [], 'Request unload after active inference leases drain.'),
+        ('run', [], 'Run a model with a prompt, stdin, or an interactive session.'),
+        ('cp', [], 'Copy a model definition; share existing weight files.'),
+        ('create', [], 'Create a model from TOML; upload from files into server Local.'),
+    ]:
+        command = commands.add_parser(name, aliases=aliases, help=help_text)
+        _client_options(command)
+        command.set_defaults(operation=name)
+        if name == 'create':
+            command.add_argument('model')
+            command.add_argument('--file', '-f', required=True, help='Client-side TOML definition path.')
+            command.add_argument('--force', action='store_true', help='Replace an existing definition; never replace weights.')
+        elif name == 'cp':
+            command.add_argument('source')
+            command.add_argument('destination')
+            command.add_argument('--force', action='store_true', help='Replace an existing destination definition.')
+        elif name == 'run':
+            from tllama.cli_run import add_run_options
+            add_run_options(command)
+        elif name in {'pull', 'stop'}:
+            command.add_argument('model')
+        elif name == 'rm':
+            command.add_argument('models', nargs='+')
+        elif name == 'show':
+            command.add_argument('model')
+            fields = command.add_mutually_exclusive_group()
+            for field in ('modelfile', 'parameters', 'template', 'system', 'license'):
+                fields.add_argument('--' + field, dest='field', action='store_const', const=field,
+                                    help=f'Print only the {field} text.')
     return parser
 
 
-def main(argv: Optional[Sequence[str]] = None) -> int:
+async def _wait_for_model_info(awaitable, *, notice):
+    if not notice:
+        return await awaitable
+    task = asyncio.create_task(awaitable)
+    try:
+        await asyncio.wait({task}, timeout=WAIT_NOTICE_AFTER)
+        if not task.done():
+            print('Waiting for TLlama to return model information; metadata indexing may take time. Ctrl+C cancels.',
+                  file=sys.stderr, flush=True)
+        return await task
+    finally:
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+async def _execute(args):
+    from tllama.client import ClientError, TLlamaClient
+    from tllama.cli_output import models_text, processes_text, show_text
+
+    as_json = getattr(args, 'json', False)
+    async with TLlamaClient(getattr(args, 'host', None), timeout=getattr(args, 'timeout', None)) as client:
+        if args.operation == 'run':
+            from tllama.cli_run import run
+            return await run(client, args)
+        if args.operation == 'cp':
+            data = await client.copy(args.source, args.destination, force=args.force)
+            print(json.dumps(data, ensure_ascii=False) if as_json else f'copied: {args.source} -> {args.destination}')
+            return 0
+        if args.operation == 'create':
+            from tllama.client_import import create_from_file
+            data = await create_from_file(client, args.model, args.file, force=args.force, as_json=as_json)
+            print(json.dumps(data, ensure_ascii=False) if as_json else f'created: {args.model}')
+            return 0
+        if args.operation == 'pull':
+            previous = None
+            async with aclosing(client.pull(args.model)) as progress:
+                async for event in progress:
+                    if as_json:
+                        print(json.dumps(event, ensure_ascii=False), flush=True)
+                    else:
+                        from tllama.cli_output import size_text
+                        text = event['status']
+                        if 'completed' in event:
+                            text += f": {size_text(event['completed'])} / {size_text(event.get('total'))}"
+                        if text != previous:
+                            print(text, file=sys.stderr, flush=True)
+                            previous = text
+            if not as_json:
+                print(f'pulled: {args.model}')
+            return 0
+        if args.operation == 'rm':
+            failed = False
+            for model in args.models:
+                try:
+                    data = await client.remove(model)
+                except ClientError as exc:
+                    failed = True
+                    print(f'tllama: {model}: {exc}', file=sys.stderr)
+                    if as_json:
+                        print(json.dumps({'model': model, 'error': str(exc)}, ensure_ascii=False))
+                else:
+                    if as_json:
+                        print(json.dumps({'model': model, 'response': data}, ensure_ascii=False))
+                    else:
+                        suffix = ' (weights kept)' if data.get('kept_model_file') else ''
+                        print(f'deleted definition: {model}{suffix}')
+            return 1 if failed else 0
+        if args.operation == 'stop':
+            data = await client.stop(args.model)
+            text = f'unload requested: {args.model}'
+        elif args.operation == 'list':
+            data = await _wait_for_model_info(client.list_models(), notice=not as_json)
+            text = '' if as_json else models_text(data)
+        elif args.operation == 'ps':
+            data = await client.ps()
+            text = '' if as_json else processes_text(data)
+        elif args.operation == 'show':
+            data = await _wait_for_model_info(client.show(args.model), notice=not as_json)
+            text = '' if as_json else show_text(args.model, data, args.field)
+        else:
+            data = {'client_version': get_version(), 'server_version': await client.version()}
+            text = f'tllama client: {data["client_version"]}\ntllama server: {data["server_version"]}'
+        if as_json:
+            print(json.dumps(data, ensure_ascii=False))
+        elif args.operation == 'show' and args.field:
+            # Preserve a retrieved definition verbatim, including its final newline.
+            sys.stdout.write(text)
+        else:
+            print(text)
+    return 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    from tllama.cli_locale import configure_locale
+    configure_locale()
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.command is None:
+        parser.print_help()
+        return 0
+    if getattr(args, 'json', False) and getattr(args, 'field', None):
+        parser.error('--json cannot be combined with a show text selector')
+    from tllama.client import ClientConfigError, ClientError
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(levelname)-8s %(message)s",
-    )
-
-    handler = getattr(args, "handler", None)
-    if handler is None:
-        # No subcommand runs the server, which is what this entry point
-        # did before it had subcommands at all.
-        handler = _serve
-
-    # Every subcommand reads the environment, whether by starting the
-    # server or by constructing the ModelManager, so this wraps all of
-    # them rather than just serve. A bad variable is the operator's typo,
-    # not a bug: a traceback would bury the one line that says which
-    # variable and what it should look like.
     try:
-        return handler(args)
-    except ConfigError as exc:
-        print(f"tllama: {exc}", file=sys.stderr)
+        return asyncio.run(_execute(args))
+    except ClientConfigError as exc:
+        print(f'tllama: {exc}', file=sys.stderr)
         return 2
+    except ClientError as exc:
+        print(f'tllama: {exc}', file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        return 130
 
 
-if __name__ == "__main__":
-    sys.exit(main())
+if __name__ == '__main__':
+    raise SystemExit(main())

@@ -1,38 +1,34 @@
-import os
 import time
 import asyncio
 import logging
 import threading
 from contextlib import asynccontextmanager
-import gc
-import ctypes
 import shutil
+import itertools
 
 from dataclasses import dataclass
 from pathlib import Path
 from hashlib import sha256
 
-from llama_cpp import Llama
-from llama_cpp.llama_chat_format import Jinja2ChatFormatter, MTMDChatHandler
-from typing import Dict, Optional, Any, List
-from datetime import datetime, timezone, timedelta
+from typing import Dict, Optional, Any, List, Mapping
 
-from tllama._ext import device_memory_totals
 from tllama.config import BackendConfig, ConfigError, load_backend_config_from_env
 from tllama.helpers.common import normalize_keep_alive
-from tllama.helpers.llama_stats import load_llama_with_captured_stats
 from tllama.helpers.gguf_metadata import read_gguf_metadata, build_model_metadata_payload
 from tllama.helpers.model_toml import (
     TomlModelError,
     VirtualModelSpec,
     parse_model_toml,
     render_model_toml,
-    resolve_kv_cache_types,
     resolve_repo_relative_path,
     write_model_toml,
 )
 from tllama.helpers.runtime_params import coerce_runtime_overrides
 from tllama.helpers.sampling_params import coerce_sampling_overrides
+from tllama.native_config import resolve_worker_config
+from tllama.native_params import freeze_values
+from tllama.residency import NativeResidency, ModelDefinition, ResidencyClosed, _settle_owned
+from tllama.worker import NativeWorker
 from tllama.helpers.metadata_cache import (
     build_model_file_fingerprint,
     load_metadata_cache,
@@ -99,19 +95,44 @@ class PullProgress:
 def _hf_tqdm_class_for(progress: "PullProgress"):
     """Build a tqdm-compatible class that reports into `progress` instead of drawing a bar.
 
-    `hf_hub_download` only ever calls `cls(total=..., initial=..., ...)`, then
-    `.update(n)` per chunk, and uses the instance as a context manager. It
-    does not require a `tqdm` subclass -- see huggingface_hub's
-    `_create_progress_bar`, which calls a non-tqdm class with plain kwargs.
+    HTTP and Xet update reconstructed file bytes through `update`. Xet can
+    also report a separate network-byte stream and mutate the bar's total.
+    Only reconstructed bytes belong in Ollama's completed/total counters;
+    transfer bytes may differ through compression/deduplication.
     """
 
     class _HfTqdmProgressAdapter:
         def __init__(self, *args, total: int | None = None, initial: int = 0, **kwargs):
-            progress.set_total(total)
+            self.n = initial
+            self.total = total
             progress.add(initial)
 
+        @property
+        def total(self):
+            return self._total
+
+        @total.setter
+        def total(self, value):
+            self._total = value
+            progress.set_total(value)
+
         def update(self, n: int = 1) -> None:
+            self.n += n
             progress.add(n)
+
+        def update_transfer(self, n: int = 1) -> None:
+            # Declaring this hook routes both Xet streams into this one bar.
+            # Network bytes must not be added to reconstructed file bytes.
+            pass
+
+        def set_postfix_str(self, s: str = "", refresh: bool = True) -> None:
+            pass  # Speed/formatting belongs to the client displaying progress.
+
+        def set_transfer_postfix_str(self, s: str = "", refresh: bool = True) -> None:
+            pass
+
+        def refresh(self) -> None:
+            pass
 
         def close(self) -> None:
             pass
@@ -120,6 +141,7 @@ def _hf_tqdm_class_for(progress: "PullProgress"):
             return self
 
         def __exit__(self, exc_type, exc, tb) -> bool:
+            self.close()
             return False
 
     return _HfTqdmProgressAdapter
@@ -132,352 +154,15 @@ class CachedMetadataEntry:
     value: Dict[str, Any]
 
 
-class _ConfiguredMtmdCpp:
-    """A stand-in for a handler's mtmd_cpp that pre-fills context params.
-
-    _init_mtmd_context builds its params by calling
-    mtmd_context_params_default() and then writing four fields of its own
-    over the result. Overriding the method itself would mean carrying a
-    copy of somebody else's body; standing in front of the one call it
-    makes for its defaults reaches the same place and stays out of the
-    way of everything after it -- including those four, which are written
-    later and so still win.
-
-    A ctypes Structure accepts an assignment to a name it does not have,
-    silently and with no effect on the C struct (verified). So the field
-    names are checked against _fields_ rather than trusted, or a renamed
-    field upstream would turn a .toml into a no-op.
-    """
-
-    def __init__(self, wrapped, overrides: Dict[str, Any]):
-        self._wrapped = wrapped
-        self._overrides = overrides
-        self.consulted = False
-
-    def __getattr__(self, name):
-        return getattr(self._wrapped, name)
-
-    def mtmd_context_params_default(self):
-        params = self._wrapped.mtmd_context_params_default()
-        known = {name for name, _ in getattr(type(params), "_fields_", ())}
-
-        for key, value in self._overrides.items():
-            if key not in known:
-                raise RuntimeError(
-                    f"[mmproj] '{key}' is not a field of mtmd_context_params "
-                    "in the installed llama-cpp-python, so setting it would "
-                    "do nothing."
-                )
-            setattr(params, key, value)
-
-        self.consulted = True
-        return params
-
-
-class _TemplateOverridingMTMDChatHandler(MTMDChatHandler):
-    """A projector handler that renders a [template] instead of the GGUF's.
-
-    MTMDChatHandler does its own templating: it reads the model's
-    tokenizer.chat_template, renders it itself, and only then hands the
-    result to mtmd for splitting on the media marker. That leaves nothing
-    for _apply_template_override_to_chat_handler to replace afterwards, so
-    without this a [template] next to an [mmproj] would be silently
-    ignored -- against the rule that a .toml outranks what the GGUF says.
-
-    _get_chat_template is the single seam where the handler decides what to
-    render, so overriding it is the whole change. Everything downstream --
-    the media marker substitution, the tokenization, the eval loop -- is
-    untouched and keeps working on the rendered text either way.
-    """
-
-    def __init__(self, *args, template: str, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._template_override = template
-
-    def _get_chat_template(self, llama_model) -> str:
-        return self._template_override
-
-
-def model_has_projector(llm) -> bool:
-    """Whether a loaded model can actually take an image.
-
-    Asked of the loaded model rather than of its definition on purpose:
-    what decides is whether a projector handler is attached and holding an
-    mtmd context, which is the thing an image is eventually handed to. A
-    .toml naming an [mmproj] says what was asked for; this says what
-    happened.
-    """
-    return isinstance(getattr(llm, "chat_handler", None), MTMDChatHandler)
-
-
-def _route_projector_output_to_llama_cpps_logger() -> None:
-    """Send clip.cpp's output where llama.cpp's already goes.
-
-    mtmd keeps its own logger, separate from llama.cpp's and from ggml's,
-    and its default writes straight to the C-level stderr:
-
-        // tools/mtmd/clip-impl.h
-        static void clip_log_callback_default(...) {
-            (void) level; fputs(text, stderr); fflush(stderr);
-        }
-
-    llama_log_set() does not reach it -- different state, different
-    symbol -- so contextlib.redirect_stderr, which swaps the Python
-    object, never sees a line of it. Everything the projector reports
-    about itself went past the capture and out to the console: measured
-    on a vision load, 613.14 MiB of weights and a 248.10 MiB compute
-    buffer that /api/ps therefore reported as nothing at all.
-
-    mtmd_log_set() is the seam, an MTMD_API entry point already bound in
-    llama-cpp-python, and it takes the same callback type. Handing it
-    llama-cpp-python's own means the projector's output is filtered and
-    delivered exactly like the model's, and the existing capture picks it
-    up with no further change.
-
-    Two things follow from clip's default ignoring the level argument.
-    One, it printed its whole tensor inventory -- 334 lines on the
-    measured model -- at every load, with no way to turn it off; that now
-    goes through the same level filter as everything else. Two, this is
-    a report about memory rather than a part of loading, so failing to
-    set it says so and leaves the load alone.
-    """
-    try:
-        from llama_cpp import mtmd_cpp
-        from llama_cpp._logger import llama_log_callback
-    except ImportError as exc:
-        logger.error(
-            "Cannot reach mtmd's logging hook (%s). The projector's weights "
-            "and compute buffers will be missing from /api/ps, and its own "
-            "output will bypass TLLAMA_DEBUG.", exc,
-        )
-        return
-
-    set_log = getattr(mtmd_cpp, "mtmd_log_set", None)
-    if set_log is None:
-        logger.error(
-            "The installed llama-cpp-python does not bind mtmd_log_set. The "
-            "projector's weights and compute buffers will be missing from "
-            "/api/ps, and its own output will bypass TLLAMA_DEBUG."
-        )
-        return
-
-    try:
-        set_log(llama_log_callback, ctypes.c_void_p(0))
-    except Exception as exc:
-        logger.error(
-            "mtmd_log_set failed (%s). The projector's weights and compute "
-            "buffers will be missing from /api/ps.", exc,
-        )
-
-
-def _match_llama_cpp_log_level_to_ours() -> None:
-    """Close llama.cpp's filter behind a load that has finished.
-
-    Everything /api/ps reports is parsed out of what llama.cpp says while
-    loading, so a load runs with verbose on and the filter wide open --
-    Llama.__init__ calls set_verbose(True) itself, so every load reopens
-    it whatever it was set to before. What is loud during a load is
-    routine; what is loud afterwards is not.
-
-    llama.cpp keeps talking through the same callback for the life of the
-    process. Per-request timings the API already carries since the
-    durations went on the wire, slot bookkeeping, and -- since the
-    projector's output was pointed at this same callback -- mtmd's
-    add_text, which prints the rendered prompt of every image request:
-
-        // tools/mtmd/mtmd.cpp
-        LOG_DBG("%s: %s\\n", __func__, txt.c_str());
-
-    On a server that may be answering several people, a full transcript
-    of their requests appearing on the console without anyone turning it
-    on is a question of privacy rather than of tidiness.
-
-    The level is the seam, and verbose deliberately is not. verbose also
-    serves as the disable flag for suppress_stdout_stderr, which dup2s
-    file descriptors 1 and 2 to /dev/null process-wide (_utils.py). It is
-    reached on the image path at every request and around the projector's
-    teardown, so turning verbose off would black out the server's own
-    stderr in the middle of unrelated work -- including the account of a
-    load failing in another thread. Moving the level moves nothing but a
-    comparison in the callback:
-
-        if logger.level <= GGML_LOG_LEVEL_TO_LOGGING_LEVEL[level]: print(...)
-
-    WARNING is the quietest setting that cannot lose that account: ERROR
-    maps to 40 and WARN to 30, both of which still pass, while INFO and
-    DEBUG do not. set_verbose(False) would go to ERROR and drop warnings
-    with the rest, which is why the level is set rather than the flag.
-
-    TLLAMA_DEBUG reaches here through TLlama's own logger level, the same
-    route the captured load log takes, rather than through a second
-    reading of the environment that could disagree with it.
-    """
-    try:
-        from llama_cpp import _logger
-    except ImportError:
-        return
-
-    library_logger = getattr(_logger, "logger", None)
-    if library_logger is None:
-        return
-
-    library_logger.setLevel(
-        logging.DEBUG if logger.isEnabledFor(logging.DEBUG) else logging.WARNING
-    )
-
-
-def _initialise_projector(llm) -> None:
-    """Bring a projector into memory now rather than at the first image.
-
-    MTMDChatHandler builds its mtmd context lazily, on the first call that
-    carries one. That defers the projector's weights and its compute
-    buffers -- hundreds of MiB between them -- past the point where anyone
-    is looking, with two consequences. The allocation lands mid-request
-    instead of at load, and, because it happens outside the window
-    load_llama_with_captured_stats reads, /api/ps reports a size for the
-    model that leaves the projector out entirely. Somebody checking
-    whether a vision model fits in VRAM is then reading a number that
-    cannot answer the question.
-
-    Ollama preloads and preallocates for exactly this reason: after a load
-    finishes, what it says about a model is the whole truth about it.
-
-    Not an error path. A projector that does not fit in VRAM spills into
-    system RAM and keeps working, only slower -- and being able to see
-    that is the point. Only a projector that fits nowhere at all fails,
-    and that failure belongs to the load, where it is raised.
-    """
-    handler = getattr(llm, "chat_handler", None)
-    initialise = getattr(handler, "_init_mtmd_context", None)
-    if initialise is None:
-        return
-
-    # Before, not after: everything worth reading is printed during the
-    # call below, and mtmd restores its own callback around some
-    # operations, so this is set each time rather than once at startup.
-    _route_projector_output_to_llama_cpps_logger()
-
-    initialise(llm)
-
-    # A .toml that asked for something and did not get it is the failure
-    # this whole section exists to prevent. The stand-in is the only thing
-    # that can say whether _init_mtmd_context still takes its defaults the
-    # way it did when this was written; if some later version stops
-    # asking, the settings vanish and nothing else notices.
-    shim = getattr(handler, "_mtmd_cpp", None)
-    if isinstance(shim, _ConfiguredMtmdCpp) and not shim.consulted:
-        raise RuntimeError(
-            "the projector context was built without reading the [mmproj] "
-            "settings; _init_mtmd_context no longer takes its defaults from "
-            "mtmd_context_params_default() in the installed "
-            "llama-cpp-python."
-        )
-
-
-def _apply_template_override_to_chat_handler(llm, virtual_spec: Optional[VirtualModelSpec]) -> None:
-    """Make a virtual model's [template] reach /api/chat and /v1/chat/completions too.
-
-    metadata_info["template"] (set from this same virtual_spec.template by
-    get_model_metadata) only ever reaches /api/generate's own
-    render_generate_prompt(). /api/chat and /v1/chat/completions call
-    create_chat_completion_ex()/create_chat_completion(), which resolve a
-    handler and let it render the prompt internally -- by default from a
-    Jinja2ChatFormatter llama-cpp-python already built and cached during
-    Llama.__init__, straight from the GGUF's own baked-in
-    tokenizer.chat_template, with no way for anything set afterward to reach
-    it. llm.chat_handler, once set, takes absolute priority over that cached
-    default (see lib/llama_wrap.py's _resolve_chat_completion_handler), so
-    replacing it here -- built the same way Llama.__init__ builds its own
-    default handlers -- is the one place that actually reaches every
-    endpoint.
-
-    Left untouched when llm.chat_handler is already set, which now means a
-    projector handler built by _build_vision_chat_handler and passed to
-    Llama(). Replacing it here would throw the projector away and leave the
-    model unable to see. That handler carries the [template] itself (see
-    _TemplateOverridingMTMDChatHandler), so nothing is lost by stopping.
-    """
-    if virtual_spec is None or virtual_spec.template is None:
-        return
-    if llm.chat_handler is not None:
-        return
-
-    bos_id = llm.token_bos()
-    eos_id = llm.token_eos()
-    bos_token = llm.detokenize([bos_id]).decode("utf-8", errors="ignore") if bos_id != -1 else ""
-    eos_token = llm.detokenize([eos_id]).decode("utf-8", errors="ignore") if eos_id != -1 else ""
-
-    llm.chat_handler = Jinja2ChatFormatter(
-        template=virtual_spec.template,
-        eos_token=eos_token,
-        bos_token=bos_token,
-        stop_token_ids=[eos_id] if eos_id != -1 else None,
-    ).to_chat_handler()
-
-
-def _device_residency(stats: Dict[str, Any]) -> Dict[str, Any]:
-    """What the devices can actually hold of what they were asked to.
-
-    A driver may accept an allocation larger than the card and put the
-    remainder in host memory. amdgpu does: measured, a load claiming
-    26334.90 MiB on a 16368.00 MiB card succeeded and every line of the
-    log named that card. A wider context on the same card reached
-    31454.90 MiB and still loaded. Nothing written down distinguishes it from a
-    load that fitted, so the capacity has to be asked of the device.
-
-    Only buffers named after a device count towards its claim; a host
-    buffer carries a device's name but was never going to it.
-
-    Returns the ceiling on how much of this model can be resident on
-    devices at all, and which devices were asked for more than they have.
-    Empty when the devices cannot be read, and then nothing changes.
-    """
-    totals = device_memory_totals()
-    if not totals:
-        return {}
-
-    capacity_mib = 0.0
-    overflow_mib = {}
-
-    for backend, kinds in (stats.get("buffers") or {}).items():
-        capacity_bytes = totals.get(backend)
-        if capacity_bytes is None:
-            continue
-
-        device_capacity_mib = capacity_bytes / 1024 / 1024
-        capacity_mib += device_capacity_mib
-
-        excess_mib = sum(kinds.values()) - device_capacity_mib
-        if excess_mib > 0:
-            overflow_mib[backend] = excess_mib
-
-    if not capacity_mib:
-        return {}
-
-    return {"capacity_mib": capacity_mib, "overflow_mib": overflow_mib}
-
-
 class ModelManager:
-    def __init__(self, config: BackendConfig | None = None):
+    def __init__(self, config: BackendConfig | None = None, *, native_worker_factory=NativeWorker,
+                 native_launch_options: Mapping[str, Any] | None = None):
         self.config = config or load_backend_config_from_env()
 
-        self.models: Dict[str, Llama] = {}
-
-        # Three locks, one per piece of state, because a single one made a
-        # model load block everything: a listing, a metadata read, even a
-        # request for a different model that was already resident.
-        #
-        # Two rules keep this safe. No path holds more than one of them at a
-        # time, and none of them is held across a long await. The model load
-        # in get_model is the remaining exception and is dealt with next.
-        self._models_lock = asyncio.Lock()      # models, active_models, janitor
-        self._metadata_lock = asyncio.Lock()    # the in-memory metadata cache
-        self._slots_lock = asyncio.Lock()       # the generation slot registry
+        self._metadata_lock = asyncio.Lock()
 
         self.models_dir = Path(self.config.models_dir)
         self.metadata_cache_dir = self.models_dir / ".tllama" / "metadata-cache"
-
-        self.active_models: Dict[str, Dict[str, Any]] = {}
 
         self._janitor_task: asyncio.Task | None = None
 
@@ -487,42 +172,134 @@ class ModelManager:
         # stray file does not produce a warning on every model listing.
         self._reported_unusable_files: set[str] = set()
 
-        # One semaphore per model name, guarding generation on that model.
-        self._inference_slots: Dict[str, asyncio.Semaphore] = {}
+        # Validate global cache types at startup without loading a model.
+        self._validate_global_kv_cache_types()
 
-        # Loads under way, by model name. A model is here between the moment
-        # the decision to load it is taken and the moment it becomes
-        # available, so that concurrent callers can wait rather than start a
-        # second load, and so that capacity accounts for it.
-        self._loading: Dict[str, asyncio.Future] = {}
-
-        # Resolved once, here, so a bad TLLAMA_KV_CACHE_TYPE stops the
-        # server at startup. It used to be resolved on every load, which
-        # meant an unknown name surfaced as a 400 on the first request to
-        # need a model -- possibly hours later, and reported as a failure
-        # to load that model rather than as the misconfiguration it was.
-        self._type_k, self._type_v = self._resolve_global_kv_cache_types()
-
-        # Converted here rather than in config.py, which cannot see
-        # Llama()'s signature, and here rather than at load time so an
+        # Validated using the native contract here rather than in the raw
+        # environment collector, and before load time so an
         # unknown parameter or an unusable value stops the server instead
         # of surfacing on the first request that needs a model.
-        self._runtime_overrides = coerce_runtime_overrides(
+        coerce_runtime_overrides(
             self.config.runtime_overrides
         )
 
-        # Same reasoning for the sampling layer, read off the completion
-        # signatures instead of Llama()'s. Public because the routers
-        # hand it to build_sampling_kwargs() on every request: a global
-        # value is server configuration, not model metadata, so it does
-        # not belong in the metadata dict the other layers travel in.
-        self.sampling_overrides = coerce_sampling_overrides(
+        # Validate sampling configuration before any request admits a worker.
+        coerce_sampling_overrides(
             self.config.sampling_overrides
         )
 
         self.hf_models_dir = self.models_dir / "HuggingFace"
         self.local_models_dir = self.models_dir / "Local"
         self.tllama_models_dir = self.models_dir / "TLlama"
+
+        self._stopping = False
+        self._shutdown_task: asyncio.Task | None = None
+        self._native_factory = native_worker_factory
+        options = dict(native_launch_options or {})
+        unknown = set(options) - {"environment", "executable", "load_timeout", "request_timeout"}
+        if unknown:
+            raise ConfigError(f"Unknown native supervisor options: {', '.join(sorted(unknown))}")
+        self._native_launch_options = freeze_values(options)
+        self._native_generation_numbers = itertools.count(1)
+        self._native = self._new_native_residency()
+
+    def _new_native_residency(self):
+        return NativeResidency(self._resolve_native_definition,
+                               max_loaded_models=self.config.max_loaded_models,
+                               worker_factory=self._native_factory,
+                               generation_numbers=self._native_generation_numbers)
+
+    def _check_running(self):
+        if self._stopping:
+            raise ResidencyClosed("ModelManager is shutting down")
+
+    async def _resolve_native_definition(self, model_name, num_ctx, *, runtime_overrides=None):
+        # Definition/path/header work is independent of the residency lock.
+        return await asyncio.to_thread(self._resolve_native_definition_sync, model_name, num_ctx, runtime_overrides=runtime_overrides)
+
+    def _resolve_native_definition_sync(self, model_name, num_ctx, *, runtime_overrides=None):
+        for _ in range(3):
+            before = self._toml_fingerprint_for_reference(model_name)
+            spec = self._resolve_virtual_model_spec(model_name)
+            if spec is None or spec.llm_model is None:
+                raise FileNotFoundError(f"Model '{model_name}' is not registered/imported in {self.models_dir}")
+            model = resolve_repo_relative_path(spec.llm_model, self.models_dir)
+            if not model.is_file():
+                raise FileNotFoundError(f"Model '{model_name}' does not point at an existing GGUF")
+            mmproj = self.resolve_mmproj_path(spec, model_name)
+            file_before = {"model": build_model_file_fingerprint(model),
+                           "projector": build_model_file_fingerprint(mmproj) if mmproj else None}
+            info = self._build_model_file_info_from_path(model)
+            if info is None:
+                raise FileNotFoundError(f"Model '{model_name}' does not point at an existing GGUF")
+            # Listing does not hash a potentially changed GGUF behind a live
+            # generation. Retain only a content digest already cached for it.
+            info['content_sha256'] = (load_digest_cache(self.metadata_cache_dir, model) or {}).get('content_sha256', '')
+            metadata_scanned = False
+            try:
+                metadata = load_metadata_cache(self.metadata_cache_dir, model)
+                if metadata is None:
+                    metadata = self._get_model_metadata_sync(str(model))
+                    metadata_scanned = metadata is not None
+                    metadata = metadata or {}
+            except Exception as exc:
+                # The native loader remains authoritative for model validity.
+                # Missing optional header recommendations must not invent defaults.
+                logger.warning("Native metadata scan failed for %s: %s", model_name, exc)
+                metadata = {}
+            after = self._toml_fingerprint_for_reference(model_name)
+            file_after = {"model": build_model_file_fingerprint(model),
+                          "projector": build_model_file_fingerprint(mmproj) if mmproj else None}
+            if before != after or file_before != file_after:
+                continue
+            resolved = resolve_worker_config(self.config, model.resolve(), spec, num_ctx=num_ctx,
+                                             mmproj=mmproj.resolve() if mmproj else None,
+                                             metadata=metadata, runtime_overrides=runtime_overrides,
+                                             **self._native_launch_options)
+            if metadata_scanned:
+                # Admission must warm the same header cache as /api/show.
+                # Otherwise every request rescans a cold GGUF, even while its
+                # worker remains loaded. Preserve the scanned fingerprint if
+                # the weights change again during the optional cache write.
+                save_metadata_cache(self.metadata_cache_dir, model_name, model, metadata,
+                                    fingerprint=file_after['model'])
+            fingerprint = {"toml": after, **file_after}
+            return ModelDefinition(model_name, resolved, fingerprint, info, metadata)
+        raise RuntimeError(f"Model definition '{model_name}' kept changing while it was resolved")
+
+    @asynccontextmanager
+    async def acquire_native_model(self, model_name: str, num_ctx: int | None = None,
+                                   keep_alive: str | int | float | None = None, *, operation: str | None = None, runtime_overrides=None):
+        """Hold one resolved worker generation through slot wait and inference."""
+        self._check_running()
+        self._ensure_janitor_running()
+        seconds = self.resolve_keep_alive(keep_alive)
+        async with self._native.lease(model_name, num_ctx=num_ctx, keep_alive_seconds=seconds,
+                                      operation=operation, runtime_overrides=runtime_overrides) as lease:
+            yield lease
+
+    async def preload_native_model(self, model_name: str, num_ctx: int | None = None,
+                                   keep_alive: str | int | float | None = None, *, runtime_overrides=None):
+        self._check_running()
+        self._ensure_janitor_running()
+        return await self._native.preload(model_name, num_ctx=num_ctx,
+                                          keep_alive_seconds=self.resolve_keep_alive(keep_alive), runtime_overrides=runtime_overrides)
+
+    async def unload_native_model(self, model_name: str):
+        self._check_running()
+        return await self._native.unload(model_name)
+
+    async def wait_native_closed(self, generation: int):
+        await self._native.wait_closed(generation)
+
+    def native_snapshot(self):
+        """Internal lifecycle diagnostics; not the public /api/ps memory shape."""
+        return self._native.snapshot()
+
+    def native_reporting_snapshot(self):
+        """Public reporting reads native ownership without touching inference."""
+        return self._native.reporting_snapshot()
+
 
     def ensure_storage(self) -> None:
         """Create the model store layout.
@@ -546,62 +323,6 @@ class ModelManager:
         ):
             directory.mkdir(parents=True, exist_ok=True)
 
-    def _now_iso(self) -> str:
-        return datetime.now(timezone.utc).isoformat()
-
-    def _future_iso(self, seconds: int) -> str:
-        return (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()
-
-    def _parse_iso_datetime(self, value: str | None) -> Optional[datetime]:
-        if not value:
-            return None
-        try:
-            return datetime.fromisoformat(value)
-        except (TypeError, ValueError):
-            return None
-
-    def _is_model_entry_expired(self, model_info: Dict[str, Any]) -> bool:
-        expires_at = self._parse_iso_datetime(model_info.get("expires_at"))
-        if expires_at is None:
-            return False
-        return expires_at <= datetime.now(timezone.utc)
-
-    def _unload_model_internal(self, model_name: str) -> bool:
-        llm = self.models.pop(model_name, None)
-
-        removed = False
-        if model_name in self.active_models:
-            del self.active_models[model_name]
-            removed = True
-
-        # Deliberately not calling llm.close() here. The weights are freed
-        # when the last reference to the Llama goes, and a request still
-        # generating on this model holds one: an unload that is asked for
-        # mid-generation has to wait for it. Freeing eagerly destroys the
-        # llama_context under the running request and segfaults the server,
-        # which is what happened when this did call close().
-        #
-        # ollama stop is a /api/generate with keep_alive 0, and the unload it
-        # triggers runs outside the generation slot, so this is not a corner
-        # case.
-        gc.collect()
-
-        return (llm is not None) or removed
-
-    def unload_all_models(self):
-        for model_name in list(self.models.keys()):
-            self._unload_model_internal(model_name)
-        self.active_models.clear()
-        gc.collect()
-
-    def _normalize_num_ctx(self, value, default: int = 0) -> int:
-        if value is None:
-            return default
-        try:
-            value = int(value)
-        except (TypeError, ValueError):
-            return default
-        return value if value > 0 else default
 
     def resolve_keep_alive(self, keep_alive: str | int | float | None) -> int | None:
         """Resolve a request-level keep_alive to seconds.
@@ -763,156 +484,6 @@ class ModelManager:
         # to fall back to here.
         return None
 
-    def _to_float_mib(self, value: Any) -> float:
-        try:
-            return float(value or 0.0)
-        except (TypeError, ValueError):
-            return 0.0
-
-    def _mib_to_bytes(self, value_mib: float) -> int:
-        return int(round(value_mib * 1024 * 1024))
-
-    def _build_memory_accounting(self, load_stats: Dict[str, Any]) -> Dict[str, Any]:
-        gpu_model_mib = self._to_float_mib(load_stats.get("gpu_model_mib"))
-        gpu_kv_mib = self._to_float_mib(load_stats.get("gpu_kv_mib"))
-        gpu_compute_mib = self._to_float_mib(load_stats.get("gpu_compute_mib"))
-        gpu_output_mib = self._to_float_mib(load_stats.get("gpu_output_mib"))
-        gpu_rs_mib = self._to_float_mib(load_stats.get("gpu_rs_mib"))
-        gpu_projector_mib = self._to_float_mib(load_stats.get("gpu_projector_mib"))
-
-        gpu_host_model_mib = self._to_float_mib(load_stats.get("gpu_host_model_mib"))
-        gpu_host_kv_mib = self._to_float_mib(load_stats.get("gpu_host_kv_mib"))
-        gpu_host_compute_mib = self._to_float_mib(load_stats.get("gpu_host_compute_mib"))
-        gpu_host_output_mib = self._to_float_mib(load_stats.get("gpu_host_output_mib"))
-        gpu_host_rs_mib = self._to_float_mib(load_stats.get("gpu_host_rs_mib"))
-
-        cpu_model_mib = self._to_float_mib(load_stats.get("cpu_model_mib"))
-        cpu_kv_mib = self._to_float_mib(load_stats.get("cpu_kv_mib"))
-        cpu_compute_mib = self._to_float_mib(load_stats.get("cpu_compute_mib"))
-        cpu_output_mib = self._to_float_mib(load_stats.get("cpu_output_mib"))
-        cpu_rs_mib = self._to_float_mib(load_stats.get("cpu_rs_mib"))
-        cpu_projector_mib = self._to_float_mib(load_stats.get("cpu_projector_mib"))
-
-        # True residency buckets for Ollama-like processor split.
-        # A projector's weights are resident the same way the model's are:
-        # loaded once, held for the lifetime of the model, and sitting on
-        # whichever device clip_ctx named.
-        gpu_loaded_mib = gpu_model_mib + gpu_kv_mib + gpu_projector_mib
-        cpu_loaded_mib = cpu_model_mib + cpu_kv_mib + cpu_projector_mib
-        loaded_total_mib = gpu_loaded_mib + cpu_loaded_mib
-
-        # Ollama-like ps size:
-        # - count real GPU-loaded model+KV+projector
-        # - count true CPU-loaded model+KV+projector
-        # - include small GPU helper buffers
-        # - intentionally DO NOT include gpu_host_compute_mib, because that is
-        #   host-side staging / pinned-memory fallback and it pollutes ps output
-        ps_size_mib = (
-            gpu_loaded_mib +
-            cpu_loaded_mib +
-            gpu_compute_mib +
-            gpu_rs_mib +
-            gpu_host_model_mib +
-            gpu_host_output_mib
-        )
-
-        # For Ollama-like PROCESSOR split, only true CPU-loaded model/KV
-        # memory should count as CPU. GPU host/helper buffers are still
-        # GPU-associated.
-        #
-        # Everything left in these buckets is something a processor
-        # computes with, because the parser keeps input tensors out of
-        # them. This used to ask how many layers went to the CPU and zero
-        # the buckets when none did, which was a way of removing those
-        # same input tensors after the fact -- and it removed a projector
-        # spilled into host RAM along with them, though a projector
-        # computed on the CPU is exactly the kind of work this figure
-        # exists to show.
-        ps_size_vram_mib = max(ps_size_mib - cpu_loaded_mib, 0.0)
-
-        # A device cannot hold more than it has. When the driver took an
-        # allocation larger than the card and put the rest in host RAM
-        # without saying so, this is the only thing that knows. Capping
-        # rather than subtracting the excess, because the excess is
-        # measured against everything the device was asked for while this
-        # figure counts only part of it -- taking one from the other
-        # would understate what is really resident.
-        residency = load_stats.get("device_residency") or {}
-        capacity_mib = residency.get("capacity_mib")
-        if capacity_mib is not None:
-            ps_size_vram_mib = min(ps_size_vram_mib, self._to_float_mib(capacity_mib))
-
-        # Full debug/runtime footprint
-        gpu_total_runtime_mib = (
-            gpu_model_mib +
-            gpu_kv_mib +
-            gpu_compute_mib +
-            gpu_output_mib +
-            gpu_rs_mib +
-            gpu_projector_mib +
-            gpu_host_model_mib +
-            gpu_host_kv_mib +
-            gpu_host_compute_mib +
-            gpu_host_output_mib +
-            gpu_host_rs_mib
-        )
-
-        cpu_total_runtime_mib = (
-            cpu_model_mib +
-            cpu_kv_mib +
-            cpu_compute_mib +
-            cpu_output_mib +
-            cpu_rs_mib +
-            cpu_projector_mib
-        )
-
-        total_runtime_mib = gpu_total_runtime_mib + cpu_total_runtime_mib
-
-        return {
-            "gpu_loaded_mib": gpu_loaded_mib,
-            "cpu_loaded_mib": cpu_loaded_mib,
-            "loaded_total_mib": loaded_total_mib,
-
-            "gpu_loaded_bytes": self._mib_to_bytes(gpu_loaded_mib),
-            "cpu_loaded_bytes": self._mib_to_bytes(cpu_loaded_mib),
-            "loaded_total_bytes": self._mib_to_bytes(loaded_total_mib),
-
-            "ps_size_vram_mib": ps_size_vram_mib,
-            "ps_size_mib": ps_size_mib,
-            "ps_size_vram_bytes": self._mib_to_bytes(ps_size_vram_mib),
-            "ps_size_bytes": self._mib_to_bytes(ps_size_mib),
-
-            "gpu_total_runtime_mib": gpu_total_runtime_mib,
-            "cpu_total_runtime_mib": cpu_total_runtime_mib,
-            "total_runtime_mib": total_runtime_mib,
-
-            "gpu_total_runtime_bytes": self._mib_to_bytes(gpu_total_runtime_mib),
-            "cpu_total_runtime_bytes": self._mib_to_bytes(cpu_total_runtime_mib),
-            "total_runtime_bytes": self._mib_to_bytes(total_runtime_mib),
-        }
-
-    def _with_runtime_totals(self, model_info: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Return a copy of loaded model info with:
-        - Ollama-like ps fields (size, size_vram, size_ram)
-        - debug/runtime totals
-
-        The accounting itself was done once, when the model was
-        registered, out of the whole load log. This reads that result
-        rather than working it out again: nothing about a loaded model's
-        memory changes afterwards, so a second pass could only ever agree
-        -- and it could not, because the entry holds the buckets and not
-        the rest of the log the first pass had. It quietly disagreed for
-        a year, and what a client got was the second answer.
-        """
-        item = dict(model_info)
-
-        # Ollama-compatible public fields
-        item["size_vram"] = item["ps_size_vram_bytes"]
-        item["size_ram"] = item["cpu_loaded_bytes"]
-        item["size"] = item["ps_size_bytes"]
-
-        return item
 
     def _filter_metadata_raw_for_cache(self, meta: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -951,138 +522,6 @@ class ModelManager:
     def _invalidate_metadata_cache_entry(self, model_name: str) -> None:
         self._metadata_cache.pop(model_name, None)
 
-    def _load_model_sync(
-        self,
-        model_path: str,
-        requested_n_ctx: int,
-        virtual_spec: Optional[VirtualModelSpec] = None,
-    ):
-        llama_kwargs = self._build_llama_load_kwargs(model_path, requested_n_ctx, virtual_spec)
-        llm, stats, log_text = load_llama_with_captured_stats(
-            Llama,
-            after_load=_initialise_projector,
-            **llama_kwargs,
-        )
-
-        failed = stats.get("failed_allocations") or []
-        if failed:
-            # ggml writes the failure and, on the projector path, returns
-            # success anyway: mtmd_init_from_file() does not check, so the
-            # model arrives here looking healthy. Measured on a 16 GB CUDA
-            # card, the first request carrying an image then killed the
-            # process outright -- taking every other loaded model with it,
-            # which is why this refuses rather than warns.
-            del llm
-            gc.collect()
-
-            # It loaded, so the output went to DEBUG with every other
-            # routine load. This one is not routine: the reason is in
-            # those lines and the model is about to be thrown away.
-            logger.error(
-                "Refusing a model whose buffers ggml could not allocate. "
-                "llama.cpp said:\n%s",
-                log_text,
-            )
-
-            worst = max(failed, key=lambda item: item["bytes"])
-            raise RuntimeError(
-                "ggml could not allocate a "
-                f"{worst['bytes'] / 1024 / 1024:.2f} MiB buffer on "
-                f"{worst['backend']} while loading this model"
-                + (f" (and {len(failed) - 1} more)" if len(failed) > 1 else "")
-                + ". The model would load but crash on first use. Leave the "
-                "device more room: lower n_gpu_layers in [runtime] to compute "
-                "some layers on the CPU, lower n_ctx, enable flash_attn, or, "
-                "for a projector, set warmup = false in [mmproj]."
-            )
-
-        _apply_template_override_to_chat_handler(llm, virtual_spec)
-
-        stats["device_residency"] = _device_residency(stats)
-
-        if stats["device_residency"].get("overflow_mib") and stats.get("processor") == "GPU":
-            # Every layer is computed on the device, so the layer rule says
-            # GPU and is right about the work. But part of what the device
-            # is reading sits in host RAM, size_vram is about to say so,
-            # and two numbers disagreeing is worse than either alone.
-            stats["processor"] = "GPU+CPU"
-
-        return llm, stats, log_text
-
-    def _close_llama_cpps_filter_if_nothing_is_loading(self) -> None:
-        """Quieten llama.cpp, but not while another load still needs it.
-
-        Two loads of different models run in parallel threads whenever
-        max_loaded_models allows more than one, and neither holds a lock
-        across the load itself. Lowering the level the moment any one of
-        them finished would cut the rest of the other one's output --
-        which is not a matter of noise: that output is where every figure
-        /api/ps reports comes from, so the second model would be
-        registered with buffers missing and nothing would say so.
-
-        _loading answers this exactly rather than approximately. It is
-        keyed by model name, and it is read and written only under
-        _models_lock on the event loop, so an empty one here means no
-        load is in flight. Callers must already hold that lock.
-        """
-        if not self._loading:
-            _match_llama_cpp_log_level_to_ours()
-
-    def _ensure_capacity_for_load(self, requested_model_name: str) -> None:
-        if requested_model_name in self.models:
-            return
-
-        # Loads already under way occupy capacity even though the models are
-        # not in self.models yet. _blocking_load makes a caller wait when they
-        # leave no room, so anything reaching here has room by that count.
-        in_flight = sum(1 for name in self._loading if name != requested_model_name)
-
-        if self.config.max_loaded_models <= 1:
-            for loaded_model_name in list(self.models.keys()):
-                if loaded_model_name != requested_model_name:
-                    self.unload_model(loaded_model_name)
-            return
-
-        if len(self.models) + in_flight >= self.config.max_loaded_models:
-            raise RuntimeError(
-                f"Loaded model limit reached ({self.config.max_loaded_models}). "
-                "Unload a model first or increase TLLAMA_MAX_LOADED_MODELS."
-            )
-
-    def _inference_slots_for(self, model_name: str) -> int:
-        """How many generations a model can run at once.
-
-        One, because llama-cpp-python gives no way to have more. Its Llama
-        object owns a single context and a single KV cache, and neither the
-        constructor nor create_completion accepts a sequence id, so two
-        concurrent generations on one object corrupt each other's state. The
-        library's own server serialises every request globally for this
-        reason; per model is the same guarantee, only finer.
-
-        llama.cpp itself can do better. A context carries n_seq_max and a
-        batch carries a seq_id, which is how llama-server serves --parallel N
-        with the weights loaded once and only the KV cache multiplied. Reaching
-        that means replacing or extending the binding layer, and when it
-        happens this method is what changes.
-        """
-        return 1
-
-    @asynccontextmanager
-    async def acquire_inference_slot(self, model_name: str):
-        """Hold a generation slot for a model for the duration of a request.
-
-        Callers must hold this for the whole generation, streaming included,
-        and must not assume anything about ordering between models: slots are
-        per model, so different models run concurrently.
-        """
-        async with self._slots_lock:
-            slots = self._inference_slots.get(model_name)
-            if slots is None:
-                slots = asyncio.Semaphore(self._inference_slots_for(model_name))
-                self._inference_slots[model_name] = slots
-
-        async with slots:
-            yield
 
     def _ensure_janitor_running(self) -> None:
         if self._janitor_task is None or self._janitor_task.done():
@@ -1091,316 +530,6 @@ class ModelManager:
                 name="tllama-model-janitor",
             )
 
-    def _refresh_active_model(self, model_name: str, keep_alive_seconds: int | None) -> None:
-        now_iso = self._now_iso()
-
-        entry = self.active_models[model_name]
-        entry["last_used_at"] = now_iso
-        entry["expires_at"] = None if keep_alive_seconds is None else self._future_iso(keep_alive_seconds)
-        entry["keep_alive"] = keep_alive_seconds
-
-    def _register_loaded_model(
-        self,
-        model_name: str,
-        model_info: Dict[str, Any],
-        llm: Llama,
-        load_stats: Dict[str, Any],
-        keep_alive_seconds: int | None,
-        toml_fingerprint: Optional[Dict[str, Any]] = None,
-    ) -> None:
-        actual_n_ctx = llm.n_ctx()
-        now_iso = self._now_iso()
-
-        if keep_alive_seconds is None:
-            expires_at = None
-        else:
-            expires_at = self._future_iso(keep_alive_seconds)
-
-        self.models[model_name] = llm
-        self.active_models[model_name] = {
-                    "id": model_name,
-                    "model": model_name,
-                    "filename": model_info["filename"],
-                    "path": model_info["path"],
-                    "size": model_info["size"],
-                    "mtime": model_info["mtime"],
-                    "sha256": model_info["sha256"],
-                    "loaded_at": now_iso,
-                    "last_used_at": now_iso,
-                    "expires_at": expires_at,
-                    "keep_alive": keep_alive_seconds,
-                    "n_ctx": actual_n_ctx,
-
-                    # The revision of the definition this model was built
-                    # from, so a later request can tell whether the file
-                    # still says what it said. Taken before the load rather
-                    # than after: a .toml edited while the load was running
-                    # did not shape the model that came out of it, and
-                    # recording the newer revision here would hide that.
-                    #
-                    # Internal to the manager. /api/ps builds its response
-                    # from named keys, so nothing here reaches a client.
-                    "toml_fingerprint": toml_fingerprint,
-
-                    # Stats from load log
-                    "processor": load_stats.get("processor", "100% CPU"),
-                    "offloaded_layers": load_stats.get("offloaded_layers", 0),
-                    "total_layers": load_stats.get("total_layers", 0),
-                    "gpu_model_mib": load_stats.get("gpu_model_mib", 0.0),
-                    "gpu_kv_mib": load_stats.get("gpu_kv_mib", 0.0),
-                    "gpu_compute_mib": load_stats.get("gpu_compute_mib", 0.0),
-                    "gpu_output_mib": load_stats.get("gpu_output_mib", 0.0),
-                    "gpu_rs_mib": load_stats.get("gpu_rs_mib", 0.0),
-                    "cpu_model_mib": load_stats.get("cpu_model_mib", 0.0),
-                    "cpu_kv_mib": load_stats.get("cpu_kv_mib", 0.0),
-                    "cpu_compute_mib": load_stats.get("cpu_compute_mib", 0.0),
-                    "cpu_output_mib": load_stats.get("cpu_output_mib", 0.0),
-                    "cpu_rs_mib": load_stats.get("cpu_rs_mib", 0.0),
-                    "gpu_host_model_mib": load_stats.get("gpu_host_model_mib", 0.0),
-                    "gpu_host_kv_mib": load_stats.get("gpu_host_kv_mib", 0.0),
-                    "gpu_host_compute_mib": load_stats.get("gpu_host_compute_mib", 0.0),
-                    "gpu_host_output_mib": load_stats.get("gpu_host_output_mib", 0.0),
-                    "gpu_host_rs_mib": load_stats.get("gpu_host_rs_mib", 0.0),
-
-                    **self._build_memory_accounting(load_stats),
-                }
-
-    def _blocking_load(self, model_name: str) -> Optional[asyncio.Future]:
-        """A load already under way that leaves no room for another one.
-
-        Capacity counts loaded models plus loads in progress. Counting only
-        the loaded ones would let two concurrent requests both pass the check
-        and exceed the limit, or exhaust memory outright, because a model
-        being loaded is not in self.models yet.
-        """
-        in_flight = [
-            future for name, future in self._loading.items()
-            if name != model_name
-        ]
-
-        if not in_flight:
-            return None
-
-        if self.config.max_loaded_models > len(self.models) + len(in_flight):
-            return None
-
-        return in_flight[0]
-
-    async def get_model(
-        self,
-        model_name: str,
-        num_ctx: int | None = None,
-        keep_alive: str | int | float | None = None,
-    ) -> Llama:
-        """Return a loaded model, loading it first if necessary.
-
-        The load itself runs outside the lock. Holding it across an await of
-        tens of seconds meant that loading one model stopped everything else,
-        including work on models already resident.
-
-        Concurrent callers therefore have to be told apart. Asking for the
-        model already being loaded means waiting for that load rather than
-        starting a second one. Asking for a different model when there is no
-        room for it means waiting for the load in progress to finish, which
-        is the serialising behaviour a single-model limit implies.
-        """
-        while True:
-            async with self._models_lock:
-                self._ensure_janitor_running()
-
-                try:
-                    model_info = self._build_model_file_info(model_name)
-                except TomlModelError as exc:
-                    # TomlModelError intentionally not swallowed: a broken
-                    # .toml or an out-of-repo path in one should stop this
-                    # request, not be treated as "no virtual model"
-                    # silently. It does mean the resident model, if any,
-                    # can no longer be reached by anything.
-                    self._drop_unreachable_model(model_name, str(exc))
-                    raise
-
-                if not model_info:
-                    self._drop_unreachable_model(
-                        model_name,
-                        f"nothing in {self.models_dir} defines it any more",
-                    )
-                    raise FileNotFoundError(f"Model '{model_name}' not found in {self.models_dir}")
-
-                virtual_spec = self._resolve_virtual_model_spec(model_name)
-
-                effective_num_ctx = num_ctx
-                if effective_num_ctx is None and virtual_spec is not None:
-                    effective_num_ctx = virtual_spec.runtime.get("n_ctx")
-                if effective_num_ctx is None:
-                    effective_num_ctx = self.config.context_length
-
-                requested_n_ctx = self._normalize_num_ctx(effective_num_ctx, default=0)
-                keep_alive_seconds = self.resolve_keep_alive(keep_alive)
-
-                toml_fingerprint = self._toml_fingerprint_for_reference(model_name)
-
-                loaded_entry = self.active_models.get(model_name, {})
-                current_n_ctx = loaded_entry.get("n_ctx")
-                loaded_toml_fingerprint = loaded_entry.get("toml_fingerprint")
-
-                # An edited definition has to reach the model it defines.
-                #
-                # Only some of a .toml takes effect without a reload:
-                # [sampling] and [system] are read through
-                # get_model_metadata() at generation time, so they already
-                # follow the file. [runtime], [llm] model, [mmproj] and a
-                # vision [template] are all consumed while Llama() is being
-                # constructed, and nothing afterwards can reach them.
-                #
-                # Reloading on any change rather than on those sections is
-                # the deliberate choice: telling them apart would make the
-                # rule depend on which key someone edited, which is not
-                # something a person editing a file should have to know.
-                # It also makes `touch model.toml` a way to force a reload.
-                #
-                # Without this the reload only ever happened when a client
-                # sent num_ctx explicitly and it differed. `ollama run`
-                # sends no num_ctx at all, so an edited .toml was answered
-                # by the model built from the previous one, indefinitely.
-                if model_name in self.models and (
-                    (num_ctx is not None and requested_n_ctx != current_n_ctx)
-                    or toml_fingerprint != loaded_toml_fingerprint
-                ):
-                    self.unload_model(model_name)
-
-                if model_name in self.models:
-                    self._refresh_active_model(model_name, keep_alive_seconds)
-                    return self.models[model_name]
-
-                pending = self._loading.get(model_name)
-                loading_here = False
-                waiting_for_this_model = pending is not None
-
-                if pending is None:
-                    blocking = self._blocking_load(model_name)
-                    if blocking is None:
-                        self._ensure_capacity_for_load(model_name)
-                        pending = asyncio.get_running_loop().create_future()
-                        self._loading[model_name] = pending
-                        loading_here = True
-                    else:
-                        pending = blocking
-
-            if not loading_here:
-                # Shielded: whoever is waiting may be cancelled without
-                # taking the load, and everyone else waiting on it, down.
-                try:
-                    await asyncio.shield(pending)
-                except asyncio.CancelledError:
-                    if not pending.cancelled():
-                        raise
-                    # Abandoned rather than failed, so there is nothing to
-                    # inherit and the situation is worth another look.
-                except Exception:
-                    if waiting_for_this_model:
-                        # The same model, and it will fail the same way for
-                        # this caller too. Repeating a doomed load once per
-                        # waiter helps nobody.
-                        raise
-
-                    # A different model was occupying the capacity. Its
-                    # failure says nothing about this request, and it has
-                    # freed the room.
-
-                continue
-
-            logger.debug("Loading model %s with n_ctx=%s", model_name, requested_n_ctx)
-
-            try:
-                llm, load_stats, load_log = await asyncio.to_thread(
-                    self._load_model_sync,
-                    model_info["path"],
-                    requested_n_ctx,
-                    virtual_spec,
-                )
-            except BaseException as exc:
-                async with self._models_lock:
-                    self._loading.pop(model_name, None)
-                    self._close_llama_cpps_filter_if_nothing_is_loading()
-
-                if not pending.done():
-                    if isinstance(exc, asyncio.CancelledError):
-                        pending.cancel()
-                    else:
-                        pending.set_exception(exc)
-                        # Nobody may be waiting, and an unretrieved exception
-                        # on a future is reported at garbage collection.
-                        pending.exception()
-
-                raise
-
-            async with self._models_lock:
-                self._loading.pop(model_name, None)
-                self._close_llama_cpps_filter_if_nothing_is_loading()
-                self._register_loaded_model(
-                    model_name,
-                    model_info,
-                    llm,
-                    load_stats,
-                    keep_alive_seconds,
-                    toml_fingerprint,
-                )
-
-            if not pending.done():
-                pending.set_result(None)
-
-            return llm
-
-    def _drop_unreachable_model(self, model_name: str, reason: str) -> None:
-        """Free a resident model that nothing can ask for any more.
-
-        A model is only reachable through get_model(), which re-reads the
-        .toml before it will hand the resident one back. Once that file
-        will not parse, or names something that is not there, or is gone,
-        every request for the model fails on the way in -- while the
-        weights stay in memory, and with keep_alive unset stay there until
-        the process ends or a capacity limit evicts them. Unreachable and
-        resident at the same time is a leak with a name.
-
-        Deleting a definition through /api/delete already unloads the model
-        first, for the same reason. This is the same event arriving by a
-        different route: someone editing or removing the file directly.
-
-        Safe mid-generation. unload_model() drops the manager's reference
-        and nothing else, so a request already generating keeps the one it
-        holds and the weights go when it is done.
-        """
-        if model_name not in self.models and model_name not in self.active_models:
-            return
-
-        logger.warning("Unloading %s: %s", model_name, reason)
-        self.unload_model(model_name)
-
-    def unload_model(self, model_name: str):
-        self._unload_model_internal(model_name)
-
-    def is_model_loaded(self, model_name: str) -> bool:
-        return model_name in self.models
-
-    def get_loaded_model_info(self, model_name: str) -> Optional[Dict[str, Any]]:
-        model_info = self.active_models.get(model_name)
-        if model_info is None:
-            return None
-        return self._with_runtime_totals(model_info)
-
-    def list_loaded_models(self) -> List[Dict[str, Any]]:
-        return [self._with_runtime_totals(model_info) for model_info in self.active_models.values()]
-
-    def list_loading_models(self) -> List[str]:
-        """Names of models currently being loaded but not yet resident.
-
-        A load in progress occupies capacity and is meaningful to show
-        alongside already-loaded models, mirroring what Ollama does. Only
-        the name is guaranteed here: everything else about the model (VRAM
-        split, context size actually applied) is not known until the load
-        finishes and `_register_loaded_model` runs.
-        """
-        return list(self._loading.keys())
 
     def _compute_content_sha256(self, file_path: str | Path) -> str:
         """
@@ -1423,10 +552,11 @@ class ModelManager:
         return digest.hexdigest()
 
     def _build_model_digest_sync(self, model_path: str | Path) -> Dict[str, Any]:
-        return {
-            "content_sha256": self._compute_content_sha256(model_path),
-            "source": "local",
-        }
+        started = time.monotonic()
+        logger.info("Computing model SHA-256: %s", model_path)
+        digest = self._compute_content_sha256(model_path)
+        logger.info("Model SHA-256 ready: %s (%.2f s)", model_path, time.monotonic() - started)
+        return {"content_sha256": digest, "source": "local"}
 
     async def get_model_digest(self, model_path: str | Path) -> Optional[Dict[str, Any]]:
         """
@@ -1475,8 +605,12 @@ class ModelManager:
         return digest
 
     def _get_model_metadata_sync(self, model_path: str) -> Optional[Dict[str, Any]]:
+        started = time.monotonic()
+        logger.info("Reading GGUF metadata: %s", model_path)
         meta = read_gguf_metadata(model_path)
-        return build_model_metadata_payload(meta)
+        metadata = build_model_metadata_payload(meta)
+        logger.info("GGUF metadata ready: %s (%.2f s)", model_path, time.monotonic() - started)
+        return metadata
 
     async def get_model_metadata(
         self,
@@ -1511,8 +645,15 @@ class ModelManager:
 
         if virtual_spec is not None:
             overrides = {}
+            global_runtime = coerce_runtime_overrides(self.config.runtime_overrides)
+            overrides["embedding_configured"] = virtual_spec.runtime.get("embedding", global_runtime.get("embedding", False))
+            overrides["embedding_pooling_type"] = int(virtual_spec.runtime.get("pooling_type", global_runtime.get("pooling_type", -1)))
             if virtual_spec.template is not None:
                 overrides["template"] = virtual_spec.template
+                # A nonempty native override replaces both GGUF variants.
+                # An empty override keeps native's model-template fallback.
+                if virtual_spec.template:
+                    overrides["tool_template"] = virtual_spec.template
             if virtual_spec.system_prompt is not None:
                 overrides["default_system_prompt"] = virtual_spec.system_prompt
             if virtual_spec.sampling:
@@ -1530,9 +671,12 @@ class ModelManager:
             # so this says the capability is usable rather than merely
             # named. A [mmproj] with an unimported 'from' returns None and
             # is correctly not claimed yet.
-            overrides["has_projector"] = (
-                self.resolve_mmproj_path(virtual_spec, model_name) is not None
-            )
+            projector = self.resolve_mmproj_path(virtual_spec, model_name)
+            overrides["has_projector"] = projector is not None
+            projector_info = self._read_metadata_for_path(projector) if projector is not None else {}
+            has_encoder = (projector_info or {}).get('metadata_raw', {}).get('clip.has_vision_encoder')
+            overrides['vision_configured'] = projector is not None and has_encoder is not False
+            overrides['projector_info'] = (projector_info or {}).get('metadata_raw') or {}
 
             if overrides:
                 metadata = {**metadata, **overrides}
@@ -2122,255 +1266,53 @@ class ModelManager:
 
         return enriched
 
-    async def get_model_metadata_best_effort(
-        self,
-        model_name: str,
-    ) -> Optional[Dict[str, Any]]:
-        """get_model_metadata(), but a broken .toml yields None.
 
-        For callers reporting on a model whose existence is established by
-        something other than its .toml. /api/ps reports what is resident in
-        memory right now: a model loaded before its .toml was edited is
-        still loaded, still holding the memory it holds, and still able to
-        answer requests, so leaving it out would describe the machine's
-        actual state less accurately than listing it with whatever is still
-        known about it.
+    def _validate_global_kv_cache_types(self) -> None:
+        from tllama.native_params import kv_type_name
 
-        Every other caller wants the exception. For /api/show or an
-        inference request a broken .toml is the answer to the question
-        being asked, not an inconvenience along the way -- which is why
-        this is a separate method rather than a change to the default.
-        """
-        try:
-            return await self.get_model_metadata(model_name)
-        except TomlModelError as e:
-            logger.warning("Metadata unavailable for %s: %s", model_name, e)
-            return None
-
-    def build_model_file_info_best_effort(self, model_name: str) -> Optional[Dict[str, Any]]:
-        """_build_model_file_info(), but a broken .toml yields None.
-
-        Same reasoning as get_model_metadata_best_effort, for the model
-        whose load /api/ps reports as still in flight.
-        """
-        try:
-            return self._build_model_file_info(model_name)
-        except TomlModelError as e:
-            logger.warning("File info unavailable for %s: %s", model_name, e)
-            return None
-
-    def _resolve_global_kv_cache_types(self) -> "tuple[Optional[int], Optional[int]]":
-        """Resolve the global cache type names into ggml type ints.
-
-        The three variables are handed to the resolver [runtime] uses, in
-        the shape it expects, so TLLAMA_KV_CACHE_TYPE means what type_kv
-        means and the per-side ones mean what type_k/type_v mean. Two
-        implementations of the same precedence would be free to drift; one
-        cannot.
-
-        A name is looked up dynamically against the GGML_TYPE_* constants,
-        so this accepts whatever the installed build knows rather than a
-        list written here.
-
-        Errors are translated on the way out: resolve_kv_cache_types
-        reports about a .toml field, which is the wrong thing to tell
-        someone who set an environment variable. ConfigError is what the
-        entry point turns into a message and a non-zero exit; both it and
-        TomlModelError subclass ValueError, so anything catching the
-        broader type is unaffected.
-        """
-        by_variable = {
-            "type_kv": ("TLLAMA_KV_CACHE_TYPE", self.config.kv_cache_type),
-            "type_k": ("TLLAMA_K_CACHE_TYPE", self.config.k_cache_type),
-            "type_v": ("TLLAMA_V_CACHE_TYPE", self.config.v_cache_type),
-        }
-
-        # Only the ones actually set. A key present with None would read as
-        # "explicitly nothing" to the resolver and defeat the type_kv
-        # fallback, which is the opposite of what an unset variable means.
-        runtime = {
-            field: value
-            for field, (_, value) in by_variable.items()
-            if value
-        }
-
-        if not runtime:
-            return None, None
-
-        # Each variable is checked on its own first, purely so a rejection
-        # can name the one that was actually wrong. Reading the field name
-        # back out of the combined failure does not work: with only
-        # TLLAMA_KV_CACHE_TYPE set, the resolver reports type_k, because
-        # that is the field the value reached through the fallback.
-        for field, value in runtime.items():
-            variable = by_variable[field][0]
-            try:
-                resolve_kv_cache_types({"type_kv": value})
-            except TomlModelError as exc:
-                raise ConfigError(
-                    f"Unsupported {variable} value: {value}. "
-                    "Expected a ggml type name such as f16, q8_0 or q4_0 "
-                    f"({exc})."
-                ) from exc
-
-        # The precedence itself stays where the .toml gets it from.
-        return resolve_kv_cache_types(runtime)
-
-    def _build_llama_load_kwargs(
-        self,
-        model_path: str,
-        requested_n_ctx: int,
-        virtual_spec: Optional[VirtualModelSpec] = None,
-    ) -> Dict[str, Any]:
-        # A value belongs here only when TLlama has a reason to differ from
-        # llama-cpp-python's own default; anything else is left out so that
-        # default applies, rather than being restated as a shadow copy that
-        # can drift from it. use_mmap is the case in point: it was pinned to
-        # False as a workaround for a memory leak in a since-superseded GPU
-        # driver / llama.cpp combination, and holding it there now overrides
-        # a library default of True for a reason that no longer exists --
-        # and would also override the library's own handling, which turns
-        # mmap off by itself when a LoRA is in play.
-        #
-        # n_gpu_layers and verbose stay, for two different reasons:
-        #
-        # - n_gpu_layers: the library defaults to 0, i.e. offloading
-        #   nothing. Offloading everything by default is TLlama policy
-        #   (Ollama behaves the same way), so it is a genuine difference,
-        #   not a restatement.
-        # - verbose: the library also defaults to True, so this one does
-        #   agree -- but it is a dependency rather than a preference.
-        #   /api/ps gets every number it reports from
-        #   parse_llama_verbose_load_log() reading the load log, so
-        #   verbose=False empties the memory accounting entirely. It is
-        #   explicit to keep that from being tidied away as redundant.
-        kwargs: Dict[str, Any] = {
-            "model_path": model_path,
-            "n_ctx": requested_n_ctx,
-            "n_gpu_layers": -1,
-            "verbose": True,
-        }
-
-        # Server-wide Llama() arguments. Below a model's [runtime], which
-        # is applied after this and overwrites what it names.
-        kwargs.update(self._runtime_overrides)
-
-        if self._type_k is not None:
-            kwargs["type_k"] = self._type_k
-        if self._type_v is not None:
-            kwargs["type_v"] = self._type_v
-
-        if virtual_spec is not None:
-            # 1:1 passthrough of [runtime] into Llama() kwargs (spec doc
-            # §8), minus the handful of keys handled specially above/below:
-            # model_path and n_ctx are controlled by [llm] and the
-            # request/global-config priority chain, not by [runtime]
-            # directly, and type_k/type_v/type_kv need the name-to-ggml-enum
-            # resolution in resolve_kv_cache_types rather than a raw pass.
-            for key, value in virtual_spec.runtime.items():
-                if key in ("model_path", "n_ctx", "type_k", "type_v", "type_kv"):
-                    continue
-                kwargs[key] = value
-
-            type_k, type_v = resolve_kv_cache_types(virtual_spec.runtime)
-            if type_k is not None:
-                kwargs["type_k"] = type_k
-            if type_v is not None:
-                kwargs["type_v"] = type_v
-
-        chat_handler = self._build_vision_chat_handler(virtual_spec, model_path)
-        if chat_handler is not None:
-            kwargs["chat_handler"] = chat_handler
-
-        return kwargs
-
-    def _build_vision_chat_handler(
-        self, virtual_spec: Optional[VirtualModelSpec], source: str
-    ):
-        """The projector handler a virtual model's [mmproj] calls for.
-
-        None when there is no projector to load, which is every model that
-        has no [mmproj] section -- Llama() then resolves its own text
-        handler exactly as before.
-
-        MTMDChatHandler is the default because it takes the chat template
-        from the model itself rather than carrying a hardcoded one, so it
-        works with any model whose template can render content parts. The
-        older Llava15ChatHandler family each bakes in its own prompt format
-        and would impose it on the model; picking one of those is a
-        deliberate choice for a specific model, not a default.
-
-        Constructed here rather than after loading because mtmd needs the
-        model to initialise against, and Llama() only wires a handler up to
-        the model when it is passed in at construction time.
-        """
-        if virtual_spec is None:
-            return None
-
-        projector_path = self.resolve_mmproj_path(virtual_spec, source)
-        if projector_path is None:
-            return None
-
-        if virtual_spec.template is not None:
-            handler = _TemplateOverridingMTMDChatHandler(
-                clip_model_path=str(projector_path),
-                template=virtual_spec.template,
-            )
-        else:
-            handler = MTMDChatHandler(clip_model_path=str(projector_path))
-
-        if virtual_spec.mmproj_context:
-            handler._mtmd_cpp = _ConfiguredMtmdCpp(
-                handler._mtmd_cpp, dict(virtual_spec.mmproj_context)
-            )
-
-        return handler
+        for variable, value in (
+            ("TLLAMA_KV_CACHE_TYPE", self.config.kv_cache_type),
+            ("TLLAMA_K_CACHE_TYPE", self.config.k_cache_type),
+            ("TLLAMA_V_CACHE_TYPE", self.config.v_cache_type),
+        ):
+            if value is not None:
+                try:
+                    kv_type_name(value)
+                except ValueError as exc:
+                    raise ConfigError(f"Unsupported {variable} value: {value}. {exc}") from exc
 
     async def start(self):
+        if self._shutdown_task is not None:
+            await _settle_owned(self._shutdown_task)
+            self._shutdown_task = None
+        if self._native.closed:
+            self._native = self._new_native_residency()
+        self._stopping = False
         self.ensure_storage()
-
-        async with self._models_lock:
-            if self._janitor_task is None or self._janitor_task.done():
-                self._janitor_task = asyncio.create_task(
-                    self._janitor_loop(),
-                    name="tllama-model-janitor",
-                )
+        self._ensure_janitor_running()
 
     async def shutdown(self):
-        janitor_task = None
+        self._stopping = True
+        if self._shutdown_task is None:
+            self._shutdown_task = asyncio.create_task(self._shutdown_impl())
+        await _settle_owned(self._shutdown_task)
 
-        async with self._models_lock:
-            if self._janitor_task is not None:
-                janitor_task = self._janitor_task
-                self._janitor_task = None
-
-        if janitor_task is not None:
-            janitor_task.cancel()
-            try:
-                await janitor_task
-            except asyncio.CancelledError:
-                pass
-
-        async with self._models_lock:
-            self.unload_all_models()
+    async def _shutdown_impl(self):
+        janitor_task, self._janitor_task = self._janitor_task, None
+        try:
+            if janitor_task is not None:
+                janitor_task.cancel()
+                try:
+                    await janitor_task
+                except asyncio.CancelledError:
+                    pass
+        finally:
+            await self._native.shutdown()
 
     async def _janitor_loop(self):
-        try:
-            while True:
-                await asyncio.sleep(self.config.janitor_interval_seconds)
-
-                async with self._models_lock:
-                    expired_model_names = [
-                        model_name
-                        for model_name, model_info in self.active_models.items()
-                        if self._is_model_entry_expired(model_info)
-                    ]
-
-                    for model_name in expired_model_names:
-                        logger.debug("Auto-unloading expired model %s", model_name)
-                        self._unload_model_internal(model_name)
-        except asyncio.CancelledError:
-            raise
+        while True:
+            await asyncio.sleep(self.config.janitor_interval_seconds)
+            await self._native.expire()
 
     def _split_model_reference(self, model_ref: str) -> List[str]:
         cleaned = (model_ref or "").strip().strip("/")
@@ -2440,7 +1382,6 @@ class ModelManager:
                 revision=revision,
                 token=token,
                 local_dir=target_root,
-                local_dir_use_symlinks=False,
                 tqdm_class=tqdm_class,
             )
         except ValueError as e:
@@ -2740,7 +1681,16 @@ class ModelManager:
         }
 
     async def delete_model(self, model_ref: str) -> Dict[str, Any]:
-        return await asyncio.to_thread(self.delete_model_definition, model_ref)
+        async def retire_and_delete():
+            await self._native.unload(model_ref)
+            try:
+                return await asyncio.to_thread(self.delete_model_definition, model_ref)
+            finally:
+                # Cover acquisitions overlapping definition deletion as well.
+                await self._native.unload(model_ref)
+        # Do not let caller cancellation leave a late file deletion with a
+        # freshly selectable native generation after its first retirement.
+        return await _settle_owned(asyncio.create_task(retire_and_delete()))
 
     def _strip_gguf_suffix(self, value: str) -> str:
         return value[:-5] if value.lower().endswith(".gguf") else value
@@ -2986,5 +1936,7 @@ class ModelManager:
             shutil.rmtree(cache_dir, ignore_errors=True)
 
 
-model_manager = ModelManager(load_backend_config_from_env())
+from tllama.daemon_config import current_daemon_config
+
+model_manager = ModelManager(current_daemon_config().backend)
 

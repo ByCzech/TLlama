@@ -1,30 +1,19 @@
-"""Turn TLLAMA_RUNTIME_* strings into Llama() keyword arguments.
-
-Which parameters exist, and what each one takes, is read off
-inspect.signature(Llama.__init__) rather than listed here. A list would be
-a shadow copy of somebody else's function: it would need an edit whenever
-llama-cpp-python gains a parameter, and until that edit it would be wrong
-in the direction of silently refusing something that works.
-
-An environment variable is a string and the signature says what it has to
-become. Those two facts are the whole mechanism.
-"""
+"""Convert TLLAMA_RUNTIME_* strings using TLlama's native contract."""
 
 from __future__ import annotations
 
-import functools
-import inspect
 
 from typing import Any, Dict, Mapping
 
 from tllama.config import ConfigError
+from tllama.native_params import RUNTIME_TYPES, runtime_problem
 
 
 ENV_PREFIX = "TLLAMA_RUNTIME_"
 
 # Not settable from the environment, each for its own reason.
 #
-# model_path is the only real prohibition: it comes from [llm] in a .toml,
+# model_path comes from [llm] in a .toml,
 # and pointing it elsewhere would mean the model is not the model its
 # definition names.
 #
@@ -36,6 +25,7 @@ _HANDLED_ELSEWHERE = {
     "n_ctx": "use TLLAMA_CONTEXT_LENGTH",
     "type_k": "use TLLAMA_K_CACHE_TYPE or TLLAMA_KV_CACHE_TYPE",
     "type_v": "use TLLAMA_V_CACHE_TYPE or TLLAMA_KV_CACHE_TYPE",
+    "type_kv": "use TLLAMA_KV_CACHE_TYPE",
 }
 
 _TRUE = {"1", "true", "yes", "on"}
@@ -75,9 +65,8 @@ def coerce_from_annotation(
 ) -> Any:
     """Turn one environment string into what an annotation asks for.
 
-    Shared with the sampling layer, which reads its annotations off a
-    different function but faces the same problem: an environment variable
-    is a string and a signature says what it has to become.
+    Shared with the sampling layer: an environment string is converted
+    using the types declared by TLlama's pinned native contract.
 
     unsupported_hint is appended when the annotation names something a
     string cannot express, so the message can say where that setting does
@@ -135,8 +124,8 @@ def _coerce(
     if kind == "List[float]":
         # tensor_split, the one list worth taking: it is how a model is
         # spread over several GPUs and there is no other way to say it.
-        parts = [part.strip() for part in raw.split(",") if part.strip()]
-        if not parts:
+        parts = [part.strip() for part in raw.split(",")]
+        if any(not part for part in parts):
             raise ConfigError(
                 f"{variable}={value!r} is not valid: expected "
                 "comma-separated numbers."
@@ -155,42 +144,17 @@ def _coerce(
     )
 
 
-@functools.lru_cache(maxsize=1)
-def llama_parameters() -> Dict[str, str]:
-    """Every Llama() parameter, name to annotation.
-
-    Cached: the signature cannot change while the process runs, and this
-    is consulted on every .toml parse.
-    """
-    from llama_cpp import Llama
-
-    parameters = inspect.signature(Llama.__init__).parameters
-
-    return {
-        name: parameter.annotation
-        for name, parameter in parameters.items()
-        if name != "self"
-        and parameter.kind
-        not in (parameter.VAR_POSITIONAL, parameter.VAR_KEYWORD)
-        and parameter.annotation is not parameter.empty
-    }
+def runtime_parameters() -> Dict[str, str]:
+    """The pinned TLlama runtime contract, independent of Python bindings."""
+    return dict(RUNTIME_TYPES)
 
 
 def settable_parameters() -> Dict[str, str]:
-    """Parameter name to annotation, for those an environment can set.
-
-    Narrower than llama_parameters(): a .toml [runtime] can name n_ctx,
-    type_k and type_v, which have their own variables out here.
-    """
-    return {
-        name: annotation
-        for name, annotation in llama_parameters().items()
-        if name not in _HANDLED_ELSEWHERE
-    }
+    return {name: kind for name, kind in RUNTIME_TYPES.items() if name not in _HANDLED_ELSEWHERE}
 
 
 def coerce_runtime_overrides(raw: Mapping[str, str]) -> Dict[str, Any]:
-    """Convert collected TLLAMA_RUNTIME_* strings into Llama() kwargs.
+    """Convert collected TLLAMA_RUNTIME_* strings into typed runtime values.
 
     Called once at startup, so an unknown name or an unusable value stops
     the server rather than surfacing on the first request that loads a
@@ -210,10 +174,14 @@ def coerce_runtime_overrides(raw: Mapping[str, str]) -> Dict[str, Any]:
         annotation = known.get(name)
         if annotation is None:
             raise ConfigError(
-                f"{variable} is not settable: {name} is not a parameter of "
-                "Llama() in the installed llama-cpp-python."
+                f"{variable}: {runtime_problem(name, value)}."
             )
 
-        coerced[name] = _coerce(variable, annotation, value)
+        coerced[name] = (_coerce(variable, annotation, value,
+                                 unsupported_hint=" Set it in a model's .toml [runtime] instead.")
+                         if isinstance(value, str) else value)
+        problem = runtime_problem(name, coerced[name])
+        if problem:
+            raise ConfigError(f"{variable}: {problem}.")
 
     return coerced

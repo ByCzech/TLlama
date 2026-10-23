@@ -155,7 +155,13 @@ class TestReachesTheEndpoints:
 
         manager = ModelManager(load_backend_config_from_env())
 
-        assert manager.sampling_overrides == {"top_k": 20}
+        from dataclasses import replace
+        from pathlib import Path
+        from tllama.native_config import resolve_worker_config
+
+        config = replace(manager.config, runtime_overrides={"device": "none"})
+        assert resolve_worker_config(config, Path("/fake.gguf")).global_sampling == {"top_k": 20}
+
 
     def test_an_unusable_value_stops_the_manager_being_built(self, monkeypatch):
         monkeypatch.setenv("TLLAMA_SAMPLING_TEMPERATURE", "warm")

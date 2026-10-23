@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import gguf
+from tllama.helpers.fim import read_fim_metadata
 from typing import Any, Dict, Iterable, Mapping, Optional
 from enum import IntEnum
 
@@ -25,7 +26,14 @@ BASE_METADATA_KEYS = (
     "general.file_type",
     "general.quantization_version",
     "general.type",
+    "general.license",
+    "general.license.name",
+    "general.license.link",
     "tokenizer.chat_template",
+    "tokenizer.chat_template.tool_use",
+    "tokenizer.chat_template.systemone",
+    "tokenizer.ggml.mask_token_id",
+    "tokenizer.ggml.seperator_token_id",
     "clip.has_vision_encoder",
     "split.no",
     "split.count",
@@ -258,6 +266,9 @@ def _build_metadata_key_set(reader: Any) -> tuple[str, ...]:
         arch = _field_to_python_value(arch_field)
         if isinstance(arch, str) and arch:
             keys.add(f"{arch}.context_length")
+            keys.update(f"{arch}.{suffix}" for suffix in (
+                "pooling_type", "embedding_length", "embedding_length_out", "block_count"))
+            keys.update(key for key in reader.fields if key.startswith(f"{arch}.decision."))
 
     return tuple(sorted(keys))
 
@@ -266,12 +277,16 @@ def read_gguf_metadata(model_path: str) -> Dict[str, Any]:
     """
     Read TLlama-relevant GGUF metadata without initializing llama.cpp inference.
 
-    This function intentionally reads only a small whitelist of keys. It avoids
-    returning large tokenizer metadata such as tokens, token types and merges.
+    Return a small whitelist plus a compact FIM inventory from the vocabulary.
+    Never return large tokenizer arrays such as tokens, token types or merges.
     """
     reader = gguf.GGUFReader(model_path)
     keys = _build_metadata_key_set(reader)
-    return _read_selected_fields(reader, keys)
+    metadata = _read_selected_fields(reader, keys)
+    vocab = reader.fields.get("tokenizer.ggml.tokens")
+    metadata["embedding"] = {"vocab_size": len(vocab.data)} if vocab is not None else {}
+    metadata["fim"] = read_fim_metadata(reader)
+    return metadata
 
 
 def _first_present(meta: Mapping[str, Any], keys: Iterable[str], default: Any = None) -> Any:
@@ -366,7 +381,7 @@ def build_model_metadata_payload(meta: Dict[str, Any]) -> Dict[str, Any]:
     metadata_raw = {
         key: value
         for key, value in meta.items()
-        if isinstance(value, (str, int, float, bool)) or value is None
+        if key != "fim" and (isinstance(value, (str, int, float, bool)) or value is None)
     }
 
     shard_index, shard_count = _shard_position(meta)
@@ -378,9 +393,13 @@ def build_model_metadata_payload(meta: Dict[str, Any]) -> Dict[str, Any]:
         "size_label": size_label,
         "bits": bits,
         "template": template,
+        # Native chat selects the named variant for requests carrying tools.
+        "tool_template": _as_str(meta.get("tokenizer.chat_template.tool_use"), "") or template,
         "context_length": context_length,
         "display_name": display_name,
         "metadata_raw": metadata_raw,
+        "fim": meta.get("fim"),
+        "embedding": meta.get("embedding", {}),
 
         # A projector is not a model and a continuation shard is not a
         # separate model. Reported here so callers that build or list

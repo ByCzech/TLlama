@@ -1,6 +1,11 @@
 # Configuration
 
-TLlama is configured from environment variables and from a `.toml` file per model. Environment variables say what is true for the whole server; a model's `.toml` says what is true for that model and overrides the server-wide value where the two overlap. An API request overrides both, for the things a request is allowed to decide.
+TLlama has a server TOML file, daemon CLI flags, environment variables and a
+separate `.toml` definition per model. Global precedence is **CLI > environment
+> server TOML > defaults**. Model definitions override global load/sampling
+defaults; supported request settings override those for the admitted request.
+See [daemon.md](daemon.md) for server file selection, the full TOML/CLI/env
+mapping, `--check-config` and `--print-config`.
 
 This keeps a server easy to run from systemd, a container or a shell, while still letting one model be configured differently from the next without a second server.
 
@@ -14,7 +19,7 @@ export TLLAMA_MODELS=/var/lib/tllama/models
 export TLLAMA_RUNTIME_FLASH_ATTN=true
 export TLLAMA_KV_CACHE_TYPE=q8_0
 
-tllama
+tllamad
 ```
 
 Then, against the Ollama-compatible API:
@@ -33,31 +38,35 @@ Weakest to strongest:
 
 | Layer | Where | Scope |
 |---|---|---|
-| Library defaults | `llama-cpp-python` | whatever TLlama passes no argument for |
+| Native defaults | `tllama-server` / llama.cpp | settings TLlama leaves unset |
 | TLlama's own baseline | built in | the few settings TLlama has a reason to differ on |
 | Model header | the GGUF | that one model, where its author said something |
-| Environment | `TLLAMA_*` | the whole server |
+| Global daemon configuration | CLI > environment > server TOML | the whole server |
 | Model definition | a model's `.toml` | that one model |
 | Request | the API call | that one call |
 
-A stronger layer wins only where it says something. TLlama does not restate a default it agrees with: where nothing sets a value, the argument is not passed at all and `llama-cpp-python`'s own default applies. That is deliberate, since a restated default is a copy that can drift from what it copies.
+A stronger layer wins only where it says something. TLlama-owned baselines and
+native defaults are described in [native-config.md](native-config.md). Unset
+threads/device defaults retain the native automatic policy.
 
 The library default and the GGUF header are separate layers, and not adjacent ones. A library default is what happens when TLlama passes nothing — an absence. A GGUF header is a positive statement by the model's author about that model, so it beats TLlama's own baseline, which is a fallback for when nothing said anything. Both still sit under anything a person configured.
 
 ### Precedence per setting
 
-Not every setting exists at every layer. A request cannot change how a model was loaded, and a GGUF cannot say how long to keep one in memory. Exactly:
+Not every setting exists at every layer. Supported request runner options can
+select a new immutable worker generation; admitted requests retain their old
+generation while it drains. A GGUF cannot say how long to keep one in memory.
 
 | Setting | Precedence, strongest first |
 |---|---|
-| Context length | request `num_ctx` → `.toml` `[runtime] n_ctx` → `TLLAMA_CONTEXT_LENGTH` → `0`, meaning the model's trained maximum |
-| Load parameters | `.toml` `[runtime]` → `TLLAMA_RUNTIME_*` → `Llama()` default |
-| K/V cache type | `.toml` `[runtime]` `type_k`/`type_v`/`type_kv` → `TLLAMA_K_CACHE_TYPE`/`TLLAMA_V_CACHE_TYPE`/`TLLAMA_KV_CACHE_TYPE` → unset |
-| Sampling | request `options` → `.toml` `[sampling]` → `TLLAMA_SAMPLING_*` → GGUF `general.sampling.*` → TLlama's baseline |
+| Context length | request `num_ctx` → model `[runtime].n_ctx` → global configuration → `0`, meaning trained maximum |
+| Load parameters | supported request runner options → model `[runtime]` → global configuration → TLlama/native defaults |
+| K/V cache type | model `[runtime]` → global configuration → `f16`; expand shorthand within each layer |
+| Sampling | request controls → model `[sampling]` → explicit global sampling → GGUF `general.sampling.*` → TLlama baseline |
 | Stop strings | request `stop` → `.toml` `[sampling] stop` → none (no environment layer: a list is not a string) |
 | Chat template | `.toml` `[template] jinja` → the GGUF's own template |
 | System prompt | the request's own system message → `.toml` `[system] prompt` |
-| Keep-alive | request `keep_alive` → `TLLAMA_KEEP_ALIVE` |
+| Keep-alive | request `keep_alive` → global `lifecycle.keep_alive` |
 
 A GGUF may carry the model author's recommended sampling values under `general.sampling.*` — `temp`, `top_k` and `top_p`, no others. TLlama applies them directly above its own baseline, so they take effect on a model whose `.toml` pins nothing and the server sets nothing, and are overridden by either. `/api/show` reports them regardless. It is a newer convention and most files do not carry it; its absence says nothing about a model.
 
@@ -66,8 +75,8 @@ A GGUF may carry the model author's recommended sampling values under `general.s
 A value TLlama cannot use stops the server at startup, with one line naming the variable and what was expected. It is not ignored and not silently replaced by a default: for a service started from a unit file, a setting that quietly does not apply is indistinguishable from one that applied and made no difference.
 
 ```
-$ TLLAMA_MAX_LOADED_MODELS=lots tllama
-tllama: TLLAMA_MAX_LOADED_MODELS='lots' is not valid: expected a whole number.
+$ TLLAMA_MAX_LOADED_MODELS=lots tllamad
+tllamad: TLLAMA_MAX_LOADED_MODELS (lifecycle.max_loaded_models): invalid literal for int() with base 10: 'lots'
 $ echo $?
 2
 ```
@@ -76,11 +85,11 @@ An unset or empty variable is not an error. `TLLAMA_CONTEXT_LENGTH=` in a unit f
 
 Whether a value converts and whether it means anything are separate questions, and TLlama's own numeric settings are checked for both. `TLLAMA_JANITOR_INTERVAL=0` converts to a number and then asks for a wait that does not wait; `TLLAMA_MAX_LOADED_MODELS=0` converts and then behaves as `1`. Each section below states the accepted range.
 
-Sampling values are almost never range-checked, whether they come from `TLLAMA_SAMPLING_*` or from a model's `.toml`. Values that look out of range there are defined by llama.cpp rather than meaningless: `top_k` at or below zero disables top-k sampling, `top_p` at or above `1.0` disables top-p, and a negative `temperature` selects a different sampler chain. A bound would close off configurations the library supports.
+Sampling values are typed and must be finite. Disable modes such as `top_k <= 0` and `top_p >= 1` remain accepted. Negative `temperature` is refused: the native runtime would turn it into greedy sampling instead of reproducing the former binding chain.
 
 The exception is `mirostat_mode`, which is a choice rather than a range: `0`, `1` or `2`. Any other number is not clamped and does not fail — it falls through to the ordinary sampler chain, so mirostat ends up off without a word. Both layers refuse it.
 
-A model's `.toml` works the same way: a key in `[runtime]` or `[sampling]` that TLlama will not act on is refused when the file is read, and that model is not listed and cannot be loaded until the file is corrected. `tllama rebuildrepo --dryrun` reports which file and which key, and writes nothing.
+A model's `.toml` works the same way: a key in `[runtime]` or `[sampling]` that TLlama will not act on is refused when the file is read, and that model is not listed and cannot be loaded until the file is corrected. `tllamad rebuildrepo --dryrun` reports which file and which key, and writes nothing.
 
 Booleans accept `1`, `true`, `yes`, `on` and `0`, `false`, `no`, `off`, in any case. Anything else is refused.
 
@@ -146,17 +155,19 @@ Credentials are never allowed: TLlama has no cookie or session for a browser to 
 
 A request carrying an `Origin` header must send `Content-Type: application/json`; anything else is refused with `415`. Everywhere else TLlama accepts a JSON body whatever the content type says, because `curl -d` with no header sends `application/x-www-form-urlencoded` and the Ollama documentation shows exactly that. Those lenient content types are also the ones that let a browser skip the preflight entirely, so accepting them from a page would put the request beyond the reach of the origin list. `curl` never sends `Origin` and is unaffected; `fetch()` sends it always and should be declaring JSON in any case.
 
-### `TLLAMA_DEBUG`
+### `TLLAMA_DEBUG` and `TLLAMA_LOG_LEVEL`
 
-Debug logging. Default `false`. Sets TLlama's own log level and uvicorn's to `debug`.
+`TLLAMA_LOG_LEVEL` selects critical/error/warning/info/debug/trace. The default
+is info. `TLLAMA_DEBUG=true` remains a compatibility alias for debug;
+`TLLAMA_LOG_LEVEL` wins within the environment layer. CLI `--log-level` overrides
+both. Trace enables Uvicorn trace and TLlama debug output.
 
-With it on, everything llama.cpp writes while loading a model is logged too -- around two thousand lines per load, which is why it is off by default. This includes what the projector says about itself on a vision model, which used to go to the console whatever this was set to: mtmd's own logger ignores the level it is given, so its several hundred lines of tensor inventory were unfilterable until TLlama pointed that logger at the same place as everything else. A load that fails, or one TLlama refuses because ggml could not allocate a buffer, logs the same output at `ERROR` regardless of this setting: it is the only account of why, and the model it describes is gone by the time anyone could turn a setting on.
-
-It also governs what llama.cpp says between loads, which is a separate matter. A load is loud on purpose — every figure `/api/ps` reports is parsed out of that output — but llama.cpp goes on talking through the same channel for the life of the process: per-request timings the API already carries in `prompt_eval_duration` and `eval_duration`, slot bookkeeping, and, on a vision model, the rendered prompt of every image request. With `TLLAMA_DEBUG` off, all of that is filtered out once the last load has finished. A server answering several people should not put a transcript of their requests on the console without being asked to.
-
-Errors and warnings from llama.cpp pass the filter whatever this is set to. Only informational and debug output is dropped, so the account of something going wrong mid-request is never the thing that goes missing.
-
-Two Python-level lines are outside this and still appear: `Llama.generate: …` and, on a vision request, one copy of the rendered prompt. Both are printed by `llama-cpp-python` itself under its `verbose` flag, and that flag also switches on a process-wide redirection of file descriptors 1 and 2 to `/dev/null` around parts of the image path. Turning it off would silence those two lines at the price of intermittently blacking out the server's own log, including the account of a failed load in another thread, so it is left alone.
+Routine outbound HTTP request and transport logs are suppressed below debug.
+Native worker memory polling remains enabled; quieter logging does not change
+telemetry or `/api/ps`. Native worker diagnostics use the worker logger; errors
+and load failures retain their diagnostics. There is no in-process binding
+redirecting the Python server's file descriptors or printing model responses.
+Direct ASGI embedders own their logging setup.
 
 ### `TLLAMA_APP_RELOAD`
 
@@ -170,7 +181,7 @@ Reload the application when its source changes. Default `false`. For development
 
 The repository root, holding `Local/`, `TLlama/` and `HuggingFace/`. Default `/var/lib/tllama/models`.
 
-A `.gguf` that no `.toml` points at is not a model: it is not listed and cannot be loaded. See `docs/model-repositories.md`; `tllama rebuildrepo` writes the missing definitions.
+A `.gguf` that no `.toml` points at is not a model: it is not listed and cannot be loaded. See `docs/model-repositories.md`; `tllamad rebuildrepo` writes the missing definitions.
 
 ### `TLLAMA_METADATA_CACHE_TTL`
 
@@ -213,79 +224,32 @@ How often expired models are collected, in seconds. Default `10.0`. Must be grea
 
 ## Load parameters: `TLLAMA_RUNTIME_*`
 
-Sets any load parameter of `llama-cpp-python`'s `Llama()` for every model. The variable is the parameter name with a `TLLAMA_RUNTIME_` prefix:
+Uses TLlama's pinned native runtime vocabulary, independent of the installed Python binding. A variable is the parameter name with the `TLLAMA_RUNTIME_` prefix:
 
 ```bash
+export TLLAMA_RUNTIME_DEVICE=Vulkan0
 export TLLAMA_RUNTIME_N_THREADS=8
 export TLLAMA_RUNTIME_USE_MLOCK=true
-export TLLAMA_RUNTIME_MAIN_GPU=1
 export TLLAMA_RUNTIME_TENSOR_SPLIT=0.6,0.4
 ```
 
-Which names exist, and what each takes, is read from `Llama()`'s signature in the installed build. No list in TLlama can disagree with it, and a parameter a future `llama-cpp-python` adds becomes settable without a TLlama change. A name that is not a parameter, or a value of the wrong shape, stops the server at startup.
+Native configuration and its defaults, CLI mapping and removal matrix are documented in [native-config.md](native-config.md). Only listed parameters are accepted. Unknown names, removed settings, invalid types and unrepresentable enums produce a configuration error.
 
-Values are converted according to the declared type: whole numbers for `int`, `1/true/yes/on` and `0/false/no/off` for `bool`, comma-separated numbers for `tensor_split`, and either a word or a number for `numa`.
+Whole numbers, finite floats, boolean words (`1/true/yes/on`, `0/false/no/off`) and comma-separated tensor proportions are supported. `numa` accepts disabled/strategy numbers or a boolean. `kv_overrides` is TOML-only. The model path comes from `[llm]`; context and K/V types have dedicated environment variables rather than duplicate `TLLAMA_RUNTIME_*` spellings.
 
-The table is that signature as of `llama-cpp-python` 0.3.35. Descriptions are TLlama's summary; `llama.cpp` is the authority on what each does.
+Public routes use managed native workers. Model TOML overrides the global device selector. If neither is set, [backend priorities](backend-priority.md) select the device at model load. A selector is not a stable physical GPU ID.
 
-`n_gpu_layers` is worth knowing about before you need it. TLlama passes `-1`, so every layer goes to the device and the KV cache follows it there. llama.cpp has no view on whether that fits: it asks for the memory and finds out. Where the driver refuses outright the load is refused too, because a model whose buffers failed to reserve crashes on first use. Lowering `n_gpu_layers` computes some layers on the CPU instead, which is slower but loads -- it is the same trade Ollama makes for you by estimating the fit and reducing the offload on its own. Nothing in TLlama does that yet.
+### `TLLAMA_BACKEND_PRIORITY`
 
-| Parameter | Type | `Llama()` default | Notes |
-|---|---|---:|---|
-| `n_gpu_layers` | int | `0` | Layers offloaded to GPU, `-1` for all. **TLlama passes `-1`** unless overridden |
-| `split_mode` | int | `1` | `0` none, `1` by layer, `2` by row |
-| `main_gpu` | int | `0` | Index into the device list after llama.cpp merges duplicates |
-| `tensor_split` | list of float | unset | Proportion per device, comma-separated |
-| `vocab_only` | bool | `False` | Vocabulary only, no weights |
-| `use_mmap` | bool | `True` | Map the file rather than read it |
-| `use_mlock` | bool | `False` | Keep the model resident in RAM |
-| `kv_overrides` | dict | unset | Not settable from the environment |
-| `seed` | int | `4294967295` | Load-time seed |
-| `n_ctx` | int | `512` | Set by `TLLAMA_CONTEXT_LENGTH`, not settable here |
-| `n_batch` | int | `512` | Logical batch size |
-| `n_ubatch` | int | `512` | Physical batch size |
-| `n_threads` | int | unset | Generation threads |
-| `n_threads_batch` | int | unset | Prompt-processing threads |
-| `rope_scaling_type` | int | `-1` | `-1` unspecified |
-| `pooling_type` | int | `-1` | For embedding models |
-| `attention_type` | int | `-1` | `-1` unspecified |
-| `rope_freq_base` | float | `0.0` | `0.0` takes the model's own |
-| `rope_freq_scale` | float | `0.0` | `0.0` takes the model's own |
-| `yarn_ext_factor` | float | `-1.0` | YaRN context extension |
-| `yarn_attn_factor` | float | `1.0` | |
-| `yarn_beta_fast` | float | `32.0` | |
-| `yarn_beta_slow` | float | `1.0` | |
-| `yarn_orig_ctx` | int | `0` | `0` takes the model's trained context |
-| `logits_all` | bool | `False` | Logits for every token |
-| `embedding` | bool | `False` | Embedding mode |
-| `offload_kqv` | bool | `True` | KQV computation on GPU |
-| `flash_attn` | bool | `False` | Also reachable as `TLLAMA_FLASH_ATTENTION` |
-| `op_offload` | bool | unset | |
-| `swa_full` | bool | unset | Full sliding-window attention cache |
-| `no_perf` | bool | `False` | Skip performance counters |
-| `last_n_tokens_size` | int | `64` | Window the repeat penalty looks back over |
-| `lora_base` | str | unset | |
-| `lora_scale` | float | `1.0` | |
-| `lora_path` | str | unset | Turns `use_mmap` off by itself |
-| `numa` | bool or int | `False` | A word for the bool, digits for a strategy number |
-| `chat_format` | str | unset | Named prompt format; `[template]` is usually the better tool |
-| `chat_handler` | object | unset | Not settable from the environment; comes from `[mmproj]` |
-| `draft_model` | object | unset | Not settable from the environment |
-| `tokenizer` | object | unset | Not settable from the environment |
-| `type_k` | int | unset | Set by `TLLAMA_K_CACHE_TYPE`, not settable here |
-| `type_v` | int | unset | Set by `TLLAMA_V_CACHE_TYPE`, not settable here |
-| `spm_infill` | bool | `False` | SentencePiece infill |
-| `verbose` | bool | `True` | **TLlama requires this on**: `/api/ps` takes every number it reports from the load log |
-| `model_path` | str | required | Comes from `[llm]`, never settable |
-
-`chat_handler`, `draft_model`, `tokenizer` and `kv_overrides` take values no string can express. Four more are refused with a message saying where they are set instead:
-
-| Parameter | Set by |
-|---|---|
-| `model_path` | `[llm]` in a model's `.toml` |
-| `n_ctx` | `TLLAMA_CONTEXT_LENGTH` |
-| `type_k` | `TLLAMA_K_CACHE_TYPE` or `TLLAMA_KV_CACHE_TYPE` |
-| `type_v` | `TLLAMA_V_CACHE_TYPE` or `TLLAMA_KV_CACHE_TYPE` |
+Ordered automatic acceleration preferences, default `CUDA,ROCm,SYCL,Vulkan`.
+For example, `TLLAMA_BACKEND_PRIORITY="Vulkan,ROCm"` tries only these GPU
+backends, then CPU. An **unset** variable uses the default; an explicitly
+**empty** value means CPU-only. `CPU` is a terminal entry and can appear first.
+Explicit model/global `device` overrides the entire priority list, including its
+allowlist. Names are case-insensitive, whitespace is trimmed, and duplicates
+retain the first occurrence. CPU helper libraries such as BLAS/BLIS are not
+independent placement choices. See [backend-priority.md](backend-priority.md)
+for matching, failure handling and native fitting limits.
 
 ### `TLLAMA_FLASH_ATTENTION`
 
@@ -308,7 +272,7 @@ export TLLAMA_KV_CACHE_TYPE=q8_0
 export TLLAMA_V_CACHE_TYPE=q4_0     # a smaller V than K
 ```
 
-A value is a ggml type name resolved against the `GGML_TYPE_*` constants the installed build defines — `f16`, `q8_0`, `q4_0` and the rest. It is not checked against a fixed list, so a type a future `llama.cpp` adds works without a TLlama change. A name matching no constant stops the server at startup.
+Supported native KV names are `f32`, `f16`, `bf16`, `q8_0`, `q4_0`, `q4_1`, `iq4_nl`, `q5_0`, `q5_1`. TOML also accepts the corresponding pinned GGML enum integers. Other weight quantization types are not KV types and are refused. The native resolver explicitly defaults both sides to `f16`.
 
 Resolving is not the same as being usable: `llama.cpp` supports only some ggml types as a KV cache, and one it does not support is refused when a model loads, which startup cannot check.
 
@@ -327,9 +291,7 @@ export TLLAMA_SAMPLING_TOP_K=20
 
 **Everything here is unset by default, and that matters.** A global sampling value overrules what a model's own definition recommends, for every model at once. Shipping numbers in this layer would silence those recommendations on a server nobody configured, so an unset variable stays genuinely unset and TLlama's baseline applies as before.
 
-Which names exist is read off `create_completion()` and `create_chat_completion()` in the installed `llama-cpp-python`, narrowed to what TLlama actually applies — the same set a `.toml` `[sampling]` may use, listed under [`[sampling]`](#sampling) below. A name outside it stops the server at startup, and says which of the two reasons applies: TLlama does not apply this parameter, or the library has no such parameter at all.
-
-The type each value has to become is read off the same signatures. `logit_bias` and `stop` are therefore refused here — a table and a list are not things an environment variable can hold — with a message pointing at the `.toml`, where they can be set.
+Names and types come from TLlama's own sampling contract, also used for TOML and request validation. They do not change when a Python binding adds parameters. `logit_bias` and `stop` remain TOML-only because their structured values cannot be expressed through this environment interface.
 
 A value that will not convert stops the server at startup rather than failing on the first request that generates anything.
 
@@ -376,7 +338,7 @@ A misspelt section name is the mistake this catches that the per-section checks 
 
 ### `[llm]` and `[mmproj]`
 
-`model` is a path relative to the repository root, including the category directory. `from` imports a file from outside the repository instead, physically into `TLlama/`, and is rewritten to `model` afterwards. Exactly one of the two.
+`model` is a path relative to the repository root, including the category directory. `tllama create -f FILE` imports client-side `from` files into the server's `Local/imports/` storage and rewrites them to `model` in the stored TOML. Relative `from` paths are relative to the client's current working directory, regardless of FILE's location; the HTTP server does not read arbitrary server-side paths from this field. Exactly one of the two is required per section. A definition-only create with `model` reuses existing repository files without uploading them. See [CLI create/import](cli.md#create-and-import-models).
 
 A path escaping the repository root is refused. An `[mmproj]` is checked to be a projector.
 
@@ -384,32 +346,26 @@ A path escaping the repository root is refused. An `[mmproj]` is checked to be a
 
 #### Projector context
 
-`_init_mtmd_context` in llama-cpp-python sets four fields of `mtmd_context_params` — `use_gpu`, `print_timings`, `n_threads` and `flash_attn_type` — and leaves the rest at their defaults. Those four are not settable here: they are written after these are, so a value would be overwritten. The rest are.
+The native resolver maps these projector settings to managed worker CLI
+parameters. `warmup` affects the whole worker, including the text model.
 
-| Key | Type | Default | Notes |
-|---|---|---|---|
-| `warmup` | boolean | `true` | Reserves the projector's compute graph at load. `false` skips the reservation |
-| `image_min_tokens` | integer | `-1` | `-1` leaves it to the projector. llama.cpp's own log suggests `1024` for Qwen-VL on grounding tasks |
-| `image_max_tokens` | integer | `-1` | `-1` leaves it to the projector. Bounds how large an image may be after scaling, and so how much a real request costs |
-| `batch_max_tokens` | integer | library default | |
+| Key | Type | Notes |
+| --- | --- | --- |
+| `warmup` | boolean | Whole-worker warmup; false skips it |
+| `image_min_tokens` | integer | Image processing lower limit; -1 uses native/model policy |
+| `image_max_tokens` | integer | Image processing upper limit; -1 uses native/model policy |
+| `batch_max_tokens` | integer | Native multimodal batch token limit |
 
-A key here that is not a field of `mtmd_context_params` in the installed llama-cpp-python fails the load rather than being ignored: assigning to a name a ctypes structure does not have succeeds and does nothing.
-
-##### What `warmup` costs
-
-The reservation is sized from a warmup image whose dimensions the projector fixes at load. It does not follow `image_max_tokens`: setting a smaller limit changes the reported `image_max_pixels` and leaves the reservation exactly as it was, even when the limit is below the warmup image's own size. So `image_max_tokens` is a bound on real requests, not a way to make loading cheaper.
-
-What the reservation costs depends almost entirely on `flash_attn`. With it enabled the graph is small and reserving it is cheap. With it disabled the attention matrix over the warmup image is materialised in full and the reservation runs to gigabytes — where it lands then differs by backend, and neither outcome is good: it may be split across many graph parts and pushed onto the CPU, or the allocation may simply fail, be written to the log, and be carried on past. The load reports success either way.
-
-`warmup = false` skips all of it. The graph is then built when an image first arrives, at whatever size that image needs.
-
-A reservation that fails is not survivable, so the load is refused rather than allowed to look healthy: measured on a 16 GB card, the model loaded, reported success, and the first request carrying an image killed the process. The refusal names the buffer and its size.
+Unknown projector keys are refused. Actual image decoding and inference belong
+to the native runtime; valid configuration alone does not certify model/backend
+compatibility. See [native-vision.md](native-vision.md) and
+[native-config.md](native-config.md) for mapping, input and failure contracts.
 
 Several models may point at one physical file; the weights are not copied.
 
 ### `[runtime]`
 
-Any `Llama()` parameter from the table above, plus `type_kv`. Overrides `TLLAMA_RUNTIME_*` for this model.
+The supported parameters in [native-config.md](native-config.md), including `type_kv`. Overrides `TLLAMA_RUNTIME_*` for this model.
 
 `model_path` is refused: the path comes from `[llm]`, and naming it here would mean the file defines one model and loads another.
 
@@ -425,7 +381,7 @@ The baselines below apply only where nothing else does. On a model whose GGUF re
 
 | Key | Baseline | Notes |
 |---|---:|---|
-| `temperature` | `0.8` | Matches llama.cpp and Ollama, not `llama-cpp-python`, whose two completion calls disagree with each other |
+| `temperature` | `0.8` | TLlama baseline; explicit global/model/request values and GGUF recommendations take precedence |
 | `top_p` | `0.9` | Ollama's documented default, chosen over llama.cpp's `0.95` |
 | `top_k` | `40` | |
 | `min_p` | `0.05` | |
@@ -433,7 +389,6 @@ The baselines below apply only where nothing else does. On a model whose GGUF re
 | `presence_penalty` | `0.0` | |
 | `frequency_penalty` | `0.0` | |
 | `repeat_penalty` | `1.0` | `1.0` disables |
-| `tfs_z` | `1.0` | `1.0` disables |
 | `mirostat_mode` | `0` | `0`, `1` or `2`; anything else is refused. Ollama's client options spell this `mirostat` |
 | `mirostat_tau` | `5.0` | |
 | `mirostat_eta` | `0.1` | |
@@ -442,7 +397,11 @@ The baselines below apply only where nothing else does. On a model whose GGUF re
 | `max_tokens` | unset | Ollama's client options spell this `num_predict` |
 | `stop` | none | Array of strings |
 
-This set is still narrower than what `llama-cpp-python`'s completion calls accept. `grammar` is the notable absentee, and deliberately so: GBNF that llama.cpp cannot parse takes the server process down with `SIGSEGV` rather than returning an error, and nothing in the installed library parses it early enough to catch that first. A name that is real to the library but unapplied here is refused rather than accepted and dropped.
+`tfs_z` is refused even for `1.0`; it has no supported native equivalent.
+Sampling types and enum values follow the pinned TLlama contract, rather than
+every option upstream happens to provide. Public structured output is described
+in [native-public-api.md](native-public-api.md); raw grammar passthrough is not
+implicitly enabled by the server TOML.
 
 Applied identically by `/api/generate`, `/api/chat` and `/v1/chat/completions`, so a model behaves the same whichever endpoint a client uses.
 
@@ -452,7 +411,8 @@ Applied identically by `/api/generate`, `/api/chat` and `/v1/chat/completions`, 
 
 ### `[template]`
 
-`jinja` is a chat template overriding the GGUF's own, for text and vision models alike. Rendered by real Jinja2. It is the section's only key.
+`jinja` is a chat template overriding the GGUF's own, for text and vision models alike. Native chat renders the selected template. Completion prompt rendering uses
+TLlama's sandboxed renderer where applicable. It is the section's only key.
 
 ---
 
@@ -464,7 +424,7 @@ Applied identically by `/api/generate`, `/api/chat` and `/v1/chat/completions`, 
 export TLLAMA_HOST=127.0.0.1:54800
 export TLLAMA_MODELS=/var/lib/tllama/models
 
-tllama
+tllamad
 ```
 
 ### Lower memory
@@ -475,7 +435,7 @@ export TLLAMA_KV_CACHE_TYPE=q4_0
 export TLLAMA_CONTEXT_LENGTH=8192
 export TLLAMA_MAX_LOADED_MODELS=1
 
-tllama
+tllamad
 ```
 
 Flash attention first: without it the cache type is ignored.
@@ -486,7 +446,7 @@ Flash attention first: without it the cache type is ignored.
 export TLLAMA_RUNTIME_TENSOR_SPLIT=0.7,0.3
 export TLLAMA_RUNTIME_N_GPU_LAYERS=-1
 
-tllama
+tllamad
 ```
 
 ### One GPU only, on a machine with several
@@ -495,7 +455,7 @@ tllama
 export TLLAMA_RUNTIME_SPLIT_MODE=0
 export TLLAMA_RUNTIME_MAIN_GPU=0
 
-tllama
+tllamad
 ```
 
 `main_gpu` indexes the device list *after* `llama.cpp` merges devices reporting the same PCI id, so one card visible under both CUDA and Vulkan counts once.
@@ -507,7 +467,7 @@ export TLLAMA_RUNTIME_N_THREADS=16
 export TLLAMA_RUNTIME_N_THREADS_BATCH=32
 export TLLAMA_RUNTIME_USE_MLOCK=true
 
-tllama
+tllamad
 ```
 
 ### LAN-accessible
@@ -515,7 +475,7 @@ tllama
 ```bash
 export TLLAMA_HOST=0.0.0.0:54800
 
-tllama
+tllamad
 ```
 
 Use a reverse proxy and access controls beyond localhost.
@@ -524,26 +484,10 @@ Use a reverse proxy and access controls beyond localhost.
 
 ## systemd
 
-```bash
-# /etc/default/tllama
-TLLAMA_HOST=127.0.0.1:54800
-TLLAMA_MODELS=/var/lib/tllama/models
-TLLAMA_KEEP_ALIVE=5m
-TLLAMA_MAX_LOADED_MODELS=1
-TLLAMA_METADATA_CACHE_TTL=18000
-TLLAMA_RUNTIME_FLASH_ATTN=true
-TLLAMA_KV_CACHE_TYPE=q8_0
-```
-
-```ini
-[Service]
-EnvironmentFile=/etc/default/tllama
-ExecStart=/usr/bin/tllama
-```
-
-A `systemctl edit tllama` drop-in with `Environment=` overrides the environment file. Both are the environment layer, so a model's `.toml` still wins over either.
-
-A refused value exits 2 before the socket is opened, so `systemctl status` shows the message and the unit never comes up half-configured.
+Install the supplied `systemd/tllamad.service` with the daemon account and
+`/etc/tllama/server.toml` as described in [systemd.md](systemd.md). The service
+runs `tllamad`, checks configuration before serving, and retains managed-worker
+shutdown. CLI > environment > server TOML applies to service overrides too.
 
 ---
 
@@ -554,7 +498,7 @@ A refused value exits 2 before the socket is opened, so `systemctl status` shows
 Read the last line: it names the variable and what was expected.
 
 ```
-tllama: TLLAMA_HOST='0.0.0.0:http' is not valid: expected HOST:PORT with a numeric port.
+tllamad: TLLAMA_HOST='0.0.0.0:http' is not valid: expected HOST:PORT with a numeric port.
 ```
 
 ### A model disappeared from the listing
@@ -562,7 +506,7 @@ tllama: TLLAMA_HOST='0.0.0.0:http' is not valid: expected HOST:PORT with a numer
 Its `.toml` no longer parses, most likely because it carries a key TLlama will not act on. Nothing is deleted; the model is invisible until the file is fixed.
 
 ```bash
-tllama rebuildrepo --dryrun
+tllamad rebuildrepo --dryrun
 ```
 
 That names the file and the key, and writes nothing. A common case is a setting in the wrong section: context length is `n_ctx` in `[runtime]`, not `num_ctx` in `[sampling]`.
@@ -586,7 +530,7 @@ A browser caches a preflight for ten minutes, so a corrected origin list can tak
 ```bash
 echo "$TLLAMA_MODELS"
 find "$TLLAMA_MODELS" -name '*.gguf' | head
-tllama rebuildrepo --dryrun
+tllamad rebuildrepo --dryrun
 ```
 
 A `.gguf` with no `.toml` is not a model. `rebuildrepo` writes the missing definitions.

@@ -3,26 +3,11 @@ from jinja2.sandbox import ImmutableSandboxedEnvironment
 from fastapi import HTTPException
 from typing import Literal
 
-from tllama.schemas.ollama import OllamaChatRequest, OllamaGenerateRequest
 from tllama.helpers.common import normalize_stop, strftime_now
 
 
-def _get_bos_eos_tokens(llm):
-    bos_id = llm.token_bos()
-    eos_id = llm.token_eos()
-
-    bos_token = llm.detokenize([bos_id]).decode("utf-8", errors="ignore") if bos_id != -1 else ""
-    eos_token = llm.detokenize([eos_id]).decode("utf-8", errors="ignore") if eos_id != -1 else ""
-
-    return bos_token, eos_token
-
-
-def render_generate_prompt(
-    llm,
-    metadata_info: dict,
-    request,
-    mode: Literal["prompt", "messages"] = "prompt",
-):
+def render_generate_text(metadata_info: dict, request, *, bos_token: str, eos_token: str,
+                         mode: Literal["prompt", "messages"] = "prompt"):
     """Render a completion prompt from a model template and request data.
 
     Returns:
@@ -41,8 +26,6 @@ def render_generate_prompt(
             status_code=501,
             detail="Model template is not available; cannot render prompt for this model."
         )
-
-    bos_token, eos_token = _get_bos_eos_tokens(llm)
 
     if mode == "prompt":
         prompt_text = getattr(request, "prompt", None) or ""
@@ -190,9 +173,8 @@ def render_generate_prompt(
             detail=f"template render failed: {type(e).__name__}: {e}"
         )
 
-    stop = normalize_stop((getattr(request, "options", None) or {}).get("stop"))
-    if not stop:
-        stop = list(metadata_info.get("stop_defaults") or [])
+    options = getattr(request, "options", None) or {}
+    stop = normalize_stop(options["stop"]) if "stop" in options else list(metadata_info.get("stop_defaults") or [])
     if eos_token and eos_token not in stop:
         stop.append(eos_token)
 

@@ -13,6 +13,15 @@ from tllama.config import BackendConfig
 
 
 @pytest.fixture
+def clean_tllama_config_environment(monkeypatch):
+    """Give opt-in config tests only the settings they explicitly supply."""
+    for name in tuple(os.environ):
+        # Keep the test-owned store in place for application imports.
+        if name.startswith("TLLAMA_") and name != "TLLAMA_MODELS":
+            monkeypatch.delenv(name)
+
+
+@pytest.fixture
 def models_root(tmp_path):
     """An empty model store that never touches the real one."""
     return tmp_path / "models"
@@ -36,6 +45,16 @@ def make_manager(models_root):
         manager.ensure_storage()
         return manager
 
+    return factory
+
+
+@pytest.fixture
+def native_reply(manager, monkeypatch):
+    """Install explicit native lease/worker fakes for a public API test."""
+    from native_route_fakes import install_reply
+
+    def factory(**values):
+        return install_reply(monkeypatch, manager, **values)
     return factory
 
 

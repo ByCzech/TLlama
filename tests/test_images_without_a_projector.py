@@ -11,9 +11,7 @@ here down to the wording.
 import pytest
 from fastapi.testclient import TestClient
 
-from llama_cpp.llama_chat_format import MTMDChatHandler
 
-from tllama.backend import model_has_projector
 from tllama.helpers.vision import NO_MULTIMODAL_SUPPORT
 from tllama.main import app
 
@@ -24,63 +22,21 @@ ONE_PIXEL = (
 )
 
 
-class FakeLlm:
-    def __init__(self, chat_handler=None):
-        self.chat_handler = chat_handler
-
-
-class FakeProjectorHandler(MTMDChatHandler):
-    def __init__(self):
-        # Deliberately not calling super().__init__: it wants a real file
-        # on disk, and nothing here loads one.
-        self.mtmd_ctx = object()
-
-
 @pytest.fixture
 def client():
     return TestClient(app)
 
 
 @pytest.fixture
-def loaded(monkeypatch):
-    """Put a model behind the endpoints without loading anything."""
-    def factory(chat_handler=None):
-        from tllama.routers import ollama as ollama_router
-
-        llm = FakeLlm(chat_handler=chat_handler)
-
-        async def fake_get_model(*args, **kwargs):
-            return llm
-
-        async def fake_metadata(*args, **kwargs):
-            return {}
-
-        monkeypatch.setattr(
-            ollama_router.model_manager, "get_model", fake_get_model
-        )
-        monkeypatch.setattr(
-            ollama_router.model_manager, "get_model_metadata", fake_metadata
-        )
-        return llm
-
+def loaded(native_reply):
+    def factory(vision=False):
+        return native_reply(vision=vision)
     return factory
-
-
-class TestWhatCountsAsAbleToSee:
-    def test_a_projector_handler_counts(self):
-        assert model_has_projector(FakeLlm(chat_handler=FakeProjectorHandler()))
-
-    def test_no_handler_at_all_does_not(self):
-        assert not model_has_projector(FakeLlm(chat_handler=None))
-
-    def test_a_plain_text_handler_does_not(self):
-        # What a [template] override leaves behind: an opaque callable.
-        assert not model_has_projector(FakeLlm(chat_handler=lambda **kw: None))
 
 
 class TestChatRefusesAnImageItCannotUse:
     def test_an_image_to_a_text_model_is_refused(self, client, loaded):
-        loaded(chat_handler=None)
+        loaded(vision=False)
 
         response = client.post("/api/chat", json={
             "model": "m",
@@ -93,7 +49,7 @@ class TestChatRefusesAnImageItCannotUse:
         assert response.status_code == 400
 
     def test_the_refusal_says_why(self, client, loaded):
-        loaded(chat_handler=None)
+        loaded(vision=False)
 
         response = client.post("/api/chat", json={
             "model": "m",
@@ -106,7 +62,7 @@ class TestChatRefusesAnImageItCannotUse:
         assert NO_MULTIMODAL_SUPPORT in response.json()["error"]
 
     def test_an_image_on_a_later_message_is_found_too(self, client, loaded):
-        loaded(chat_handler=None)
+        loaded(vision=False)
 
         response = client.post("/api/chat", json={
             "model": "m",
@@ -121,7 +77,7 @@ class TestChatRefusesAnImageItCannotUse:
         assert response.status_code == 400
 
     def test_an_empty_images_list_is_not_an_image(self, client, loaded):
-        loaded(chat_handler=None)
+        loaded(vision=False)
 
         response = client.post("/api/chat", json={
             "model": "m",
@@ -134,7 +90,7 @@ class TestChatRefusesAnImageItCannotUse:
         assert response.status_code != 400
 
     def test_text_alone_is_untouched(self, client, loaded):
-        loaded(chat_handler=None)
+        loaded(vision=False)
 
         response = client.post("/api/chat", json={
             "model": "m",
@@ -144,8 +100,8 @@ class TestChatRefusesAnImageItCannotUse:
 
         assert response.status_code != 400
 
-    def test_a_model_with_a_projector_is_not_refused(self, client, loaded):
-        loaded(chat_handler=FakeProjectorHandler())
+    def test_worker_vision_capability_allows_image_inference(self, client, loaded):
+        loaded(vision=True)
 
         response = client.post("/api/chat", json={
             "model": "m",
@@ -155,12 +111,13 @@ class TestChatRefusesAnImageItCannotUse:
             ],
         })
 
-        assert response.status_code != 400
+        assert response.status_code == 200
 
 
-class TestGenerateRefusesImagesForNow:
-    def test_an_image_is_refused(self, client, loaded):
-        loaded(chat_handler=FakeProjectorHandler())
+class TestGenerateRequiresVision:
+    @pytest.mark.parametrize("vision", [False, True])
+    def test_an_image_uses_actual_worker_capability(self, client, loaded, vision):
+        loaded(vision=vision)
 
         response = client.post("/api/generate", json={
             "model": "m",
@@ -169,24 +126,29 @@ class TestGenerateRefusesImagesForNow:
             "images": [ONE_PIXEL],
         })
 
-        assert response.status_code == 400
-        assert NO_MULTIMODAL_SUPPORT in response.json()["error"]
+        assert response.status_code == (200 if vision else 400)
+        if vision:
+            assert response.json()["response"] == "ok"
+        else:
+            assert NO_MULTIMODAL_SUPPORT in response.json()["error"]
 
-    def test_a_prompt_without_images_is_untouched(self, client, loaded):
-        loaded(chat_handler=None)
+    @pytest.mark.parametrize("images", [None, []])
+    def test_a_prompt_without_images_is_untouched(self, client, loaded, images):
+        loaded(vision=False)
 
         response = client.post("/api/generate", json={
             "model": "m",
             "stream": False,
             "prompt": "ahoj",
+            "images": images,
         })
 
-        assert response.status_code != 400
+        assert response.status_code == 200 and response.json()["response"] == "ok"
 
 
 class TestAnUnusableImageIsAClientError:
-    def test_a_url_gets_a_400_not_a_fetch(self, client, loaded):
-        loaded(chat_handler=FakeProjectorHandler())
+    def test_url_is_refused_without_fetch_at_native_text_checkpoint(self, client, loaded):
+        loaded(vision=True)
 
         response = client.post("/api/chat", json={
             "model": "m",
@@ -199,10 +161,10 @@ class TestAnUnusableImageIsAClientError:
         })
 
         assert response.status_code == 400
-        assert "base64" in response.json()["error"]
+        assert "Image URLs are not supported" in response.json()["error"]
 
-    def test_undecodable_data_gets_a_400(self, client, loaded):
-        loaded(chat_handler=FakeProjectorHandler())
+    def test_undecodable_media_is_refused_at_native_text_checkpoint(self, client, loaded):
+        loaded(vision=True)
 
         response = client.post("/api/chat", json={
             "model": "m",

@@ -64,9 +64,8 @@ def to_image_data_url(value: str) -> str:
     what bridges the two, and it has to be there: without it the string
     falls through to the URL branch of _load_image and gets fetched.
 
-    A value that already carries a prefix is left alone, so a client that
-    sends the OpenAI shape through Ollama's field is not double-wrapped
-    into something that decodes to nothing.
+    Both bare base64 and data URLs are decoded and checked. The MIME label
+    is read from the bytes; the native worker remains the image decoder.
     """
     if value.startswith("data:"):
         # _load_image splits on the comma and takes element 1, so a second
@@ -76,9 +75,10 @@ def to_image_data_url(value: str) -> str:
             raise InvalidImageError(
                 "Image data URL is malformed (expected exactly one comma)."
             )
-        return value
-
-    if _URL_SCHEME.match(value):
+        header, value = value.split(',', 1)
+        if not re.fullmatch(r'data:image/[A-Za-z0-9.+-]+;base64', header):
+            raise InvalidImageError('Image data URL must contain an image MIME type and base64 payload.')
+    elif _URL_SCHEME.match(value):
         raise InvalidImageError(NO_REMOTE_IMAGES)
 
     try:

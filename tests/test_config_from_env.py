@@ -18,6 +18,9 @@ from tllama.config import (
 )
 
 
+pytestmark = pytest.mark.usefixtures("clean_tllama_config_environment")
+
+
 class TestUnsetAndEmptyStillMeanDefault:
     def test_nothing_set_gives_the_declared_defaults(self, monkeypatch):
         for name in (

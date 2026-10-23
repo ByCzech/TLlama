@@ -1,0 +1,28 @@
+[Unit]
+Description=TLlama inference server
+After=network.target
+
+[Service]
+Type=exec
+User=tllama
+Group=tllama
+RuntimeDirectory=tllama
+RuntimeDirectoryMode=0700
+StateDirectory=tllama
+StateDirectoryMode=0750
+CacheDirectory=tllama
+CacheDirectoryMode=0750
+WorkingDirectory=/var/lib/tllama
+Environment=HF_HOME=/var/cache/tllama/huggingface
+ExecStartPre=/usr/bin/tllamad --config /etc/tllama/server.toml --check-config
+ExecStart=/usr/bin/tllamad --config /etc/tllama/server.toml
+Restart=on-failure
+RestartPreventExitStatus=2
+RestartSec=5
+KillMode=mixed
+TimeoutStopSec=120
+UMask=0027
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

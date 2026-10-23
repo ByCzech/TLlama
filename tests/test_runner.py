@@ -32,7 +32,7 @@ def policy(manager, monkeypatch):
         calls.append(("load", name))
         return object()
 
-    def unload(name):
+    async def unload(name):
         calls.append(("unload", name))
 
     async def metadata(name, **kwargs):
@@ -57,10 +57,9 @@ def policy(manager, monkeypatch):
     async def noop(*args, **kwargs):
         return None
 
-    monkeypatch.setattr(manager, "get_model", load)
-    monkeypatch.setattr(manager, "unload_model", unload)
+    monkeypatch.setattr(manager, "preload_native_model", load)
+    monkeypatch.setattr(manager, "unload_native_model", unload)
     monkeypatch.setattr(manager, "get_model_metadata", metadata)
-    monkeypatch.setattr(manager, "get_model_metadata_best_effort", metadata)
     monkeypatch.setattr(manager, "read_model_definition", lambda *args: "[llm]\n")
     monkeypatch.setattr(manager, "resolve_hf_pull_target", resolve)
     monkeypatch.setattr(manager, "fetch_hf_file_info", lookup)
@@ -168,7 +167,7 @@ def test_rejected_runner_cannot_start_inference(client, policy, path):
     assert calls == []
 
 
-def test_runner_metadata_covers_loaded_and_loading_models(client, policy, monkeypatch):
+def test_runner_metadata_covers_tags_and_empty_residency(client, policy, monkeypatch):
     from tllama.routers import ollama as router
 
     policy()
@@ -178,21 +177,10 @@ def test_runner_metadata_covers_loaded_and_loading_models(client, policy, monkey
         return [{"id": "ready", "mtime": 0, "size": 1}]
 
     monkeypatch.setattr(manager, "list_local_models_with_metadata", listing)
-    monkeypatch.setattr(manager, "list_loaded_models", lambda: [{
-        "id": "ready", "model": "ready", "path": "/fake/ready.gguf",
-        "size": 1, "size_vram": 0, "n_ctx": 4096, "expires_at": None,
-    }])
-    monkeypatch.setattr(manager, "list_loading_models", lambda: ["loading"])
-    monkeypatch.setattr(manager, "build_model_file_info_best_effort", lambda *args: {
-        "path": "/fake/loading.gguf", "size": 2,
-    })
-
     tags = client.get("/api/tags").json()["models"]
     assert tags[0]["details"]["runner"] == "llamacpp"
-    ps = client.get("/api/ps").json()["models"]
-    assert [entry["model"] for entry in ps] == ["ready", "loading"]
-    assert all(entry["runner"] == "llamacpp" for entry in ps)
-    assert all("runner" not in entry["details"] for entry in ps)
+    ps = client.get("/api/ps")
+    assert ps.status_code == 200 and ps.json() == {'models': []}
 
 
 @pytest.mark.parametrize("value,expected", [("true", True), ("false", False)])

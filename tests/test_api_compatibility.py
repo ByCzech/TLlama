@@ -193,9 +193,3 @@ def test_a_pinned_model_is_reported_far_enough_ahead_to_read_as_forever():
     ahead = datetime.fromisoformat(never_expires_at()) - datetime.now(timezone.utc)
 
     assert ahead.days / 365 > 21
-
-
-def test_the_janitor_never_reaps_a_model_without_an_expiry(manager):
-    assert manager._is_model_entry_expired({"expires_at": None}) is False
-    assert manager._is_model_entry_expired({"expires_at": "2000-01-01T00:00:00+00:00"}) is True
-

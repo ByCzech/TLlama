@@ -1,62 +1,29 @@
 import asyncio
 import json
-import time
-
-import jinja2
-from jinja2.sandbox import ImmutableSandboxedEnvironment
 
 from datetime import datetime, timezone
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
+from starlette.requests import ClientDisconnect
 from fastapi.responses import StreamingResponse, JSONResponse
-# Only iterate_in_threadpool is taken from starlette. Its run_in_threadpool
-# goes through anyio, whose worker held on to the last callable it ran until
-# 4.9, and a reference to a multi-gigabyte model does not belong in a queue
-# whose housekeeping we do not control. asyncio.to_thread uses the standard
-# library ThreadPoolExecutor, which drops its work item as soon as it has run.
-from starlette.concurrency import iterate_in_threadpool
-from llama_cpp import LlamaGrammar
 from tllama.schemas.ollama import OllamaChatRequest, OllamaGenerateRequest
-from tllama.backend import model_manager, model_has_projector, HF_LOOKUP_MISSING, PullProgress
-from tllama._ext import counted_for_request, reset_eval_counters, timed_for_request
-from tllama.lib.llama_wrap import create_chat_completion_ex
-
-from tllama.errors import ollama_stream_error_line
+from tllama.backend import model_manager, HF_LOOKUP_MISSING, PullProgress
 from tllama.helpers.model_toml import TomlModelError
 from tllama.version import get_version as get_tllama_version
 from tllama.helpers.runner import RUNNER, validate_runner
-
-from tllama.helpers.common import (
-    format_ollama_parameters,
-    get_iso_time,
-    never_expires_at,
-    normalize_stop,
-    normalize_message_content,
-    estimate_completion_prompt_eval_count,
-    build_completion_format_kwargs,
-    build_sampling_kwargs,
-    validate_format,
-)
-
-from tllama.helpers.prompt_render import (
-    render_generate_prompt,
-)
-from tllama.helpers.reasoning_split import (
-    detect_reasoning_format,
-    ReasoningStreamSplitter,
-    split_full_text_by_reasoning_format,
-)
-from tllama.helpers.vision import (
-    InvalidImageError,
-    NO_MULTIMODAL_SUPPORT,
-    messages_carry_images,
-    request_carries_images,
-)
-from tllama.helpers.chat import (
-    normalize_chat_messages,
-    apply_default_system_prompt,
-    build_chat_kwargs_ex,
-    build_chat_response_format_kwargs
-)
+from tllama.helpers.common import format_ollama_parameters
+from tllama.helpers.reasoning_split import detect_reasoning_format
+from tllama.helpers.tool_capability import template_accepts_tools
+from tllama.native_routes import serve_native
+from tllama.native_reporting import ollama_processes
+from tllama.errors import ollama_stream_error_line
+from tllama.embedding_contract import embedding_capable
+from tllama.decision_contract import has_decision_head, decision_capable
+from tllama.native_embeddings import embedding_response
+from tllama.schemas.embeddings import OllamaEmbedRequest, OllamaLegacyEmbeddingRequest
+from tllama.schemas.model_management import CopyRequest, CreateRequest
+from tllama.model_definitions import copy_definition, create_definition
+from tllama.residency import _settle_owned
+from tllama.model_uploads import blob_path, receive_blob
 
 router = APIRouter(
     prefix="/api",
@@ -76,11 +43,13 @@ def _validate_runner(value) -> None:
     )
 
 
+@router.head("/version")
 @router.get("/version")
 async def get_version():
     return {"version": get_tllama_version()}
 
 
+@router.head("/tags")
 @router.get("/tags")
 async def list_models_ollama():
     local_models = await model_manager.list_local_models_with_metadata()
@@ -111,611 +80,26 @@ async def list_models_ollama():
 
 @router.post("/chat")
 async def ollama_chat(request: OllamaChatRequest):
-    """Handle Ollama-compatible /chat requests via create_chat_completion_ex()."""
     _validate_runner(request.runner)
-    opts = request.options or {}
-
-    try:
-        validate_format(request.format)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-    try:
-        keep_alive_seconds = model_manager.resolve_keep_alive(request.keep_alive)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid keep_alive value: {str(e)}")
-
-    if not request.messages:
-        if keep_alive_seconds == 0:
-            model_manager.unload_model(request.model)
-            return {
-                "model": request.model,
-                "created_at": get_iso_time(),
-                "message": {"role": "assistant", "content": ""},
-                "done": True,
-                "done_reason": "unload",
-            }
-
-        try:
-            await model_manager.get_model(
-                request.model,
-                num_ctx=opts.get("num_ctx"),
-                keep_alive=request.keep_alive,
-            )
-        except TomlModelError:
-            # Not the request's fault and not a load failure: the virtual
-            # model's own definition is broken. Reported as 500 by the
-            # registered handler instead of being flattened into a 400 that
-            # blames the client.
-            raise
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Error loading model: {str(e)}")
-
-        return {
-            "model": request.model,
-            "created_at": get_iso_time(),
-            "message": {"role": "assistant", "content": ""},
-            "done": True,
-            "done_reason": "load",
-        }
-
-    # Before the load, not after it. Ollama's total_duration covers the
-    # whole request and its load_duration is a part of it, so a client
-    # adding the pieces up expects them to fit inside the total. Starting
-    # the clock afterwards left a cold start outside every figure the
-    # reply carried.
-    start_time = time.time_ns()
-
-    try:
-        llm = await model_manager.get_model(
-            request.model,
-            num_ctx=opts.get("num_ctx"),
-            keep_alive=request.keep_alive,
-        )
-    except TomlModelError:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Error loading model: {str(e)}")
-
-    # Measured whether or not a load happened. A resident model still
-    # costs a lookup, and Ollama reports that cost rather than a zero --
-    # 2.2 ms in a measured comparison against a model already in memory.
-    load_duration = time.time_ns() - start_time
-
-    metadata_info = await model_manager.get_model_metadata(request.model) or {}
-    reasoning_format = detect_reasoning_format(request.model, metadata_info)
-
-    # Refused rather than dropped. Without a projector there is nowhere for
-    # an image to go, and going ahead anyway means the model answers about
-    # a picture it never saw -- confidently, since nothing tells it that
-    # anything is missing. Real Ollama refuses this the same way, with the
-    # same sentence.
-    if messages_carry_images(request.messages) and not model_has_projector(llm):
-        raise HTTPException(status_code=400, detail=NO_MULTIMODAL_SUPPORT)
-
-    try:
-        messages = apply_default_system_prompt(normalize_chat_messages(request.messages), metadata_info)
-    except InvalidImageError as exc:
-        # An image that cannot be decoded, or a URL that will not be
-        # fetched, is the client's to fix -- and saying which is the
-        # difference between a fixable request and a mystery.
-        raise HTTPException(status_code=400, detail=str(exc))
-    kwargs_ex = build_chat_kwargs_ex(request)
-
-    gen_params = build_sampling_kwargs(opts, metadata_info, model_manager.sampling_overrides)
-
-    if request.tools:
-        gen_params["tools"] = request.tools
-
-    try:
-        gen_params.update(build_chat_response_format_kwargs(getattr(request, "format", None)))
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid format schema: {e}")
-
-    if request.stream:
-        def chat_stream_generator():
-            finish_reason = None
-            eval_count = None
-            counters_reset = reset_eval_counters(llm)
-            splitter = ReasoningStreamSplitter(reasoning_format, think_value=request.think)
-
-            try:
-                response_iter = create_chat_completion_ex(
-                    llm,
-                    messages=messages,
-                    stream=True,
-                    **gen_params,
-                    **kwargs_ex
-                )
-
-                for chunk in response_iter:
-                    choice = chunk["choices"][0]
-                    delta = choice.get("delta", {})
-                    chunk_finish_reason = choice.get("finish_reason")
-
-                    if chunk_finish_reason is not None:
-                        finish_reason = chunk_finish_reason
-
-                    usage = chunk.get("usage") or {}
-                    if usage.get("completion_tokens") is not None:
-                        eval_count = usage.get("completion_tokens")
-
-                    if delta.get("tool_calls") is not None:
-                        yield f"{json.dumps({
-                            'model': request.model,
-                            'created_at': get_iso_time(),
-                            'message': {
-                                'role': 'assistant',
-                                'tool_calls': delta['tool_calls']
-                            },
-                            'done': False
-                        })}\n"
-
-                    content = delta.get("content", "")
-                    for kind, piece in splitter.push(content):
-                        if kind == "thinking":
-                            payload = {
-                                "model": request.model,
-                                "created_at": get_iso_time(),
-                                "message": {
-                                    "role": "assistant",
-                                    "content": "",
-                                    "thinking": piece,
-                                },
-                                "done": False,
-                            }
-                        else:
-                            payload = {
-                                "model": request.model,
-                                "created_at": get_iso_time(),
-                                "message": {
-                                    "role": "assistant",
-                                    "content": piece,
-                                },
-                                "done": False,
-                            }
-
-                        yield f"{json.dumps(payload)}\n"
-
-                for kind, piece in splitter.finish():
-                    if kind == "thinking":
-                        payload = {
-                            "model": request.model,
-                            "created_at": get_iso_time(),
-                            "message": {
-                                "role": "assistant",
-                                "content": "",
-                                "thinking": piece,
-                            },
-                            "done": False,
-                        }
-                    else:
-                        payload = {
-                            "model": request.model,
-                            "created_at": get_iso_time(),
-                            "message": {
-                                "role": "assistant",
-                                "content": piece,
-                            },
-                            "done": False,
-                        }
-
-                    yield f"{json.dumps(payload)}\n"
-
-                end_time = time.time_ns()
-
-                # llama-cpp-python reports usage only on a non-streaming
-                # response, so ask llama.cpp for its own counters instead.
-                #
-                # n_p_eval counts tokens actually evaluated, which in principle
-                # could fall below the prompt length once a prefix is reused.
-                # It does not today: llama.cpp cannot remove part of a KV cache
-                # entry, so it re-evaluates the whole prompt and the two agree.
-                counted_prompt, counted_eval = counted_for_request(counters_reset, llm)
-                timed_prompt, timed_eval = timed_for_request(counters_reset, llm)
-
-                yield f"{json.dumps({
-                    'model': request.model,
-                    'created_at': get_iso_time(),
-                    # Required, not optional, in the official client's
-                    # ChatResponse -- a final line without it fails
-                    # validation before generation stats are ever seen.
-                    # Real Ollama sends the same empty-content message here.
-                    'message': {'role': 'assistant', 'content': ''},
-                    'done': True,
-                    'done_reason': finish_reason,
-                    'total_duration': end_time - start_time,
-                    'load_duration': load_duration,
-                    'prompt_eval_duration': timed_prompt,
-                    'eval_duration': timed_eval,
-                    'prompt_eval_count': counted_prompt,
-                    'eval_count': eval_count if eval_count is not None else counted_eval,
-                })}\n"
-
-            except Exception as e:
-                # The status code went out with the first chunk, so an error
-                # line in the body is the only way left to report a failure.
-                yield ollama_stream_error_line(str(e))
-
-            finally:
-                if keep_alive_seconds == 0:
-                    model_manager.unload_model(request.model)
-
-        async def guarded_chat_stream():
-            # The slot is held for the whole stream, not just its creation.
-            async with model_manager.acquire_inference_slot(request.model):
-                async for chunk in iterate_in_threadpool(chat_stream_generator()):
-                    yield chunk
-
-        return StreamingResponse(guarded_chat_stream(), media_type="application/x-ndjson")
-
-    try:
-        async with model_manager.acquire_inference_slot(request.model):
-            counters_reset = reset_eval_counters(llm)
-            response = await asyncio.to_thread(
-                create_chat_completion_ex,
-                llm,
-                messages=messages,
-                stream=False,
-                **gen_params,
-                **kwargs_ex
-            )
-            counted_prompt, counted_eval = counted_for_request(counters_reset, llm)
-            timed_prompt, timed_eval = timed_for_request(counters_reset, llm)
-    except HTTPException:
-        raise
-    except Exception as e:
-        # Nothing has been written to the response yet, unlike the
-        # streaming sibling above, so the failure can still be reported
-        # with a status code. 500: generation broke inside llama.cpp after
-        # the request was accepted and the model loaded, which is not
-        # something the client can restate its way out of.
-        raise HTTPException(status_code=500, detail=f"Inference failed: {str(e)}")
-    finally:
-        if keep_alive_seconds == 0:
-            model_manager.unload_model(request.model)
-
-    end_time = time.time_ns()
-
-    choice = response["choices"][0]
-    choice_message = choice.get("message", {}) or {}
-    full_content = choice_message.get("content", "") or ""
-
-    thinking_text, response_text = split_full_text_by_reasoning_format(
-        full_content,
-        reasoning_format,
-        think_value=request.think,
-    )
-
-    message = {
-        "role": "assistant",
-        "content": response_text,
-    }
-
-    if thinking_text:
-        message["thinking"] = thinking_text
-
-    if choice_message.get("tool_calls") is not None:
-        message["tool_calls"] = choice_message["tool_calls"]
-
-    usage = response.get("usage", {}) or {}
-
-    return {
-        "model": request.model,
-        "created_at": get_iso_time(),
-        "message": message,
-        "done": True,
-        "done_reason": choice.get("finish_reason"),
-        "total_duration": end_time - start_time,
-        "load_duration": load_duration,
-        "prompt_eval_duration": timed_prompt,
-        "eval_duration": timed_eval,
-        # The context's own counters first, usage second. For a text
-        # request the two agree; for one carrying an image they do not,
-        # and usage is the one that is wrong. MTMDChatHandler evaluates
-        # the picture through mtmd and then hands create_completion only
-        # llama.input_ids, so the image's tokens never reach usage --
-        # measured at 39 reported against 179 actually evaluated. The
-        # streaming path has read the counters all along; this is the
-        # sibling that did not.
-        "prompt_eval_count": (
-            counted_prompt if counted_prompt is not None
-            else usage.get("prompt_tokens")
-        ),
-        "eval_count": (
-            counted_eval if counted_eval is not None
-            else usage.get("completion_tokens")
-        ),
-    }
+    return await serve_native(model_manager, request, api="ollama")
 
 
 @router.post("/generate")
 async def ollama_generate(request: OllamaGenerateRequest):
-    """Handle Ollama-compatible /generate requests using the llama.cpp completion API.
-
-    Returns:
-        dict | StreamingResponse:
-            A standard JSON response for non-stream requests, or NDJSON stream output
-            for stream requests.
-
-    Raises:
-        HTTPException:
-            Raised when model loading fails, the format schema is invalid, template
-            rendering fails, or an unsupported input combination is used.
-    """
     _validate_runner(request.runner)
-    opts = request.options or {}
+    return await serve_native(model_manager, request, api="ollama", kind="completion")
 
-    try:
-        validate_format(request.format)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
 
-    try:
-        keep_alive_seconds = model_manager.resolve_keep_alive(request.keep_alive)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid keep_alive value: {str(e)}")
+@router.post("/embed")
+async def ollama_embed(request: OllamaEmbedRequest, http_request: Request):
+    _validate_runner(request.runner)
+    return await embedding_response(http_request, model_manager, request, api='ollama')
 
-    request_format = getattr(request, "format", None)
-    is_raw = request.raw is True
-    user_stop = normalize_stop(opts.get("stop"))
-    suffix_text = request.suffix or None
 
-    if is_raw and (
-        request.template is not None
-        or request.system is not None
-        or request.context is not None
-    ):
-        raise HTTPException(
-            status_code=400,
-            detail="raw mode does not support template, system, or context"
-        )
-
-    if not request.prompt:
-        if keep_alive_seconds == 0:
-            model_manager.unload_model(request.model)
-            return {
-                "model": request.model,
-                "created_at": get_iso_time(),
-                "response": "",
-                "done": True,
-                "done_reason": "unload"
-            }
-
-        try:
-            await model_manager.get_model(
-                request.model,
-                num_ctx=opts.get("num_ctx"),
-                keep_alive=request.keep_alive,
-            )
-        except TomlModelError:
-            # Not the request's fault and not a load failure: the virtual
-            # model's own definition is broken. Reported as 500 by the
-            # registered handler instead of being flattened into a 400 that
-            # blames the client.
-            raise
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Error loading model: {str(e)}")
-
-        return {
-            "model": request.model,
-            "created_at": get_iso_time(),
-            "response": "",
-            "done": True,
-            "done_reason": "load"
-        }
-
-    # Before the load, not after it. Ollama's total_duration covers the
-    # whole request and its load_duration is a part of it, so a client
-    # adding the pieces up expects them to fit inside the total. Starting
-    # the clock afterwards left a cold start outside every figure the
-    # reply carried.
-    start_time = time.time_ns()
-
-    try:
-        llm = await model_manager.get_model(
-            request.model,
-            num_ctx=opts.get("num_ctx"),
-            keep_alive=request.keep_alive,
-        )
-    except TomlModelError:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Error loading model: {str(e)}")
-
-    # Measured whether or not a load happened. A resident model still
-    # costs a lookup, and Ollama reports that cost rather than a zero --
-    # 2.2 ms in a measured comparison against a model already in memory.
-    load_duration = time.time_ns() - start_time
-
-    metadata_info = await model_manager.get_model_metadata(request.model) or {}
-
-    # Same rule as /api/chat: an image with nowhere to go is refused, not
-    # dropped. /api/generate never sends one anywhere even with a
-    # projector loaded -- it renders a prompt rather than going through a
-    # chat handler -- so this is the only honest answer here for now.
-    if request_carries_images(request.images):
-        raise HTTPException(status_code=400, detail=NO_MULTIMODAL_SUPPORT)
-
-    generation_kwargs = build_sampling_kwargs(opts, metadata_info, model_manager.sampling_overrides)
-    generation_kwargs.pop("stop", None)  # stop is computed below, alongside eos_token
-    generation_kwargs["echo"] = False
-
-    try:
-        generation_kwargs.update(build_completion_format_kwargs(request_format))
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid format schema: {e}")
-
-    if is_raw:
-        prompt_for_completion = request.prompt or ""
-        stop_tokens = user_stop or list(metadata_info.get("stop_defaults") or [])
-    else:
-        prompt_for_completion, stop_tokens = render_generate_prompt(
-            llm=llm,
-            metadata_info=metadata_info,
-            request=request,
-        )
-
-    reasoning_format = detect_reasoning_format(request.model, metadata_info)
-
-    prompt_eval_count = estimate_completion_prompt_eval_count(llm, prompt_for_completion)
-
-    if request.stream:
-        def generate_stream():
-            response_iter = llm.create_completion(
-                prompt=prompt_for_completion,
-                suffix=suffix_text,
-                stream=True,
-                stop=stop_tokens,
-                **generation_kwargs
-            )
-
-            finish_reason = None
-            eval_count = None
-            counters_reset = reset_eval_counters(llm)
-            splitter = ReasoningStreamSplitter(reasoning_format, think_value=request.think)
-
-            try:
-                for chunk in response_iter:
-                    choice = chunk["choices"][0]
-                    text = choice.get("text", "")
-                    chunk_finish_reason = choice.get("finish_reason")
-
-                    if chunk_finish_reason is not None:
-                        finish_reason = chunk_finish_reason
-
-                    usage = chunk.get("usage") or {}
-                    if usage.get("completion_tokens") is not None:
-                        eval_count = usage.get("completion_tokens")
-
-                    for kind, piece in splitter.push(text):
-                        if kind == "thinking":
-                            yield f"{json.dumps({
-                                'model': request.model,
-                                'created_at': get_iso_time(),
-                                'response': '',
-                                'thinking': piece,
-                                'done': False
-                            })}\n"
-                        else:
-                            yield f"{json.dumps({
-                                'model': request.model,
-                                'created_at': get_iso_time(),
-                                'response': piece,
-                                'done': False
-                            })}\n"
-
-                for kind, piece in splitter.finish():
-                    if kind == "thinking":
-                        yield f"{json.dumps({
-                            'model': request.model,
-                            'created_at': get_iso_time(),
-                            'response': '',
-                            'thinking': piece,
-                            'done': False
-                        })}\n"
-                    else:
-                        yield f"{json.dumps({
-                            'model': request.model,
-                            'created_at': get_iso_time(),
-                            'response': piece,
-                            'done': False
-                        })}\n"
-
-                end_time = time.time_ns()
-
-                # llama-cpp-python reports usage only on a non-streaming
-                # response, so ask llama.cpp for its own counters instead.
-                #
-                # n_p_eval counts tokens actually evaluated, which in principle
-                # could fall below the prompt length once a prefix is reused.
-                # It does not today: llama.cpp cannot remove part of a KV cache
-                # entry, so it re-evaluates the whole prompt and the two agree.
-                counted_prompt, counted_eval = counted_for_request(counters_reset, llm)
-                timed_prompt, timed_eval = timed_for_request(counters_reset, llm)
-
-                yield f"{json.dumps({
-                    'model': request.model,
-                    'created_at': get_iso_time(),
-                    'done': True,
-                    'done_reason': finish_reason,
-                    'total_duration': end_time - start_time,
-                    'load_duration': load_duration,
-                    'prompt_eval_duration': timed_prompt,
-                    'eval_duration': timed_eval,
-                    'prompt_eval_count': counted_prompt if counted_prompt is not None else prompt_eval_count,
-                    'eval_count': eval_count if eval_count is not None else counted_eval,
-                    'context': []
-                })}\n"
-            except Exception as e:
-                # The status code went out with the first chunk, so an error
-                # line in the body is the only way left to report a failure.
-                yield ollama_stream_error_line(str(e))
-
-            finally:
-                if keep_alive_seconds == 0:
-                    model_manager.unload_model(request.model)
-
-        async def guarded_generate_stream():
-            async with model_manager.acquire_inference_slot(request.model):
-                async for chunk in iterate_in_threadpool(generate_stream()):
-                    yield chunk
-
-        return StreamingResponse(guarded_generate_stream(), media_type="application/x-ndjson")
-
-    # The only inference path that never zeroed these. Its token counts
-    # come from usage and are left that way; the timings have nowhere
-    # else to come from, and without the reset they would cover every
-    # earlier request this context served.
-    try:
-        async with model_manager.acquire_inference_slot(request.model):
-            counters_reset = reset_eval_counters(llm)
-            response = await asyncio.to_thread(
-                llm.create_completion,
-                prompt=prompt_for_completion,
-                suffix=suffix_text,
-                stream=False,
-                stop=stop_tokens,
-                **generation_kwargs
-            )
-            timed_prompt, timed_eval = timed_for_request(counters_reset, llm)
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Inference failed: {str(e)}")
-    finally:
-        if keep_alive_seconds == 0:
-            model_manager.unload_model(request.model)
-
-    end_time = time.time_ns()
-
-    full_text = response["choices"][0].get("text", "")
-    thinking_text, response_text = split_full_text_by_reasoning_format(
-        full_text,
-        reasoning_format,
-        think_value=request.think,
-    )
-    done_reason = response["choices"][0].get("finish_reason")
-
-    result = {
-        "model": request.model,
-        "created_at": get_iso_time(),
-        "response": response_text,
-        "done": True,
-        "done_reason": done_reason,
-        "total_duration": end_time - start_time,
-        "load_duration": load_duration,
-        "prompt_eval_duration": timed_prompt,
-        "eval_duration": timed_eval,
-        "prompt_eval_count": response.get("usage", {}).get("prompt_tokens", prompt_eval_count),
-        "eval_count": response.get("usage", {}).get("completion_tokens"),
-        "context": []
-    }
-
-    if thinking_text:
-        result["thinking"] = thinking_text
-
-    return result
+@router.post("/embeddings")
+async def ollama_embeddings(request: OllamaLegacyEmbeddingRequest, http_request: Request):
+    _validate_runner(request.runner)
+    return await embedding_response(http_request, model_manager, request, api='ollama', legacy=True)
 
 
 @router.post("/show")
@@ -740,24 +124,25 @@ async def show_model_info(request: dict):
     # clients built against it (any bot using the ollama Python client, for
     # instance) act on it directly -- an absent or empty list reads as "this
     # model can't do any of that", including things TLlama actually
-    # supports. "completion" always holds; "thinking" is reported only when
+    # supports. "completion" holds for generation mode; "thinking" only when
     # the model's own template is one detect_reasoning_format recognizes as
     # having a thinking format, so a plain non-reasoning model is not
     # claimed to think just because it exists.
     #
-    # "tools" is deliberately left out: TLlama can only force a tool call
-    # today, not detect one from the template the way real Ollama's chat.*
-    # layer does, so claiming the capability would overstate what actually
-    # works. "vision" is reported when the model's definition names a
-    # projector that checks out, which is the same thing that decides
-    # whether an image is accepted or refused -- so a client reading this
-    # list and a client sending a picture get the same answer.
+    # Offline vision is a configured capability, not a model-load probe.
+    # Actual inference checks the admitted worker's modalities separately.
     capabilities = ["completion"]
+    if template_accepts_tools(metadata_info.get("tool_template", metadata_info.get("template"))):
+        capabilities.append("tools")
     if detect_reasoning_format(model_name, metadata_info) != "none":
         capabilities.append("thinking")
-    if metadata_info.get("has_projector"):
-        capabilities.append("vision")
-
+    if metadata_info.get('vision_configured', metadata_info.get('has_projector')) is True:
+        capabilities.append('vision')
+    if metadata_info.get("embedding_configured") is True:
+        capabilities = ["embedding"] if embedding_capable(metadata_info) else []
+    if has_decision_head(metadata_info):
+        # Text Decision is a separate extension, never a generation capability.
+        capabilities = ['decision'] if decision_capable(metadata_info) else []
     # Ollama's own `show --modelfile` hands back the definition a model
     # was built from, and the workflow that makes it worth having is
     # fetching it, editing it and putting it back. So this is the .toml
@@ -772,8 +157,18 @@ async def show_model_info(request: dict):
     if modelfile is None:
         modelfile = f'FROM {model_name}\nTEMPLATE """{template}"""'
 
+    definition = model_manager._toml_fingerprint_for_reference(model_name)
+    modified = ({"modified_at": datetime.fromtimestamp(
+        definition['mtime_ns'] / 1_000_000_000, timezone.utc).isoformat()}
+        if definition is not None else {})
+
     return {
         "modelfile": modelfile,
+        "system": metadata_info.get("default_system_prompt") or "",
+        # This is the identifier actually recorded in GGUF, not fetched or
+        # synthesized license text. An absent identifier stays empty.
+        "license": (metadata_info.get("metadata_raw") or {}).get("general.license") or "",
+        **modified,
         "parameters": format_ollama_parameters(metadata_info),
         "template": template,
         "details": {
@@ -794,97 +189,14 @@ async def show_model_info(request: dict):
         # whitelisted set of keys, since that is what TLlama currently
         # reads from a GGUF header.
         "model_info": metadata_info.get("metadata_raw") or {},
+        "projector_info": metadata_info.get("projector_info") or {},
         "capabilities": capabilities,
     }
 
 
 @router.get("/ps")
 async def list_running_models():
-    loaded_models = model_manager.list_loaded_models()
-
-    formatted = []
-    for m in loaded_models:
-        # A model that is resident right now stays in this listing even if
-        # its .toml has since been edited into something unparseable: it is
-        # still loaded and still holding memory, so omitting it would
-        # misreport the state of the machine. Its metadata degrades to
-        # unknown instead.
-        metadata_info = await model_manager.get_model_metadata_best_effort(m["id"]) or {}
-        digest_info = await model_manager.get_model_digest(m["path"]) or {}
-
-        p_size = "unknown"
-        params = metadata_info.get("params", 0)
-        if isinstance(params, (int, str)):
-            try:
-                if int(params) > 0:
-                    p_size = f"{round(int(params) / 1e9)}b"
-            except Exception:
-                pass
-
-        formatted.append({
-            "name": m["model"],
-            "model": m["model"],
-            "runner": RUNNER,
-            "size": m["size"],
-            "digest": digest_info.get("content_sha256", ""),
-            "context_length": m["n_ctx"],
-            "details": {
-                "parent_model": "",
-                "format": "gguf",
-                "family": metadata_info.get("arch", "unknown"),
-                "families": [metadata_info.get("arch", "unknown")],
-                "parameter_size": p_size,
-                "quantization_level": metadata_info.get("bits", "unknown"),
-            },
-            "expires_at": m["expires_at"] or never_expires_at(),
-            "size_vram": m["size_vram"]
-        })
-
-    loaded_names = {m["model"] for m in loaded_models}
-    for model_name in model_manager.list_loading_models():
-        if model_name in loaded_names:
-            # Being reloaded with a different context size, and already
-            # represented above by its (soon to be replaced) loaded entry.
-            continue
-
-        model_info = model_manager.build_model_file_info_best_effort(model_name)
-        if not model_info:
-            # Gone from disk, or its .toml turned unparseable, between
-            # starting the load and this request.
-            continue
-
-        metadata_info = await model_manager.get_model_metadata_best_effort(model_name) or {}
-        digest_info = await model_manager.get_model_digest(model_info["path"]) or {}
-
-        p_size = "unknown"
-        params = metadata_info.get("params", 0)
-        if isinstance(params, (int, str)):
-            try:
-                if int(params) > 0:
-                    p_size = f"{round(int(params) / 1e9)}b"
-            except Exception:
-                pass
-
-        formatted.append({
-            "name": model_name,
-            "model": model_name,
-            "runner": RUNNER,
-            "size": model_info["size"],
-            "digest": digest_info.get("content_sha256", ""),
-            "context_length": 0,
-            "details": {
-                "parent_model": "",
-                "format": "gguf",
-                "family": metadata_info.get("arch", "unknown"),
-                "families": [metadata_info.get("arch", "unknown")],
-                "parameter_size": p_size,
-                "quantization_level": metadata_info.get("bits", "unknown"),
-            },
-            "expires_at": never_expires_at(),
-            "size_vram": 0,
-        })
-
-    return {"models": formatted}
+    return ollama_processes(model_manager.native_reporting_snapshot())
 
 
 @router.post("/pull")
@@ -1039,14 +351,6 @@ async def delete_model_ollama(request: Request):
     if not model_ref:
         raise HTTPException(status_code=400, detail="Missing model name")
 
-    # Best-effort unload if the loaded model key matches the incoming ref.
-    # If not loaded, this is harmless.
-    try:
-        if model_manager.is_model_loaded(model_ref):
-            model_manager.unload_model(model_ref)
-    except Exception:
-        pass
-
     try:
         result = await model_manager.delete_model(model_ref)
     except FileNotFoundError as e:
@@ -1063,3 +367,51 @@ async def delete_model_ollama(request: Request):
         # infer from a bare success that several gigabytes just went away.
         "kept_model_file": result["kept_model_file"],
     }
+
+
+@router.post('/copy')
+async def copy_model(request: CopyRequest):
+    try:
+        return await _settle_owned(asyncio.create_task(asyncio.to_thread(
+            copy_definition, model_manager, request.source, request.destination, force=request.force)))
+    except FileExistsError as exc:
+        raise HTTPException(409, 'Destination already exists; use force to replace it.') from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except (ValueError, UnicodeError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.head('/blobs/{digest}')
+async def has_blob(digest: str):
+    try:
+        path = blob_path(model_manager, digest)
+        return Response(status_code=200 if path.is_file() else 404)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post('/blobs/{digest}', status_code=201)
+async def upload_blob(digest: str, request: Request):
+    media = request.headers.get('content-type', '').split(';', 1)[0].lower()
+    if media != 'application/octet-stream':
+        raise HTTPException(415, 'GGUF uploads require application/octet-stream.')
+    try:
+        await receive_blob(model_manager, digest, request)
+    except (ValueError, ClientDisconnect) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return Response(status_code=201)
+
+
+@router.post('/create')
+async def create_model(request: CreateRequest):
+    try:
+        return await _settle_owned(asyncio.create_task(asyncio.to_thread(
+            create_definition, model_manager, request.model, request.definition, request.uploads,
+            force=request.force, dry_run=request.dry_run)))
+    except FileExistsError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except (ValueError, UnicodeError) as exc:
+        raise HTTPException(400, str(exc)) from exc

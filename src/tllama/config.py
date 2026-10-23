@@ -2,14 +2,18 @@ import os
 import re
 
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from typing import Mapping
+
+from tllama.worker_config import DEFAULT_EXECUTABLE
+from tllama.backend_policy import DEFAULT_BACKEND_PRIORITY, backend_priority
 
 DEFAULT_MODELS_DIR = "/var/lib/tllama/models"
 
 
 class ConfigError(ValueError):
-    """An environment variable holds something that cannot be used.
+    """A daemon configuration source holds something that cannot be used.
 
     Every one of these used to be swallowed: a value that failed to parse
     returned the default and the server came up as if nothing had been
@@ -193,9 +197,10 @@ def _split_host_port(name: str, value: str, raw: str) -> tuple[str, str | None]:
 
 
 RUNTIME_ENV_PREFIX = "TLLAMA_RUNTIME_"
+_RUNTIME_GLOBALS = {"TLLAMA_RUNTIME_EXECUTABLE", "TLLAMA_RUNTIME_VERSION_POLICY"}
 
 # Variables kept from before the generic passthrough existed. Each names a
-# Llama() parameter that TLLAMA_RUNTIME_<NAME> now also reaches; they stay
+# native runtime parameter that TLLAMA_RUNTIME_<NAME> also reaches; they stay
 # so a working configuration keeps working, and because the alias is the
 # spelling Ollama uses.
 _RUNTIME_ALIASES = {
@@ -207,8 +212,8 @@ def _collect_runtime_overrides() -> dict[str, str]:
     """Gather the raw strings; nothing is converted or checked here.
 
     Deliberately no llama_cpp: the entry point reads configuration before
-    the library is loaded, and what a value has to become is decided from
-    Llama()'s own signature, in a place that can see it.
+    any inference code is loaded. native_params defines the types used by
+    the runtime coercion helper.
 
     An explicit TLLAMA_RUNTIME_* wins over an alias for the same
     parameter, so the specific spelling beats the general one.
@@ -221,6 +226,8 @@ def _collect_runtime_overrides() -> dict[str, str]:
             collected[parameter] = value
 
     for variable, value in os.environ.items():
+        if variable in _RUNTIME_GLOBALS:
+            continue
         if not variable.startswith(RUNTIME_ENV_PREFIX):
             continue
         if value.strip() == "":
@@ -237,8 +244,8 @@ def _collect_sampling_overrides() -> dict[str, str]:
     """Gather the raw strings; nothing is converted or checked here.
 
     Same division of labour as _collect_runtime_overrides: what a value
-    has to become is decided from a signature, in a module that can see
-    one, and this file deliberately cannot import llama_cpp.
+    has to become is defined by native_params and applied by the sampling
+    coercion helper; collection stays independent of inference.
 
     No aliases. TLLAMA_SAMPLING_* is new, so there is no older spelling
     of it for anything to keep working.
@@ -306,7 +313,7 @@ BUILTIN_CORS_ORIGINS: tuple[str, ...] = (
 _ORIGIN_RE = re.compile(r"[A-Za-z][A-Za-z0-9+.\-]*://[^/?#]+\Z")
 
 
-def resolve_cors_origins() -> tuple[str, ...]:
+def resolve_cors_origins(value: str | None = None) -> tuple[str, ...]:
     """The origins a browser may reach TLlama from.
 
     TLLAMA_ORIGINS adds to the built-in list rather than replacing it, so
@@ -320,7 +327,7 @@ def resolve_cors_origins() -> tuple[str, ...]:
     """
     configured = []
 
-    for entry in _env_str("TLLAMA_ORIGINS", "").split(","):
+    for entry in (value if value is not None else _env_str("TLLAMA_ORIGINS", "")).split(","):
         entry = entry.strip()
         if not entry:
             # 'a,,b' and a trailing comma are formatting, not a mistake
@@ -390,25 +397,43 @@ class BackendConfig:
     max_loaded_models: int = 1
     janitor_interval_seconds: float = 10.0
     metadata_cache_ttl_seconds: float = 300.0
-    # Llama() keyword arguments set server-wide, still as strings: what
-    # each has to become is read off Llama()'s signature, which this
-    # module deliberately cannot see. A model's [runtime] overrides these.
-    runtime_overrides: Mapping[str, str] = field(default_factory=dict)
+    # Legacy environment callers retain strings; daemon TOML/CLI values are typed.
+    # A model's [runtime] overrides these globals.
+    runtime_overrides: Mapping[str, object] = field(default_factory=dict)
 
-    # Sampling values set server-wide, still as strings. Empty by default
+    # Sampling values set server-wide; legacy environment callers keep strings.
+    # Empty by default
     # and deliberately so: a global sampling value overrules what a model
     # recommends, for every model at once, so it has to be something a
     # person asked for rather than a number TLlama shipped.
-    sampling_overrides: Mapping[str, str] = field(default_factory=dict)
+    sampling_overrides: Mapping[str, object] = field(default_factory=dict)
 
     # kv_cache_type sets both sides; k_cache_type/v_cache_type override it
     # for one side each, mirroring type_kv/type_k/type_v in a .toml
-    # [runtime]. The names are resolved together, by the same function that
-    # resolves the .toml ones, so the precedence cannot drift apart from it.
+    # [runtime]. Each layer expands its shorthand before the next overrides
+    # it; native_config owns the precedence for global and model settings.
     kv_cache_type: str | None = None
     k_cache_type: str | None = None
     v_cache_type: str | None = None
     ignore_unsupported_runner: bool = False
+    runtime_executable: Path = DEFAULT_EXECUTABLE
+    runtime_version_policy: str = "warn"
+    backend_priority: tuple[str, ...] = DEFAULT_BACKEND_PRIORITY
+    memory_source: str = "auto"
+    memory_compare: bool = False
+
+    def __post_init__(self):
+        object.__setattr__(self, "backend_priority", backend_priority(self.backend_priority))
+        path = Path(self.runtime_executable)
+        if not path.is_absolute() or "\0" in str(path):
+            raise ConfigError("TLLAMA_RUNTIME_EXECUTABLE must be an absolute path")
+        object.__setattr__(self, "runtime_executable", path)
+        if self.runtime_version_policy not in ("warn", "strict"):
+            raise ConfigError("TLLAMA_RUNTIME_VERSION_POLICY must be warn or strict")
+        if self.memory_source not in ("auto", "native", "log"):
+            raise ConfigError("TLLAMA_MEMORY_SOURCE must be auto, native or log")
+        if type(self.memory_compare) is not bool:
+            raise ConfigError("TLLAMA_MEMORY_COMPARE must be a boolean")
 
 
 @dataclass(frozen=True)
@@ -417,6 +442,7 @@ class AppConfig:
     port: int = 54800
     reload: bool = False
     debug: bool = False
+    log_level: str = "info"
 
 
 def load_backend_config_from_env() -> BackendConfig:
@@ -442,6 +468,11 @@ def load_backend_config_from_env() -> BackendConfig:
         k_cache_type=_env_cache_type("TLLAMA_K_CACHE_TYPE"),
         v_cache_type=_env_cache_type("TLLAMA_V_CACHE_TYPE"),
         ignore_unsupported_runner=_env_bool("TLLAMA_IGNORE_UNSUPPORTED_RUNNER", False),
+        runtime_executable=_env_str("TLLAMA_RUNTIME_EXECUTABLE", str(DEFAULT_EXECUTABLE)),
+        runtime_version_policy=_env_str("TLLAMA_RUNTIME_VERSION_POLICY", "warn").strip().lower(),
+        backend_priority=os.environ.get("TLLAMA_BACKEND_PRIORITY", DEFAULT_BACKEND_PRIORITY),
+        memory_source=_env_str("TLLAMA_MEMORY_SOURCE", "auto").strip().lower(),
+        memory_compare=_env_bool("TLLAMA_MEMORY_COMPARE", False),
     )
 
 

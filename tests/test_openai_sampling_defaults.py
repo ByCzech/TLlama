@@ -41,10 +41,12 @@ def _opts_built_by_the_endpoint(request: ChatCompletionRequest) -> dict:
     return opts
 
 
-def test_chat_completions_uses_build_sampling_kwargs():
-    source = inspect.getsource(openai_router.chat_completions)
-
-    assert "build_sampling_kwargs(" in source
+def test_chat_completions_uses_native_shared_sampling(client, native_reply):
+    state = native_reply()
+    response = client.post("/v1/chat/completions", json={"model": "m", "messages": [{"role": "user", "content": "hi"}]})
+    assert response.status_code == 200
+    assert state.worker.calls[-1][1]["temperature"] == 0.8
+    assert state.worker.calls[-1][1]["top_p"] == 0.9
 
 
 def test_omitted_temperature_stays_none_on_the_request():

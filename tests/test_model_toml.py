@@ -9,7 +9,6 @@ import pytest
 from tllama.helpers.model_toml import (
     TomlModelError,
     parse_model_toml,
-    resolve_kv_cache_types,
     resolve_repo_relative_path,
 )
 
@@ -169,36 +168,6 @@ class TestRoundTripDocument:
 
         assert "a note from a human" in tomlkit.dumps(spec.document)
         assert "inline note" in tomlkit.dumps(spec.document)
-
-
-class TestResolveKvCacheTypes:
-    def test_raw_ints_pass_through(self):
-        type_k, type_v = resolve_kv_cache_types({"type_k": 2, "type_v": 8})
-        assert (type_k, type_v) == (2, 8)
-
-    def test_type_kv_sets_both(self):
-        type_k, type_v = resolve_kv_cache_types({"type_kv": "q4_0"})
-        assert type_k == type_v
-        assert type_k is not None
-
-    def test_explicit_type_k_overrides_type_kv_for_that_side_only(self):
-        type_k, type_v = resolve_kv_cache_types({"type_kv": "q4_0", "type_k": "f16"})
-        assert type_k != type_v
-
-    def test_unknown_type_name_raises(self):
-        with pytest.raises(TomlModelError, match="GGML_TYPE_NOT_A_REAL_TYPE"):
-            resolve_kv_cache_types({"type_k": "not_a_real_type"})
-
-    def test_absent_keys_resolve_to_none(self):
-        assert resolve_kv_cache_types({}) == (None, None)
-
-    def test_bool_is_rejected_despite_being_an_int_subclass(self):
-        with pytest.raises(TomlModelError, match="bool"):
-            resolve_kv_cache_types({"type_k": True})
-
-    def test_wrong_type_rejected(self):
-        with pytest.raises(TomlModelError, match="string or int"):
-            resolve_kv_cache_types({"type_k": 3.5})
 
 
 class TestResolveRepoRelativePath:

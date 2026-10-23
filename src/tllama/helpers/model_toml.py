@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 
 import tomlkit
 import tomlkit.exceptions
+from tllama.helpers.fim import FIM_ORDERS
 
 
 __all__ = (
@@ -16,7 +17,6 @@ __all__ = (
     "VirtualModelSpec",
     "parse_model_toml",
     "render_model_toml",
-    "resolve_kv_cache_types",
     "resolve_repo_relative_path",
     "write_model_toml",
 )
@@ -29,6 +29,14 @@ class TomlModelError(ValueError):
     [llm] section with neither `model` nor `from`) so callers have one
     exception type to catch regardless of which stage rejected the file.
     """
+
+
+def validate_definition_name(name):
+    if (not isinstance(name, str) or not name or name != name.strip() or '\\' in name or '\0' in name
+            or any(part in {'', '.', '..'} for part in name.split('/'))):
+        raise ValueError('Invalid model name.')
+    if len(name.split('/')) > 3:
+        raise ValueError('Model names support one to three path components.')
 
 
 @dataclass
@@ -54,6 +62,7 @@ class VirtualModelSpec:
     template: Optional[str] = None
     system_prompt: Optional[str] = None
     document: Any = field(default=None, repr=False, compare=False)
+    fim_order: str = "auto"
 
 
 def _require_xor(section: str, model_value: Any, from_value: Any, source: str) -> None:
@@ -156,6 +165,14 @@ def parse_model_toml(text: str, *, source: str = "<toml>") -> VirtualModelSpec:
         _reject_unknown_keys(system_table, "system", _SYSTEM_KEYS, source)
         system_prompt = _as_optional_str(system_table.get("prompt"), field_name="system.prompt", source=source)
 
+    fim = document.get("fim", {})
+    if not isinstance(fim, dict):
+        raise TomlModelError(f"{source}: [fim] must be a table")
+    _reject_unknown_keys(fim, "fim", {"order"}, source)
+    fim_order = fim.get("order", "auto")
+    if not isinstance(fim_order, str) or fim_order not in FIM_ORDERS:
+        raise TomlModelError(f"{source}: [fim] order must be one of {', '.join(sorted(FIM_ORDERS))}")
+
     return VirtualModelSpec(
         llm_model=llm_model,
         llm_from=llm_from,
@@ -167,6 +184,7 @@ def parse_model_toml(text: str, *, source: str = "<toml>") -> VirtualModelSpec:
         stop=stop,
         template=template,
         system_prompt=system_prompt,
+        fim_order=str(fim_order),
         document=document,
     )
 
@@ -178,7 +196,7 @@ def parse_model_toml(text: str, *, source: str = "<toml>") -> VirtualModelSpec:
 # missing feature. The cost is that a .toml written for a later TLlama is
 # refused by an earlier one, which is the intended outcome.
 _KNOWN_SECTIONS = frozenset({
-    "llm", "mmproj", "runtime", "sampling", "template", "system",
+    "llm", "mmproj", "runtime", "sampling", "template", "system", "fim",
 })
 
 # The vocabularies parse_model_toml reads out of the three sections that
@@ -227,8 +245,8 @@ def _reject_unknown_keys(
 ) -> None:
     """The same refusal the other sections make, for a fixed vocabulary.
 
-    Unlike [runtime], whose valid names are read off Llama()'s signature,
-    these three are TLlama's own and short enough to name outright.
+    Each section uses TLlama's own vocabulary; these sections have no
+    load/sampling-specific value interpretation.
     """
     for key in table:
         if key not in allowed:
@@ -237,15 +255,6 @@ def _reject_unknown_keys(
                 f"The section takes {', '.join(sorted(allowed))}."
             )
 
-
-# type_kv is TLlama's shorthand for setting type_k and type_v together; it
-# is not a Llama() parameter and so has to be named here.
-_RUNTIME_EXTRA_KEYS = {"type_kv"}
-
-# model_path is a Llama() parameter, but the path comes from [llm]. A
-# [runtime] naming it would point somewhere else and the model would stop
-# being the one the file defines, so it is refused rather than ignored.
-_RUNTIME_FORBIDDEN_KEYS = {"model_path": "the model path comes from [llm]"}
 
 # The whole vocabulary of [mmproj], which parse_model_toml reads by name.
 _MMPROJ_PATH_KEYS = frozenset({"model", "from"})
@@ -291,14 +300,12 @@ def _as_mmproj_context(mmproj: Any, source: str) -> Dict[str, Any]:
     """The mtmd context fields an [mmproj] asks to be set.
 
     Kept apart from the two path keys because they go somewhere else
-    entirely: the paths say which files to open, these are written into
-    mtmd_context_params before the context is built.
+    entirely: the paths select files, while these options become native
+    projector arguments before the worker starts.
 
-    Types are checked here rather than at the far end. A ctypes Structure
-    takes a wrong type only as far as the assignment and then raises from
-    inside the library, in the middle of a load, naming a field instead of
-    a file -- and bool is a subclass of int, so an unchecked
-    'image_max_tokens = true' would quietly mean 1.
+    Types are checked here so a failure names the configuration file.
+    Bool is a subclass of int, so an unchecked 'image_max_tokens = true'
+    would quietly mean 1.
     """
     context: Dict[str, Any] = {}
 
@@ -325,37 +332,19 @@ def _as_mmproj_context(mmproj: Any, source: str) -> Dict[str, Any]:
 
 
 def _reject_unknown_runtime_keys(runtime: Dict[str, Any], source: str) -> None:
-    """A [runtime] key that is not a Llama() parameter is a mistake.
+    """Validate the pinned runtime contract without importing inference code."""
+    from tllama.native_params import runtime_problem
 
-    It used to be passed through and swallowed: Llama() takes **kwargs and
-    never looks at what it did not expect, so a misspelt key reached the
-    library, was ignored, and left a setting that appeared to have been
-    applied.
-
-    The valid names are Llama()'s own, read from its signature rather than
-    listed, so this cannot fall behind the library it validates against.
-    """
-    from tllama.helpers.runtime_params import llama_parameters
-
-    valid = set(llama_parameters()) | _RUNTIME_EXTRA_KEYS
-
-    for key in runtime:
-        if key in _RUNTIME_FORBIDDEN_KEYS:
-            raise TomlModelError(
-                f"{source}: [runtime] '{key}' cannot be set here: "
-                f"{_RUNTIME_FORBIDDEN_KEYS[key]}."
-            )
-        if key not in valid:
-            raise TomlModelError(
-                f"{source}: [runtime] '{key}' is not a parameter of Llama() "
-                "in the installed llama-cpp-python."
-            )
+    for key, value in runtime.items():
+        problem = runtime_problem(key, value)
+        if problem:
+            raise TomlModelError(f"{source}: [runtime] {problem}.")
 
 
 def _as_logit_bias(value: Any, source: str) -> Dict[int, float]:
     """Turn a [sampling] logit_bias table into what create_completion wants.
 
-    The signature says Dict[int, float], but a TOML table's keys are always
+    Native token IDs are integers, but a TOML table's keys are always
     strings, so the token ids arrive as text and have to be converted here
     rather than at the call. Doing it at parse time also means a typo names
     the file it is in, which is not true of anything discovered later.
@@ -412,73 +401,12 @@ def _reject_unusable_sampling_values(sampling: Dict[str, Any], source: str) -> N
 
 
 def _reject_unknown_sampling_keys(sampling: Dict[str, Any], source: str) -> None:
-    """A [sampling] key nothing reads is a mistake, not a no-op.
-
-    build_sampling_kwargs consults a fixed set of names; anything else in
-    the table was read from the file, carried through the parse and then
-    dropped without a word.
-
-    The set here is what that function actually consumes. It is still
-    smaller than what llama-cpp-python's completion calls accept --
-    grammar is the notable absentee, because a GBNF string llama.cpp
-    cannot parse kills the process rather than reporting an error -- which
-    is a separate gap, not something this should paper over by accepting
-    names that would still go nowhere.
-    """
-    from tllama.helpers.common import sampling_parameter_names
-
-    valid = sampling_parameter_names()
+    """Reject removed or unknown sampling names before interpreting values."""
+    from tllama.native_params import SAMPLING_TYPES, sampling_problem
 
     for key in sampling:
-        if key not in valid:
-            raise TomlModelError(
-                f"{source}: [sampling] '{key}' is not a sampling parameter "
-                "TLlama applies."
-            )
-
-
-def resolve_kv_cache_types(runtime: Dict[str, Any]) -> "tuple[Optional[int], Optional[int]]":
-    """Resolve type_k/type_v from a [runtime] table into ggml type ints.
-
-    type_kv sets both; an explicit type_k/type_v takes priority over it for
-    that side only (spec §8). A value can be either a name ("q4_0"),
-    resolved via the same GGML_TYPE_* constants llama_cpp.llama_cpp already
-    defines -- no hand-maintained table, new quant types just work once the
-    vendored llama.cpp gains them -- or a raw int, used as-is.
-
-    llama_cpp is imported lazily, matching the existing pattern elsewhere in
-    this codebase (_ext.py, backend.py's HF pull path), so this module stays
-    importable for standalone parsing/tests without llama_cpp installed.
-    """
-    type_kv = runtime.get("type_kv")
-    type_k = runtime.get("type_k", type_kv)
-    type_v = runtime.get("type_v", type_kv)
-
-    return (
-        _resolve_one_kv_cache_type(type_k, field_name="type_k"),
-        _resolve_one_kv_cache_type(type_v, field_name="type_v"),
-    )
-
-
-def _resolve_one_kv_cache_type(value: Any, *, field_name: str) -> Optional[int]:
-    if value is None:
-        return None
-    if isinstance(value, bool):  # bool is an int subclass; reject before the int check
-        raise TomlModelError(f"'{field_name}' must be a string or int, not a bool.")
-    if isinstance(value, int):
-        return int(value)
-    if isinstance(value, str):
-        from llama_cpp import llama_cpp as llama_cpp_lib
-
-        const_name = f"GGML_TYPE_{value.upper()}"
-        resolved = getattr(llama_cpp_lib, const_name, None)
-        if resolved is None:
-            raise TomlModelError(
-                f"'{field_name}' = \"{value}\" does not match any known ggml "
-                f"type (looked for {const_name} in llama_cpp.llama_cpp)."
-            )
-        return int(resolved)
-    raise TomlModelError(f"'{field_name}' must be a string or int, got {type(value).__name__}.")
+        if key not in SAMPLING_TYPES:
+            raise TomlModelError(f"{source}: [sampling] {sampling_problem(key, sampling[key])}.")
 
 
 def resolve_repo_relative_path(value: str, models_dir: Path) -> Path:
@@ -589,7 +517,7 @@ def render_model_toml(
     if context_length:
         lines += [
             "",
-            "# [runtime] passes through to Llama() by the names it uses.",
+            "# [runtime] uses TLlama's supported native runtime settings.",
             "[runtime]",
             _commented(f"n_ctx = {int(context_length)}    # the model's own trained maximum"),
         ]
@@ -652,6 +580,7 @@ def write_model_toml(path: Path, text: str, *, overwrite: bool = False) -> Path:
     handle = tempfile.NamedTemporaryFile(
         mode="w",
         encoding="utf-8",
+        newline="",
         dir=str(path.parent),
         prefix=f".{path.name}.",
         suffix=".tmp",
@@ -663,7 +592,13 @@ def write_model_toml(path: Path, text: str, *, overwrite: bool = False) -> Path:
             handle.flush()
             os.fsync(handle.fileno())
 
-        os.replace(handle.name, path)
+        if overwrite:
+            os.replace(handle.name, path)
+        else:
+            # Unlike an exists/replace pair, link publishes without ever
+            # clobbering a concurrent writer's newly created definition.
+            os.link(handle.name, path)
+            Path(handle.name).unlink()
     except BaseException:
         Path(handle.name).unlink(missing_ok=True)
         raise
