@@ -43,22 +43,35 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _cache_key(model_path: Path) -> str:
-    """Build a stable cache key from an absolute model path."""
-    resolved = str(model_path.resolve())
-    return sha256(resolved.encode("utf-8")).hexdigest()
+def _relative_path(cache_dir: Path, model_path: Path) -> str:
+    """Identify weights within <repository>/.tllama/metadata-cache.
+
+    Resolve both paths so a symlink to the repository shares its cache, but
+    reject weights outside it. POSIX separators keep the identity portable.
+    """
+    root = cache_dir.parent.parent.resolve()
+    return model_path.resolve().relative_to(root).as_posix()
+
+
+def _cache_key(cache_dir: Path, model_path: Path) -> str:
+    return sha256(_relative_path(cache_dir, model_path).encode("utf-8")).hexdigest()
+
+
+def _cache_path(cache_dir: Path, model_path: Path, section: str) -> Path:
+    suffix = ".digest.json" if section == _DIGEST_SECTION else ".json"
+    return cache_dir / f"{_cache_key(cache_dir, model_path)}{suffix}"
 
 
 def get_metadata_cache_path(cache_dir: Path, model_path: str | Path) -> Path:
     """Return the JSON metadata cache file path for a model file."""
     path = Path(model_path)
-    return cache_dir / f"{_cache_key(path)}.json"
+    return _cache_path(cache_dir, path, _METADATA_SECTION)
 
 
 def get_digest_cache_path(cache_dir: Path, model_path: str | Path) -> Path:
     """Return the JSON content digest cache file path for a model file."""
     path = Path(model_path)
-    return cache_dir / f"{_cache_key(path)}.digest.json"
+    return _cache_path(cache_dir, path, _DIGEST_SECTION)
 
 
 def build_model_file_fingerprint(model_path: str | Path) -> Dict[str, Any]:
@@ -97,7 +110,7 @@ def _is_valid_cache_document(
 
 
 def _load_cache_document(
-    cache_path: Path,
+    cache_dir: Path,
     model_path: Path,
     schema_version: int,
     section: str,
@@ -108,8 +121,11 @@ def _load_cache_document(
     Invalid, stale or unreadable cache files are treated as cache misses.
     """
     try:
-        fingerprint = build_model_file_fingerprint(model_path)
-
+        fingerprint = {
+            **build_model_file_fingerprint(model_path),
+            "path": _relative_path(cache_dir, model_path),
+        }
+        cache_path = _cache_path(cache_dir, model_path, section)
         with cache_path.open("r", encoding="utf-8") as handle:
             document = json.load(handle)
 
@@ -129,7 +145,6 @@ def _load_cache_document(
 
 def _save_cache_document(
     cache_dir: Path,
-    cache_path: Path,
     model_name: str,
     model_path: Path,
     schema_version: int,
@@ -143,10 +158,18 @@ def _save_cache_document(
     Cache write failures are intentionally non-fatal for the application.
     """
     try:
-        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_path = _cache_path(cache_dir, model_path, section)
 
         if fingerprint is None:
             fingerprint = build_model_file_fingerprint(model_path)
+
+        # Preserve the captured size/mtime and path: delayed writes must not
+        # label an old scan with the current file's identity.
+        fingerprint = {
+            **fingerprint,
+            "path": Path(fingerprint["path"]).relative_to(cache_dir.parent.parent.resolve()).as_posix(),
+        }
+        cache_dir.mkdir(parents=True, exist_ok=True)
 
         document = {
             "schema_version": schema_version,
@@ -196,6 +219,13 @@ def _delete_cache_document(cache_path: Path) -> None:
         return
 
 
+def _delete_cache_section(cache_dir: Path, model_path: Path, section: str) -> None:
+    try:
+        _delete_cache_document(_cache_path(cache_dir, model_path, section))
+    except Exception:
+        return
+
+
 def load_metadata_cache(
     cache_dir: str | Path,
     model_path: str | Path,
@@ -205,7 +235,7 @@ def load_metadata_cache(
     model_path = Path(model_path)
 
     return _load_cache_document(
-        cache_path=get_metadata_cache_path(cache_dir, model_path),
+        cache_dir=cache_dir,
         model_path=model_path,
         schema_version=SCHEMA_VERSION,
         section=_METADATA_SECTION,
@@ -231,7 +261,6 @@ def save_metadata_cache(
 
     _save_cache_document(
         cache_dir=cache_dir,
-        cache_path=get_metadata_cache_path(cache_dir, model_path),
         model_name=model_name,
         model_path=model_path,
         schema_version=SCHEMA_VERSION,
@@ -246,7 +275,7 @@ def delete_metadata_cache(
     model_path: str | Path,
 ) -> None:
     """Delete a model metadata cache file if it exists."""
-    _delete_cache_document(get_metadata_cache_path(Path(cache_dir), model_path))
+    _delete_cache_section(Path(cache_dir), Path(model_path), _METADATA_SECTION)
 
 
 def load_digest_cache(
@@ -258,7 +287,7 @@ def load_digest_cache(
     model_path = Path(model_path)
 
     return _load_cache_document(
-        cache_path=get_digest_cache_path(cache_dir, model_path),
+        cache_dir=cache_dir,
         model_path=model_path,
         schema_version=DIGEST_SCHEMA_VERSION,
         section=_DIGEST_SECTION,
@@ -279,7 +308,6 @@ def save_digest_cache(
 
     _save_cache_document(
         cache_dir=cache_dir,
-        cache_path=get_digest_cache_path(cache_dir, model_path),
         model_name=model_name,
         model_path=model_path,
         schema_version=DIGEST_SCHEMA_VERSION,
@@ -294,4 +322,4 @@ def delete_digest_cache(
     model_path: str | Path,
 ) -> None:
     """Delete a model content digest cache file if it exists."""
-    _delete_cache_document(get_digest_cache_path(Path(cache_dir), model_path))
+    _delete_cache_section(Path(cache_dir), Path(model_path), _DIGEST_SECTION)

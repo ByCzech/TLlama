@@ -54,7 +54,7 @@ Example:
 
 Each model gets one JSON cache file.
 
-The cache file name is derived from the absolute model path.
+The cache file name is derived from the resolved model path relative to the repository root, using `/` separators. The stored fingerprint uses the same relative path, so different mount points share one entry.
 
 Example:
 
@@ -78,7 +78,7 @@ Example structure:
   "created_at": "2026-04-26T02:20:27.679666+00:00",
   "model": {
     "name": "unsloth/Qwen3.5-4B-GGUF/Qwen3.5-4B-Q4_K_M",
-    "path": "/var/lib/tllama/models/HuggingFace/unsloth/Qwen3.5-4B-GGUF/Qwen3.5-4B-Q4_K_M.gguf",
+    "path": "HuggingFace/unsloth/Qwen3.5-4B-GGUF/Qwen3.5-4B-Q4_K_M.gguf",
     "size": 2740937888,
     "mtime_ns": 1776855409859723725
   },
@@ -110,7 +110,7 @@ TLlama validates cache entries using a lightweight file fingerprint:
 
 ```text
 schema_version
-absolute model path
+repository-relative model path
 file size
 file mtime_ns
 ```
@@ -316,6 +316,34 @@ Reasons:
 - easy atomic writes through temporary files and replace.
 
 The cache is not a substitute for the model file. It only stores small metadata needed by TLlama.
+
+---
+
+## Shared Repositories and Mount Points
+
+Model listings are rebuilt from TOML definitions on every request. The cache
+stores header metadata and content digests; it does not register models.
+
+Cache identity is relative to the repository containing
+`.tllama/metadata-cache/`. Moving that repository or mounting it at a different
+path does not invalidate entries if file size and nanosecond mtime stay the
+same. Repository symlinks are resolved; distinct relative weight paths remain
+distinct. Files outside the repository are not cached here.
+
+Old entries keyed by absolute paths are ignored. Headers and SHA-256 digests
+are regenerated on first use, then reused at other mount points. Old cache
+files are not converted or automatically removed. To avoid leaving unused
+entries, stop the daemons and remove the cache directory before rebuilding it.
+Upgrade all daemons sharing the repository to stop old versions creating
+absolute keys.
+
+Header and digest payload schema versions are unchanged by this path-format
+change; their new filenames and relative fingerprints identify the new entries.
+
+Shared cache files still require suitable filesystem/SMB permissions. This
+change does not alter access modes, ACLs, mount caching or timestamp precision.
+Each daemon retains its own temporary in-memory metadata cache, independently
+of the persistent entries and the freshly scanned model list.
 
 ---
 
