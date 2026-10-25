@@ -348,8 +348,8 @@ def test_public_cached_detail_keeps_weight_totals_separate_from_ps_sizes(weights
     assert public["allocated_bytes"] == 1350
     assert public["comparison"]["native"]["weight_storage_totals"]["known_bytes"] == 190
     assert "weight_storage_totals" not in public["comparison"]["log"]["report"]
-    # Display policy is deliberately the existing one until 0115.
-    assert ollama_memory_sizes(public) == (1350, 1300)
+    # The displayed metric replaces weight spans; detailed capacity is intact.
+    assert ollama_memory_sizes(public) == (510, 478)
     weights["weight_storage"]["intervals"][0]["size_bytes"] = 1
     public["weight_storage"]["intervals"].clear()
     public["weight_storage_totals"]["known_bytes"] = 0

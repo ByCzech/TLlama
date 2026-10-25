@@ -3,19 +3,65 @@
 ## Ollama-compatible process summary
 
 `size` and `size_vram` are compatibility fields, separate from the detailed
-allocation inventory in `memory`. Like Ollama, an observed full model-layer
-offload is reported as `size = size_vram`, yielding **100% GPU**. CPU input
-weights, projector compute, host state and staging still appear unchanged in
-`memory.buffers`, `allocated_bytes` and `host_bytes`. This describes model-layer
-placement, not a claim that every allocation or operation is on the GPU.
+buffer inventory in `memory`. With known `weight_storage`, SIZE uses unique
+occupied weight bytes plus nonweight buffer capacities (KV, state, compute,
+output, projector, adapters and other runtime components). Weight buffers are
+replaced, never added to their payload. This removes sparse mmap holes and
+padding without dropping runtime costs. Main/MTP shared bytes count once;
+independent draft storage is included. CPU/GPU weight bytes follow interval
+assignment, while nonweight buffers retain their memory-kind accounting.
 
-Native inventory requires complete known placement for every loaded model,
-including draft/MTP weights, and actual device model buffers. Partial CPU/mixed
-noninput placement uses allocation totals; incomplete/unknown inventory stays
-unavailable. The verified log fallback requires a complete allocation report
-and an exact full-offload layer count. Requested GPU settings alone are not
-evidence. `memory.ollama_compatibility` explains the selected sizes, basis and
-`excluded_host_bytes`; physical residency remains unmeasured.
+Like Ollama, proved full noninput offload is reported as `size = size_vram`,
+yielding **100% GPU**. Every model owner must have proved noninput accelerator
+weights, with no CPU noninput interval. In that case CPU input-only payload
+and host nonweight buffers are excluded from this display. Tied input/output
+bytes stay because they are also output weights. CPU projector compute, input
+weights and host staging still appear unchanged in `memory.buffers`,
+`allocated_bytes` and `host_bytes`. Real CPU noninput weights, including a CPU
+draft, keep the mixed display and include all input payload and runtime costs.
+This is a storage/assignment summary, not a claim about GPU execution or
+physical residency. GPU-assigned weights can use host buffers, so the derived
+`size_vram` need not equal the inventory's `device_bytes`.
+
+The new metric requires complete buffer inventory and known weight coverage,
+classifiable interval assignments and nonweight memory kinds. It uses the
+weight section's own proved relationships/assignments independently of the
+older placement and allocation-locality collectors. A mixed CPU+GPU interval
+cannot be split proportionally. A shared weight/nonweight buffer cannot be
+decomposed by subtracting payload from capacity: the remainder can include
+holes and padding. Such a display stays unknown while detail remains visible.
+Future weight components retain their geometry but do not acquire inferred
+display semantics. Present partial, unavailable or invalid weight evidence
+never falls back to buffer spans or log totals.
+
+Older V1 snapshots without `weight_storage` retain the previous buffer-capacity
+metric: complete placement for every model, including draft/MTP, with actual
+device model buffers required for full GPU display. Mixed placement uses
+capacity totals. The verified log fallback uses its own complete allocation
+report and exact full-offload layer count. Requested GPU settings alone are
+not evidence. Native and log measurements are never joined.
+
+`memory.ollama_compatibility` declares the display metric and its derivation:
+
+| Field | Meaning |
+|---|---|
+| `basis` | `native_weight_storage`, legacy `native_weight_placement`, or the selected log basis |
+| `metric` | `weight_payload_and_nonweight_buffers`, legacy `backend_buffers`, or log `initial_load_allocations` |
+| `precision` | `exact_bytes` for native data, `rounded_mib` for load-log capacities |
+| `weight_capacity_reduction_bytes` | Declared pure weight-buffer capacity minus occupied payload; 0 for the legacy capacity metric |
+| `policy_excluded_bytes` | Bytes omitted by the full-offload display policy, independently of the capacity reduction |
+| `excluded_input_weight_bytes`, `excluded_nonweight_host_bytes` | The two policy terms for the new metric; 0 in a mixed display |
+| `reason` | Full offload, mixed totals, known empty inventory or the reason no complete display can be proved |
+
+For a complete display, `allocated_bytes - size` equals
+`weight_capacity_reduction_bytes + policy_excluded_bytes`. Unknown derivations
+remain null. The misleading `excluded_host_bytes` field is replaced by these
+separate terms; the difference also includes mmap holes and padding.
+Detailed inventory `scope`, `precision`, sizes, buffers, assignments and
+allocation locality are unchanged. Both memory and API smoke scripts consume
+the same display derivation and no longer require weight-assignment GPU bytes
+to equal device-buffer capacity. The client only formats server-provided
+sizes and their ratio; it does not infer placement from a GGUF size or layers.
 
 ## Occupied weight storage (0114)
 
@@ -67,11 +113,11 @@ returns `None`), never a known zero. A proved known empty section after unload
 reports zero. Cached reports, comparisons and summaries are copied together;
 failed reads and replacement do not carry old weight evidence forward.
 
-This step adds parser/detail support. Ollama `size`/`size_vram` still use the
-existing policy above; payload-based display accounting follows in 0115.
+Parser/detail support was added in 0114. The payload-based display accounting
+above follows in 0115.
 Tensor diagnostics are still ignored by the filtered reader until their own
 parser is added; the existing raw smoke capture retains them independently.
-No runtime fingerprint or native backend qualification is changed by 0114.
+Neither step changes runtime fingerprints or qualifies native GPU backends.
 
 The following historical 06a checkpoint describes the load-log source before
 native inventory and the full-offload compatibility policy were added.

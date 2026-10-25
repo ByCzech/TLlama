@@ -202,7 +202,8 @@ def test_public_processor_sizes_explain_the_difference_from_complete_totals(acce
     assert model['memory']['allocated_bytes'] == 1350
     assert model['memory']['ollama_compatibility'] == {
         'size':1300, 'size_vram':1300, 'basis':'native_weight_placement',
-        'reason':'full_accelerator_weights', 'excluded_host_bytes':50}
+        'reason':'full_accelerator_weights', 'metric':'backend_buffers', 'precision':'exact_bytes',
+        'weight_capacity_reduction_bytes':0, 'policy_excluded_bytes':50}
 
 
 def test_captured_qwen_vulkan_apu_capacities_and_placement_retain_full_gpu_display(payload):
@@ -252,6 +253,6 @@ def test_vision_cpu_compute_regression_reports_full_gpu_without_rewriting_invent
     assert model['memory']['allocated_bytes'] == 26138182
     assert model['memory']['host_bytes'] == 26136882
     assert model['memory']['buffers'] == before['buffers']
-    assert model['memory']['ollama_compatibility']['excluded_host_bytes'] == 26136882
+    assert model['memory']['ollama_compatibility']['policy_excluded_bytes'] == 26136882
     assert accelerator == before
     assert '100% GPU' in processes_text(result)

@@ -15,7 +15,7 @@ import runpy
 import signal
 
 from tllama.daemon_config import load_daemon_config
-from tllama.native_reporting import ollama_memory_sizes, public_memory
+from tllama.native_reporting import ollama_memory_summary, public_memory
 from tllama.worker import NativeWorker, WorkerError, WorkerRequestError
 from tllama.worker_config import RUNTIME_FINGERPRINT, WorkerLaunchSpec
 
@@ -132,14 +132,11 @@ def locality_summary(raw, fingerprint, profile):
 
 def summarize(telemetry, profile):
     memory = public_memory(telemetry)
-    size, vram = ollama_memory_sizes(memory)
     native = (telemetry.get("comparison") or {}).get("native")
     log = ((telemetry.get("comparison") or {}).get("log") or {}).get("report") or {}
     result = {"source": memory["source"], "status": memory["status"],
               "native": telemetry["native"], "fallback_reason": telemetry["fallback_reason"],
-              "display": {"size": size, "size_vram": vram,
-                          "excluded_host_bytes": memory["allocated_bytes"] - size
-                          if memory["allocated_bytes"] is not None and size is not None else None},
+              "display": ollama_memory_summary(memory),
               "log": {key: log.get(key) for key in
                       ("status", "reason", "allocated_bytes", "host_bytes", "device_bytes")},
               "checks": {"native_inventory_known": False}}

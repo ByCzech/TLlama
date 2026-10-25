@@ -54,7 +54,7 @@ async def test_native_ps_reports_complete_and_display_totals_without_io_or_lease
         assert memory['source'] == 'native_memory_api' and memory['allocated_bytes'] == 1350
         assert memory['host_bytes'] == 50 and memory['physical_residency_bytes'] is None
         assert memory['native']['http_status'] == 200 and memory['fallback_reason'] is None
-        assert memory['ollama_compatibility']['excluded_host_bytes'] == 50
+        assert memory['ollama_compatibility']['policy_excluded_bytes'] == 50
         assert memory['comparison']['log']['report']['allocated_bytes'] == int(16.5 * 1024**2)
     assert records(manager.test.roots[0], 'requests') == before
     assert len(manager.test.ledger) == 1 and manager.native_snapshot()[0]['leases'] == 0
@@ -99,8 +99,13 @@ async def test_optional_locality_crosses_cached_public_ps_during_stream_and_reco
     assert len(manager.test.ledger) == 1
 
 
-async def test_weight_storage_crosses_worker_http_and_cached_public_ps_during_stream(native_public, weights, monkeypatch):
+@pytest.mark.parametrize('full_offload', [False, True])
+async def test_weight_storage_crosses_worker_http_and_cached_public_ps_during_stream(native_public, weights, monkeypatch, full_offload):
     manager, client, name, _, _, _ = native_public
+    if full_offload:
+        for item in weights['weight_storage']['intervals'][3:]:
+            item['assignment']['device_ids'] = ['gpu0']
+    expected = (486, 486) if full_offload else (510, 478)
     original = manager._native._factory
     monkeypatch.setattr(manager._native, '_factory', lambda spec: original(replace(spec, transport='tcp')))
     _, worker = await loaded(manager, name)
@@ -115,9 +120,11 @@ async def test_weight_storage_crosses_worker_http_and_cached_public_ps_during_st
         memory = model['memory']
         assert memory['weight_storage'] == weights['weight_storage']
         assert memory['weight_storage_totals']['payload_bytes'] == 190
-        assert memory['weight_storage_totals']['cpu_bytes'] == 12
+        assert memory['weight_storage_totals']['cpu_bytes'] == (4 if full_offload else 12)
         assert memory['allocated_bytes'] == 1350
-        assert model['size'] == model['size_vram'] == 1300  # existing policy until 0115
+        # Exact CPU output bytes prevent full GPU regardless of group heuristics.
+        assert (model['size'], model['size_vram']) == expected
+        assert memory['ollama_compatibility']['weight_capacity_reduction_bytes'] == 840
         assert records(root, 'requests') == before
         # Invalid optional evidence replaces its previous known bytes, not the
         # native source, other sections, or the whole generation.
@@ -131,6 +138,7 @@ async def test_weight_storage_crosses_worker_http_and_cached_public_ps_during_st
         assert bad['memory']['extension_errors'][-1]['path'] == 'report.weight_storage'
         assert bad['memory']['allocation_locality'] == weights['allocation_locality']
         assert bad['memory']['fallback_reason'] is None and bad['memory']['allocated_bytes'] == 1350
+        assert bad['size'] is bad['size_vram'] is None
         assert memory['weight_storage_totals']['payload_bytes'] == 190
         weights['weight_storage']['intervals'][0]['buffer_id'] = 'weights'
         weights['snapshot_sequence'] += 1
@@ -138,6 +146,7 @@ async def test_weight_storage_crosses_worker_http_and_cached_public_ps_during_st
         await worker.refresh_memory()
         [recovered] = await ps(client)
         assert recovered['memory']['weight_storage_totals']['payload_bytes'] == 190
+        assert (recovered['size'], recovered['size_vram']) == expected
         assert 'extension_errors' not in recovered['memory']
     assert (await client.post('/api/chat', json=request_body(name, '/api/chat'))).status_code == 200
     assert len(manager.test.ledger) == 1
