@@ -14,6 +14,7 @@ from test_native_reporting import ps
 from test_native_manager import native_manager, records, wait_until
 from test_worker_telemetry import prepare
 from test_native_weight_storage import weights
+from test_native_tensor_diagnostics import diagnosed
 
 
 @pytest.fixture
@@ -37,6 +38,47 @@ async def loaded(manager, name):
     worker = manager.test.ledger[-1]
     await worker.refresh_memory()
     return generation, worker
+
+
+async def test_tensor_diagnostics_cross_cached_ps_during_stream_and_recover(native_public, diagnosed, monkeypatch):
+    manager, client, name, _, _, _ = native_public
+    original = manager._native._factory
+    monkeypatch.setattr(manager._native, '_factory', lambda spec: original(
+        replace(spec, transport='tcp', memory_tensor_diagnostics=4096)))
+    _, worker = await loaded(manager, name)
+    worker._memory_task.cancel()
+    await asyncio.gather(worker._memory_task, return_exceptions=True)
+    root = manager.test.roots[0]
+    diagnostic = diagnosed['weight_storage']['tensor_diagnostics']
+    async with worker.chat_stream({'stub': 'hold'}) as events:
+        await anext(events)
+        before = records(root, 'requests')
+        [initial] = await ps(client)
+        assert initial['memory']['weight_storage']['tensor_diagnostics'] == diagnostic
+        assert (initial['size'], initial['size_vram']) == (510, 478)
+        assert records(root, 'requests') == before
+        for invalid in (True, False):
+            diagnostic['records'][0]['buffer_id'] = 'missing' if invalid else 'weights'
+            diagnosed['snapshot_sequence'] += 1
+            (root/'memory-report').write_text(json.dumps(diagnosed))
+            await worker.refresh_memory()
+            before = records(root, 'requests')
+            [current] = await ps(client)
+            section = current['memory']['weight_storage']['tensor_diagnostics']
+            assert section['status'] == ('unavailable' if invalid else 'known')
+            assert (current['size'], current['size_vram']) == (510, 478)
+            assert current['memory']['weight_storage_totals']['payload_bytes'] == 190
+            assert current['memory']['fallback_reason'] is None
+            assert records(root, 'requests') == before
+        del diagnosed['weight_storage']['tensor_diagnostics']
+        diagnosed['snapshot_sequence'] += 1
+        (root/'memory-report').write_text(json.dumps(diagnosed))
+        await worker.refresh_memory()
+        [absent] = await ps(client)
+        assert 'tensor_diagnostics' not in absent['memory']['weight_storage']
+        assert 'extension_errors' not in absent['memory']
+        assert initial['memory']['weight_storage']['tensor_diagnostics']['records'][0]['buffer_id'] == 'weights'
+    assert len(manager.test.ledger) == 1
 
 
 async def test_native_ps_reports_complete_and_display_totals_without_io_or_leases(native_public):

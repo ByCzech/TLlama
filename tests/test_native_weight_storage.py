@@ -290,7 +290,7 @@ def test_forward_fields_and_names_survive_without_inferring_semantics(weights):
     item["relationships"][0]["component"] = "future_component"
     expected = deepcopy(weights)
     section["future"] = True
-    section["tensor_diagnostics"] = {"not_parsed_until_diagnostic_patch": True}
+    section["future_tensor_diagnostics"] = {"not_understood_by_this_reader": True}
     item["private_address"] = "must_not_escape"
     item["relationships"][0]["future"] = 42
     item["assignment"]["future"] = 123

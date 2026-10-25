@@ -63,6 +63,43 @@ the same display derivation and no longer require weight-assignment GPU bytes
 to equal device-buffer capacity. The client only formats server-provided
 sizes and their ratio; it does not infer placement from a GGUF size or layers.
 
+## Optional tensor diagnostics (0117)
+
+`WorkerLaunchSpec.memory_tensor_diagnostics` is an internal diagnostic setting,
+an integer from 0 to 4096. Its default 0 emits no native flag and preserves
+ordinary startup with older workers. A positive value passes the explicit
+`--memory-tensor-diagnostics N` argument; inherited `LLAMA_ARG_*` settings are
+still removed. No daemon setting, model TOML field or general native-args
+passthrough is introduced. Enabling it requires a native build supporting the
+flag; this does not change any supported/default fingerprint.
+
+When present, `memory.weight_storage.tensor_diagnostics` follows the pinned
+[native weight contract](https://github.com/ByCzech/llama.cpp/blob/0e9433bfd33d8cdb194285b70c0d421d39135df2/docs/development/tllama-weight-storage.md#optional-tensor-diagnostics).
+It preserves snapshot-local tensor-role visits, nullable names/components and
+buffer references, native layer indices, checked assignment and exact or
+explicitly incomplete geometry. Limits apply across all owners: at most 4096
+records and 16384 copied ranges. Escaped names remain byte-preserving strings
+in `byte_escape` form; they are not decoded as presumed UTF-8.
+
+`size_bytes` can remain known when the range budget is exhausted;
+`ranges_complete=false` means those ranges are only a prefix. `truncated=false`
+does not prove complete coverage. Inspect status, missing components, storage
+status, assignment and per-record range completeness. Empty proved geometry
+is distinct from unavailable storage. Names and repeated visits are not storage
+identities; record sizes are never summed into weight, buffer or allocation
+totals, nor used for SIZE/PROCESSOR. Only the main deduplicated intervals drive
+weight accounting. Invalid diagnostics withdraw only their own evidence with
+an `extension_errors` path; buffers, locality and main weights remain valid.
+Replacement snapshots can remove or restore diagnostics without stale records.
+
+`scripts/memory-smoke.py --memory-tensor-diagnostics 4096` enables capture using
+the existing profiles and inference/cleanup checks. Its weight summary reports
+payload totals separately from diagnostic record/range counts and coverage.
+Raw replies retain all native fields, including malformed diagnostic evidence;
+selected telemetry is validated independently. Partial bounded diagnostics are
+useful captures, not a claim that all tensors were enumerated. See
+[capture instructions](../scripts/memory-smoke-08c.md) for the P100 layer check.
+
 ## Allocation locality: CUDA, HIP and SYCL (0116)
 
 The optional `memory.allocation_locality` section describes native allocation

@@ -53,6 +53,7 @@ class WorkerLaunchSpec:
     version_policy: str = "warn"
     memory_source: str = "auto"
     memory_compare: bool = False
+    memory_tensor_diagnostics: int = 0
     load_timeout: float = 600.0
     request_timeout: float | None = None
     terminate_timeout: float = 5.0
@@ -69,6 +70,8 @@ class WorkerLaunchSpec:
             raise ValueError("memory_source must be auto, native or log")
         if type(self.memory_compare) is not bool:
             raise ValueError("memory_compare must be a boolean")
+        if type(self.memory_tensor_diagnostics) is not int or not 0 <= self.memory_tensor_diagnostics <= 4096:
+            raise ValueError("memory_tensor_diagnostics must be an integer in 0..4096")
         if self.transport not in ("uds", "tcp"):
             raise ValueError("transport must be uds or tcp")
         if self.transport == "uds" and self.port != 0:
@@ -207,6 +210,8 @@ class WorkerLaunchSpec:
             args.append("--no-context-shift")
         args += runtime_cli_args(self.runtime_options)
         args += mmproj_cli_args(self.mmproj_options)
+        if self.memory_tensor_diagnostics:
+            args += ["--memory-tensor-diagnostics", str(self.memory_tensor_diagnostics)]
         if self.decision_type is not None and "spec_type" not in self.runtime_options:
             args += ["--spec-type", "none"]
         if self.embedding:

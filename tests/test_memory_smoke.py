@@ -7,16 +7,102 @@ from pathlib import Path
 import signal
 import subprocess
 import sys
+from dataclasses import replace
 
 import pytest
 
 from test_native_memory_api import payload
+from test_native_memory_locality import extended
+from test_native_weight_storage import weights
+from test_native_tensor_diagnostics import diagnosed
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "memory-smoke.py"
 module_spec = importlib.util.spec_from_file_location("memory_smoke", SCRIPT)
 smoke = importlib.util.module_from_spec(module_spec)
 module_spec.loader.exec_module(smoke)
+
+
+@pytest.mark.parametrize('limit', [0, 1, 4096])
+def test_tensor_diagnostic_limit_reaches_explicit_argv(tmp_path, capsys, limit):
+    args = ['--profile', 'cpu', '--model', str(tmp_path/'m.gguf'),
+            '--output', str(tmp_path/'out'), '--dry-run', '--memory-tensor-diagnostics', str(limit)]
+    assert smoke.main(args) == 0
+    argv = json.loads(capsys.readouterr().out)['argv']
+    assert ('--memory-tensor-diagnostics' in argv) == bool(limit)
+    if limit:
+        assert argv[argv.index('--memory-tensor-diagnostics') + 1] == str(limit)
+    assert not (tmp_path/'out').exists()
+
+
+@pytest.mark.parametrize('limit', ['-1', '4097', 'true', '1.5'])
+def test_smoke_rejects_invalid_diagnostic_limit_without_output(tmp_path, limit):
+    with pytest.raises(SystemExit):
+        smoke.main(['--profile','cpu','--model',str(tmp_path/'m.gguf'),
+            '--output',str(tmp_path/'out'),'--dry-run','--memory-tensor-diagnostics',limit])
+    assert not (tmp_path/'out').exists()
+
+
+def test_weight_summary_preserves_nonadditive_diagnostic_meaning(diagnosed):
+    summary = smoke.weight_summary(diagnosed)
+    assert summary['totals']['payload_bytes'] == 190
+    assert summary['tensor_diagnostics']['record_count'] == 1
+    assert summary['tensor_diagnostics']['range_count'] == 1
+    assert summary['tensor_diagnostics']['name_encoding'] == 'byte_escape'
+    assert 'size_bytes' not in summary['tensor_diagnostics']
+    assert smoke.weight_summary({}) == {'supported': False}
+
+
+@pytest.mark.parametrize('invalid', [False, True])
+def test_tensor_capture_preserves_raw_and_separate_summary(tmp_path, diagnosed, monkeypatch, capsys, invalid):
+    root = tmp_path/'stub'
+    root.mkdir()
+    executable = tmp_path/'native-stub'
+    executable.write_text(f'#!{sys.executable}\n' + Path(__file__).with_name('native_worker_stub.py').read_text())
+    executable.chmod(0o700)
+    model = tmp_path/'m.gguf'
+    model.touch()
+    diagnosed['runtime_fingerprint'] = 'b11850-0e9433bfd3'
+    for group in diagnosed['placement']['layer_groups']:
+        group.update(location='cpu', device_ids=['cpu'])
+        if 'assignment' in group:
+            group['assignment']['device_ids'] = ['cpu']
+    for buffer in diagnosed['buffers']:
+        buffer.update(memory_kind='host', device_ids=['cpu'])
+    for interval in diagnosed['weight_storage']['intervals']:
+        interval['assignment']['device_ids'] = ['cpu']
+    diagnostics = diagnosed['weight_storage']['tensor_diagnostics']
+    diagnostics['records'][0]['assignment']['device_ids'] = ['cpu']
+    # The full size survives a deliberately incomplete range prefix.
+    diagnostics.update(status='partial', truncated=True,
+        missing_components=[dict(owner_id=None,component='model_weights',layer_index=None,reason='diagnostic_range_limit')])
+    diagnostics['records'][0].update(ranges_complete=False, ranges=[])
+    if invalid:
+        diagnostics['records'][0]['buffer_id'] = 'missing'
+    (root/'memory-report').write_text(json.dumps(diagnosed))
+    monkeypatch.setenv('STUB_ROOT', str(root))
+    monkeypatch.setenv('STUB_BUILD', diagnosed['runtime_fingerprint'])
+    worker_class = smoke.NativeWorker
+    monkeypatch.setattr(smoke, 'NativeWorker', lambda spec: worker_class(replace(spec,transport='tcp')))
+    output = tmp_path/'output'
+    code = smoke.main(['--profile','cpu','--model',str(model),'--executable',str(executable),
+        '--output',str(output),'--expected-fingerprint',diagnosed['runtime_fingerprint'],
+        '--memory-tensor-diagnostics','4096'])
+    assert code == int(invalid), capsys.readouterr()
+    raw = [json.loads(line) for line in (output/'raw.jsonl').read_text().splitlines()]
+    concise = [json.loads(line) for line in (output/'summary.jsonl').read_text().splitlines()]
+    captures = [r for r in raw if 'raw_native' in r]
+    assert len(captures) == 2
+    for record in captures:
+        assert record['raw_native']['body'] == diagnosed
+        summary = record['summary']['weight_storage']
+        assert summary['totals']['payload_bytes'] == 190
+        assert summary['tensor_diagnostics']['status'] == ('unavailable' if invalid else 'partial')
+        assert record['summary']['checks']['tensor_diagnostics_adapter_valid'] is (not invalid)
+    assert not any('raw_native' in r or 'telemetry' in r for r in concise)
+    argv = raw[0]['argv']
+    assert argv[argv.index('--memory-tensor-diagnostics')+1] == '4096'
+    assert raw[-2]['directory_removed'] is True
 
 
 @pytest.mark.parametrize("profile,layers,load_mode", [

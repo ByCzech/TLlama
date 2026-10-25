@@ -8,6 +8,7 @@ See memory-smoke-08c.md for the four initial runs and result interpretation.
 import argparse
 import asyncio
 from collections import defaultdict
+from dataclasses import asdict
 import json
 import logging
 from pathlib import Path
@@ -16,6 +17,7 @@ import signal
 
 from tllama.daemon_config import load_daemon_config
 from tllama.native_reporting import ollama_memory_summary, public_memory
+from tllama.native_memory_api import NativeMemoryReport
 from tllama.worker import NativeWorker, WorkerError, WorkerRequestError
 from tllama.worker_config import RUNTIME_FINGERPRINT, WorkerLaunchSpec
 
@@ -42,6 +44,7 @@ def launch_spec(args):
         n_ctx=args.ctx, mmproj=args.mmproj.expanduser().resolve() if vision else None,
         type_k=args.type_k or ("q8_0" if vision else "q4_0"), type_v=args.type_v,
         flash_attn=args.flash_attn == "on", memory_source="auto", memory_compare=True,
+        memory_tensor_diagnostics=args.memory_tensor_diagnostics,
         runtime_options={"use_mmap": args.profile != "no-mmap", "use_mlock": False,
                          "n_batch": 512, "n_ubatch": 512,
                          "op_offload": not cpu, "offload_kqv": not cpu},
@@ -103,8 +106,8 @@ def locality_summary(raw, fingerprint, profile):
     devices = {d["id"]:d for d in report.get("devices", [])}
     checks["locality_scope"] = extension.get("scope") == "backend_buffer_allocations"
     checks["physical_aliasing_unknown"] = extension.get("physical_aliasing") == "unknown"
-    # Unsupported CPU/CUDA/HIP/SYCL exporters are legitimate observations;
-    # their independent coverage must not invalidate buffer accounting.
+    # Exporter coverage depends on the actual backend/allocation path;
+    # incomplete locality must not invalidate independent buffer accounting.
     checks["locality_coverage_reported"] = extension.get("status") in {"known", "partial", "unavailable"}
     checks["allocation_ids"] = (all(isinstance(value, str) and value for value in allocation_ids)
                                 and len(set(allocation_ids)) == len(allocation_ids))
@@ -130,6 +133,24 @@ def locality_summary(raw, fingerprint, profile):
     return result
 
 
+def weight_summary(report):
+    """Summarize one selected snapshot, never add tensor-role rows to totals."""
+    storage = report.get("weight_storage")
+    if storage is None:
+        return {"supported": False}
+    parsed = NativeMemoryReport(report)
+    result = {"supported": True, "status": storage["status"],
+              "totals": asdict(parsed.weight_totals()),
+              "missing_components": storage["missing_components"]}
+    diagnostics = storage.get("tensor_diagnostics")
+    if diagnostics is not None:
+        result["tensor_diagnostics"] = {key: diagnostics[key] for key in
+            ("status", "record_limit", "range_limit", "truncated", "name_encoding", "missing_components")}
+        result["tensor_diagnostics"]["record_count"] = len(diagnostics["records"])
+        result["tensor_diagnostics"]["range_count"] = sum(len(r["ranges"]) for r in diagnostics["records"])
+    return result
+
+
 def summarize(telemetry, profile):
     memory = public_memory(telemetry)
     native = (telemetry.get("comparison") or {}).get("native")
@@ -143,6 +164,7 @@ def summarize(telemetry, profile):
     if native is None:
         return result
     report, totals = native["report"], native["totals"]
+    result["weight_storage"] = weight_summary(report)
     groups = report["placement"]["layer_groups"]
     buffers = report["buffers"]
     weights = [b for b in buffers if any(o["component"] == "model_weights" for o in b["owners"])]
@@ -195,6 +217,16 @@ async def exercise(args, spec, emit):
         await worker.refresh_memory()
         telemetry = worker.memory_snapshot()
         summary = summarize(telemetry, args.profile)
+        if args.memory_tensor_diagnostics:
+            selected = (telemetry.get("measurement") or {}).get("report") or {}
+            diagnostics = selected.get("weight_storage", {}).get("tensor_diagnostics")
+            # Bounded/partial coverage is useful evidence, not a failed capture.
+            # Require a valid diagnostic section, not full enumeration.
+            summary["checks"]["tensor_diagnostics_adapter_valid"] = (
+                telemetry["source"] == "native_memory_api" and isinstance(diagnostics, dict)
+                and diagnostics.get("record_limit") == args.memory_tensor_diagnostics
+                and not any(e["path"].startswith("report.weight_storage")
+                            for e in selected.get("extension_errors", [])))
         if args.locality:
             try:
                 evidence = locality_summary(raw, worker.runtime_fingerprint, args.profile)
@@ -261,6 +293,8 @@ def main(argv=None):
     parser.add_argument("--executable", type=Path)
     parser.add_argument("--expected-fingerprint", help="Pin this diagnostic worker to an exact build; no global policy change")
     parser.add_argument("--locality", action="store_true", help="Check the optional assignment/locality extension in raw endpoint replies")
+    parser.add_argument("--memory-tensor-diagnostics", type=int, default=0, metavar="N",
+                        help="Collect up to N tensor-role records (0..4096; default: disabled)")
     parser.add_argument("--load-timeout", type=float, default=600)
     parser.add_argument("--request-timeout", type=float, default=600)
     parser.add_argument("--dry-run", action="store_true", help="Show launch command without starting a worker or writing output")

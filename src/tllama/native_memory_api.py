@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
+import re
 
 
 class MemoryReportError(ValueError):
@@ -131,6 +132,12 @@ def _unsigned(value, path):
 
 def _nullable_unsigned(value, path):
     return None if value is None else _unsigned(value, path)
+
+
+def _boolean(value, path):
+    if type(value) is not bool:
+        raise MemoryReportError(f"{path}: expected a boolean")
+    return value
 
 
 def _native_properties(value, path):
@@ -269,6 +276,96 @@ def _parse_weight_storage(value, path, data, devices):
     return result
 
 
+_tensor_range = _record(offset_bytes=_unsigned, size_bytes=_unsigned)
+_tensor_record = _record(id=_string, tensor_name=_nullable_string, owner_id=_string,
+    component=_nullable_string, layer_index=_nullable_unsigned, buffer_id=_nullable_string,
+    storage_status=_enum("known", "unavailable"), storage_reason=_nullable_string,
+    size_bytes=_nullable_unsigned, ranges_complete=_boolean, ranges=_array(_tensor_range))
+_tensor_diagnostics = _record(status=_status, record_limit=_unsigned, range_limit=_unsigned,
+    truncated=_boolean, name_encoding=_enum("byte_escape"), missing_components=_weight_missing,
+    records=_array(_tensor_record))
+_escaped_name = re.compile(r'(?:[\x20-\x5b\x5d-\x7e]|\\\\|\\x[0-9a-fA-F]{2})*')
+
+
+def _parse_tensor_diagnostics(value, path, data, devices):
+    obj = _object(value, path)
+    # Bound enumeration before copying the arrays, including the global range budget.
+    limit = _field(obj, "record_limit", path, _unsigned)
+    range_limit = _field(obj, "range_limit", path, _unsigned)
+    if not 1 <= limit <= 4096 or not 1 <= range_limit <= 16384:
+        raise MemoryReportError(f"{path}: invalid diagnostic limits")
+    raw_records = obj.get("records")
+    if not isinstance(raw_records, list) or len(raw_records) > limit:
+        raise MemoryReportError(f"{path}: diagnostic record limit exceeded")
+    range_count = 0
+    for raw in raw_records:
+        ranges = _object(raw, path).get("ranges")
+        if not isinstance(ranges, list):
+            raise MemoryReportError(f"{path}: expected diagnostic ranges")
+        range_count += len(ranges)
+        if range_count > range_limit:
+            raise MemoryReportError(f"{path}: diagnostic range limit exceeded")
+    result = _tensor_diagnostics(obj, path)
+    owners = {o["id"]: o for o in data["owners"]}
+    buffers = {b["id"]: b for b in data["buffers"]}
+    _coverage(result, path, owners)
+    missing = result["missing_components"]
+    _unique([tuple(item.values()) for item in missing], f"{path}.missing_components")
+    if any(item["owner_id"] is not None and owners[item["owner_id"]]["kind"] != "model" for item in missing):
+        raise MemoryReportError(f"{path}: diagnostic missing owner outside model scope")
+    reasons = {item["reason"] for item in missing}
+    limited = bool(reasons & {"diagnostic_record_limit", "diagnostic_range_limit"})
+    if result["truncated"] != limited or result["status"] == "known" and limited:
+        raise MemoryReportError(f"{path}: inconsistent truncation evidence")
+    if result["status"] == "unavailable" and (result["records"] or not missing):
+        raise MemoryReportError(f"{path}: unavailable diagnostics need a reason and no records")
+    _unique([record["id"] for record in result["records"]], f"{path}.records")
+    for index, (record, raw) in enumerate(zip(result["records"], raw_records)):
+        item_path = f"{path}.records[{index}]"
+        owner = owners.get(record["owner_id"])
+        if owner is None or owner["kind"] != "model":
+            raise MemoryReportError(f"{item_path}: unresolved model owner")
+        name = record["tensor_name"]
+        if name is not None and _escaped_name.fullmatch(name) is None:
+            raise MemoryReportError(f"{item_path}: invalid byte_escape name")
+        component, layer = record["component"], record["layer_index"]
+        if (component in {"repeating_layers", "mtp_layers"} and layer is None
+                or component in {"input_weights", "output_weights", "other_weights"} and layer is not None):
+            raise MemoryReportError(f"{item_path}: inconsistent native layer index")
+        buffer = buffers.get(record["buffer_id"])
+        if record["buffer_id"] is not None and buffer is None:
+            raise MemoryReportError(f"{item_path}: unresolved buffer")
+        if buffer is not None and {"owner_id": record["owner_id"], "component": "model_weights"} not in buffer["owners"]:
+            raise MemoryReportError(f"{item_path}: owner does not own weight buffer")
+        record["assignment"] = _field(raw, "assignment", item_path,
+            lambda v, p: _parse_assignment(v, p, devices))
+        if record["storage_status"] == "unavailable":
+            if (not record["storage_reason"] or record["size_bytes"] is not None
+                    or record["ranges"] or record["ranges_complete"]):
+                raise MemoryReportError(f"{item_path}: inconsistent unavailable storage")
+        else:
+            if buffer is None or record["size_bytes"] is None or record["storage_reason"] is not None:
+                raise MemoryReportError(f"{item_path}: known storage lacks geometry")
+            if buffer["size_bytes"] is not None and record["size_bytes"] > buffer["size_bytes"]:
+                raise MemoryReportError(f"{item_path}: diagnostic payload exceeds buffer span")
+            end = total = 0
+            for span in record["ranges"]:
+                start, size = span["offset_bytes"], span["size_bytes"]
+                next_end = _unsigned(start + size, item_path)
+                if (not size or start < end
+                        or buffer["size_bytes"] is not None and next_end > buffer["size_bytes"]):
+                    raise MemoryReportError(f"{item_path}: invalid diagnostic range")
+                end = next_end
+                total = _unsigned(total + size, item_path)
+            if (total > record["size_bytes"] or record["ranges_complete"] and total != record["size_bytes"]
+                    or not record["ranges_complete"] and "diagnostic_range_limit" not in reasons):
+                raise MemoryReportError(f"{item_path}: inconsistent diagnostic payload size")
+        if result["status"] == "known" and (record["storage_status"] != "known"
+                or record["assignment"]["status"] != "known" or component is None or not record["ranges_complete"]):
+            raise MemoryReportError(f"{item_path}: known diagnostics lack complete evidence")
+    return result
+
+
 def _extensions(obj, data, devices):
     """Optional metadata failures leave the valid V1 capacity inventory usable.
 
@@ -303,6 +400,15 @@ def _extensions(obj, data, devices):
              "missing_components": [{"owner_id": None, "component": "model_weights",
                                      "layer_index": None, "reason": "invalid_metadata"}],
              "intervals": []})
+        raw_storage = obj["weight_storage"]
+        if isinstance(raw_storage, dict) and "tensor_diagnostics" in raw_storage:
+            path = "report.weight_storage.tensor_diagnostics"
+            data["weight_storage"]["tensor_diagnostics"] = parse(raw_storage["tensor_diagnostics"], path,
+                lambda v, p: _parse_tensor_diagnostics(v, p, data, devices),
+                {"status": "unavailable", "record_limit": None, "range_limit": None,
+                 "truncated": False, "name_encoding": "byte_escape",
+                 "missing_components": [{"owner_id": None, "component": "model_weights",
+                                         "layer_index": None, "reason": "invalid_metadata"}], "records": []})
     if errors:
         data["extension_errors"] = errors
 
