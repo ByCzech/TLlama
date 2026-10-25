@@ -98,6 +98,8 @@ def public_memory(telemetry):
         memory = deepcopy(measurement['report'])
         if telemetry['source'] == 'native_memory_api':
             memory.update(measurement['totals'])
+            if 'weight_storage_totals' in measurement:
+                memory['weight_storage_totals'] = deepcopy(measurement['weight_storage_totals'])
             memory.update(source='native_memory_api', reason=None if memory['status'] == 'known'
                           else 'incomplete_native_inventory')
     memory.update(units='bytes', physical_residency_bytes=None,

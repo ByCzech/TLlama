@@ -17,6 +17,62 @@ and an exact full-offload layer count. Requested GPU settings alone are not
 evidence. `memory.ollama_compatibility` explains the selected sizes, basis and
 `excluded_host_bytes`; physical residency remains unmeasured.
 
+## Occupied weight storage (0114)
+
+The optional V1 `weight_storage` section describes occupied model-weight bytes
+inside backend buffers. It excludes padding and holes, including sparse mmap
+spans. Quantized sizes include their encoded block and scale bytes. The parser
+follows native contract
+[`0e9433bfd3`](https://github.com/ByCzech/llama.cpp/blob/0e9433bfd33d8cdb194285b70c0d421d39135df2/docs/development/tllama-weight-storage.md).
+These are storage bytes, not resident RAM/VRAM or another allocation to add to
+the buffer inventory. Projector, adapters and runtime state are outside this
+weight scope and remain in their existing inventory.
+
+`memory.weight_storage` retains the validated native evidence.
+`memory.weight_storage_totals` is a separate derived summary of the entire
+native model-weight scope, including independent drafts:
+
+| Field | Meaning |
+|---|---|
+| `status` | Native weight coverage, independently of buffer/placement/locality coverage |
+| `payload_bytes` | Unique occupied bytes, null unless weight coverage is known |
+| `cpu_bytes`, `accelerator_bytes` | Complete assignment split, null if coverage or any selected interval's assignment classification is incomplete |
+| `known_bytes` | Sum of the proved intervals, including unclassified bytes; a partial subtotal is not a complete model size |
+| `known_cpu_bytes`, `known_accelerator_bytes` | Subtotals with proved homogeneous CPU/accelerator assignment |
+| `unclassified_bytes` | Proved storage with partial, unavailable, CPU+accelerator, meta or unknown assignment; never distributed proportionally |
+| `interval_count` | Number of unique selected intervals |
+
+Assignments resolve devices in the same snapshot. Neither provider device IDs,
+buffer memory kind nor allocation locality overrides them. Multiple accelerator
+devices do not multiply one interval's bytes or distribute them among GPUs.
+
+The internal `NativeMemoryReport.weight_totals()` can filter exact owner IDs,
+owner roles and relationship components. It matches owner and component on the
+same relationship, then counts each selected interval once. A shared main/MTP
+owner has both roles; selecting either or both does not duplicate its storage.
+Separate buffer objects remain separate even with identical names or contents.
+For tied input [0,8) and output [4,12), the native partition is [0,4), [4,8),
+[8,12): the union is 12 bytes and excluding input-only bytes leaves 8. Role and
+component subtotals can overlap and must not be added. Filtering never upgrades
+incomplete global coverage to a complete filtered total. Future role/component
+names are retained and matched literally, without inferred display semantics.
+
+The reader validates uint64 offsets, sizes and their sum, nonempty ranges,
+known buffer bounds, per-buffer ordering/disjointness, snapshot-local IDs,
+model ownership, native layer indices and the shared assignment contract.
+An invalid optional section is replaced by unavailable evidence with
+`invalid_metadata` plus `extension_errors`; valid buffer, placement and
+allocation evidence survives. Absence remains unsupported (`weight_totals()`
+returns `None`), never a known zero. A proved known empty section after unload
+reports zero. Cached reports, comparisons and summaries are copied together;
+failed reads and replacement do not carry old weight evidence forward.
+
+This step adds parser/detail support. Ollama `size`/`size_vram` still use the
+existing policy above; payload-based display accounting follows in 0115.
+Tensor diagnostics are still ignored by the filtered reader until their own
+parser is added; the existing raw smoke capture retains them independently.
+No runtime fingerprint or native backend qualification is changed by 0114.
+
 The following historical 06a checkpoint describes the load-log source before
 native inventory and the full-offload compatibility policy were added.
 

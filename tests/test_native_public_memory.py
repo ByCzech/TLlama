@@ -13,6 +13,7 @@ from test_native_public_api import public, request_body, stream_mode
 from test_native_reporting import ps
 from test_native_manager import native_manager, records, wait_until
 from test_worker_telemetry import prepare
+from test_native_weight_storage import weights
 
 
 @pytest.fixture
@@ -95,6 +96,50 @@ async def test_optional_locality_crosses_cached_public_ps_during_stream_and_reco
         assert recovered['memory']['allocation_locality']['status'] == 'partial'
         assert 'extension_errors' not in recovered['memory']
     assert (await client.post('/api/chat',json=request_body(name,'/api/chat'))).status_code == 200
+    assert len(manager.test.ledger) == 1
+
+
+async def test_weight_storage_crosses_worker_http_and_cached_public_ps_during_stream(native_public, weights, monkeypatch):
+    manager, client, name, _, _, _ = native_public
+    original = manager._native._factory
+    monkeypatch.setattr(manager._native, '_factory', lambda spec: original(replace(spec, transport='tcp')))
+    _, worker = await loaded(manager, name)
+    worker._memory_task.cancel()
+    await asyncio.gather(worker._memory_task, return_exceptions=True)
+    root = manager.test.roots[0]
+    async with worker.chat_stream({'stub': 'hold'}) as events:
+        await anext(events)
+        await asyncio.wait_for(worker.refresh_memory(), 0.5)
+        before = records(root, 'requests')
+        [model] = await ps(client)
+        memory = model['memory']
+        assert memory['weight_storage'] == weights['weight_storage']
+        assert memory['weight_storage_totals']['payload_bytes'] == 190
+        assert memory['weight_storage_totals']['cpu_bytes'] == 12
+        assert memory['allocated_bytes'] == 1350
+        assert model['size'] == model['size_vram'] == 1300  # existing policy until 0115
+        assert records(root, 'requests') == before
+        # Invalid optional evidence replaces its previous known bytes, not the
+        # native source, other sections, or the whole generation.
+        weights['weight_storage']['intervals'][0]['buffer_id'] = 'previous-snapshot-only'
+        weights['snapshot_sequence'] += 1
+        (root/'memory-report').write_text(json.dumps(weights))
+        await worker.refresh_memory()
+        [bad] = await ps(client)
+        assert bad['memory']['weight_storage_totals']['payload_bytes'] is None
+        assert bad['memory']['weight_storage']['intervals'] == []
+        assert bad['memory']['extension_errors'][-1]['path'] == 'report.weight_storage'
+        assert bad['memory']['allocation_locality'] == weights['allocation_locality']
+        assert bad['memory']['fallback_reason'] is None and bad['memory']['allocated_bytes'] == 1350
+        assert memory['weight_storage_totals']['payload_bytes'] == 190
+        weights['weight_storage']['intervals'][0]['buffer_id'] = 'weights'
+        weights['snapshot_sequence'] += 1
+        (root/'memory-report').write_text(json.dumps(weights))
+        await worker.refresh_memory()
+        [recovered] = await ps(client)
+        assert recovered['memory']['weight_storage_totals']['payload_bytes'] == 190
+        assert 'extension_errors' not in recovered['memory']
+    assert (await client.post('/api/chat', json=request_body(name, '/api/chat'))).status_code == 200
     assert len(manager.test.ledger) == 1
 
 
