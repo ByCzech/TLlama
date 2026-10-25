@@ -5,7 +5,8 @@ from fastapi import HTTPException
 from tllama.helpers.common import normalize_stop, strftime_now
 
 
-def render_generate_text(metadata_info: dict, request, *, bos_token: str, eos_token: str):
+def render_generate_text(metadata_info: dict, request, *, bos_token: str, eos_token: str,
+                         add_generation_prompt: bool = True):
     """Render a completion prompt from a model template and request data.
 
     Returns:
@@ -90,7 +91,7 @@ def render_generate_text(metadata_info: dict, request, *, bos_token: str, eos_to
         "Messages": messages,
         "bos_token": bos_token,
         "eos_token": eos_token,
-        "add_generation_prompt": True,
+        "add_generation_prompt": add_generation_prompt,
 
         "tools": tools_value,
         "available_tools": tools_value,

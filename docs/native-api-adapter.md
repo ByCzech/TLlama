@@ -64,11 +64,40 @@ The lease must cover iteration, slot wait, early exit and cancellation, not just
 creation of an iterator. Leaving the upstream context closes its HTTP response.
 CancelledError propagates instead of becoming a public inference error.
 
-Chat content/reasoning_content are distinct native fields; literal think markers
-in content are not reparsed. Raw completion has no structured channel, so its
-caller-selected ReasoningStreamSplitter handles both full text and stream
-deltas, preserving whitespace equally. Reasoning-only length results remain
-successful limited replies, with an empty answer and separate reasoning.
+Chat content/reasoning_content are distinct native fields. Structured native
+reasoning takes precedence; its content is never reparsed. For a known explicit
+think-tag format, an unstructured leading `<think>...</think>` block is separated
+in the common adapter. This handles Instella-MoE-Think's original template,
+which renders only `message.content`, so the native differential parser cannot
+discover a separate reasoning channel. Detection uses GGUF `arch=instella-moe`
+or the selected template's explicit tag pair. The detector does not accept a
+model name: aliases never determine parsing or the `/api/show` thinking
+capability. General Qwen, Gemma and Granite architectures alone do not prove a
+thinking variant. Chat also respects selection of a named tool-use template.
+Unknown formats and markers after the answer starts remain literal. An optional
+whitespace prefix is retained in thinking; all other whitespace is unchanged.
+
+Raw completion has no structured channel, so ReasoningStreamSplitter handles
+both full text and stream deltas. Tag formats use one leading block. Implicit
+initial reasoning (including Qwen) requires an actual generation prefix ending
+in an unclosed `<think>`. For rendered generate prompts, compare the same
+template with/without `add_generation_prompt`: only the appended suffix counts,
+so a marker in user text cannot open this mode. A completed empty think block
+does not open it either. An unsupported comparison falls back to explicit-tag
+parsing; it does not fail an otherwise valid render. Request template overrides
+take precedence. Raw callers explicitly own the entire prompt/prefill. Chat
+never assumes implicit reasoning from ordinary content. Reasoning-only length results remain successful limited
+replies, with an empty answer and separate reasoning. Interrupted streams do not
+flush pending text into a fabricated successful terminal reply.
+
+`think=false` requests disabled generation through the native template controls;
+it cannot force a template which ignores those controls to obey. If the model
+still emits reasoning, the adapter separates it. CLI `--hide-thinking` controls
+display only, retaining API channels, conversation history and measured stats.
+
+Instella's load and inference were tested by the user with matching K/V cache
+quantization types; differing types failed in that tested model/runtime. This
+does not change global cache defaults or impose a family-wide config guard.
 
 ## Statistics and public formats
 

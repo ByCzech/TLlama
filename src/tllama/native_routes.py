@@ -14,7 +14,7 @@ from tllama.errors import ollama_stream_error_line, openai_stream_error_frame
 
 from tllama.helpers.common import get_iso_time, validate_format, validate_sampling_options
 from tllama.helpers.prompt_render import render_generate_text
-from tllama.helpers.reasoning_split import detect_reasoning_format
+from tllama.helpers.reasoning_split import detect_reasoning_format, completion_reasoning_format
 from tllama.helpers.vision import content_carries_images, request_carries_images, NO_MULTIMODAL_SUPPORT
 from tllama.native_api import (NativeAPI, ReplyContext, ollama_response, openai_response,
                               ollama_stream, openai_stream, public_error)
@@ -132,11 +132,26 @@ async def _completion_request(request, lease, metadata) -> NativeRequest:
         raise WorkerProtocolError("Native BOS/EOS properties must be strings")
     if request.raw:
         prompt, stop = request.prompt, None
+        generation_prefix = prompt  # Raw callers explicitly own the prefill.
     else:
         prompt, stop = render_generate_text(metadata, request, bos_token=bos, eos_token=eos)
+        generation_prefix = None
+    # A request template replaces the model's template for this completion.
+    reasoning_metadata = {**metadata, "template": request.template or metadata.get("template")}
+    if not request.raw and detect_reasoning_format(reasoning_metadata) == "think_prefix":
+        try:
+            without_generation, _ = render_generate_text(
+                metadata, request, bos_token=bos, eos_token=eos, add_generation_prompt=False)
+        except HTTPException:
+            # Some custom templates require a generation prompt. Failure of
+            # this optional comparison must not invalidate a valid render.
+            pass
+        else:
+            if prompt.startswith(without_generation):
+                generation_prefix = prompt[len(without_generation):]
     prepared = prepare_completion(prompt, request.options, resolved=lease.resolved, metadata_info=metadata,
                                   format_value=request.format,
-                                  reasoning_format=detect_reasoning_format(request.model, metadata), think=request.think)
+                                  reasoning_format=completion_reasoning_format(reasoning_metadata, generation_prefix))
     body = prepared.body()
     if stop is not None:
         body["stop"] = stop

@@ -149,7 +149,7 @@ async def test_stream_stats_can_follow_finish_in_empty_choices_and_are_request_l
 
 
 async def test_raw_reasoning_marker_split_across_events_matches_non_stream():
-    request = NativeRequest("completion", {}, reasoning_format="qwen_like")
+    request = NativeRequest("completion", {}, reasoning_format="think_prefill")
     values = [{"content": "<thi", "stop": False}, {"content": "nk>thought</thi", "stop": False},
               {"content": "nk>answer", "stop": True, "stop_type": "limit", "timings": TIMINGS}]
     events = await collected(values, request)
@@ -160,7 +160,7 @@ async def test_raw_reasoning_marker_split_across_events_matches_non_stream():
 
 
 async def test_raw_split_preserves_whitespace_equally_in_stream_and_full_result():
-    request = NativeRequest("completion", {}, reasoning_format="qwen_like")
+    request = NativeRequest("completion", {}, reasoning_format="think_prefill")
     text = "<think> thought \n</think> answer \n"
     result = read_result({"content": text, "stop": True, "stop_type": "eos"}, request)
     events = await collected([{"content": char, "stop": False} for char in text] + [

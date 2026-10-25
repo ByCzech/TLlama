@@ -13,6 +13,7 @@ from typing import Mapping, Literal
 
 from tllama.helpers.chat import build_think_kwargs_ex, apply_default_system_prompt
 from tllama.helpers.common import validate_format
+from tllama.helpers.reasoning_split import detect_reasoning_format
 from tllama.native_config import ResolvedWorkerConfig, build_native_sampling, _plain
 from tllama.native_params import freeze_values
 from tllama.native_tool_input import tool_options, tool_history
@@ -35,15 +36,12 @@ class NativeRequest:
     kind: Literal["chat", "completion"]
     payload: Mapping
     reasoning_format: str = "none"
-    think: bool | str | None = None
 
     def __post_init__(self):
         if self.kind not in {"chat", "completion"}:
             raise ValueError("Native request kind must be chat or completion")
-        if self.reasoning_format not in {"none", "granite", "qwen_like", "gemma_channel", "gpt_oss_channel", "deepseek"}:
-            raise ValueError("Unknown completion reasoning format")
-        if self.think is not None and type(self.think) not in (bool, str):
-            raise ValueError("think must be a boolean, string or None")
+        if self.reasoning_format not in {"none", "granite", "think_prefill", "gemma_channel", "gpt_oss_channel", "think_prefix"}:
+            raise ValueError("Unknown reasoning format")
         if not isinstance(self.payload, Mapping):
             raise ValueError("Native request payload must be an object")
         object.__setattr__(self, "payload", freeze_values(_json_copy(self.payload)))
@@ -144,7 +142,10 @@ def prepare_chat(messages, opts, *, resolved: ResolvedWorkerConfig, metadata_inf
                         "parallel_tool_calls": parallel_tool_calls}.items():
         if value is not None:
             body[name] = value
-    return NativeRequest("chat", body)
+    reasoning_metadata = metadata_info or {}
+    if tools and not resolved.launch.template and reasoning_metadata.get("tool_template"):
+        reasoning_metadata = {**reasoning_metadata, "template": reasoning_metadata["tool_template"]}
+    return NativeRequest("chat", body, detect_reasoning_format(reasoning_metadata))
 
 
 def _ollama_response_format(value):
@@ -196,7 +197,7 @@ def prepare_openai_chat(request, *, resolved: ResolvedWorkerConfig, metadata_inf
 
 
 def prepare_completion(prompt: str, opts, *, resolved: ResolvedWorkerConfig, metadata_info=None,
-                       format_value=None, reasoning_format="none", think=None):
+                       format_value=None, reasoning_format="none"):
     """Accept already-rendered or raw text; do not invent template/FIM policy."""
     if not isinstance(prompt, str):
         raise ValueError("Completion prompt must be a string")
@@ -207,4 +208,4 @@ def prepare_completion(prompt: str, opts, *, resolved: ResolvedWorkerConfig, met
         body["json_schema"] = {"type": "object"}
     elif isinstance(format_value, dict):
         body["json_schema"] = format_value
-    return NativeRequest("completion", body, reasoning_format, think)
+    return NativeRequest("completion", body, reasoning_format)
