@@ -152,6 +152,46 @@ async def test_weight_storage_crosses_worker_http_and_cached_public_ps_during_st
     assert len(manager.test.ledger) == 1
 
 
+@pytest.mark.parametrize('property_name', ['cuda.device_integrated', 'hip.device_integrated',
+                                         'level_zero.device_integrated'])
+async def test_integrated_locality_crosses_worker_http_and_recovers_independently(native_public, weights, monkeypatch, property_name):
+    manager, client, name, _, _, _ = native_public
+    properties = weights['allocation_locality']['allocations'][0]['native_properties']
+    properties[property_name] = 1
+    original = manager._native._factory
+    monkeypatch.setattr(manager._native, '_factory', lambda spec: original(replace(spec, transport='tcp')))
+    _, worker = await loaded(manager, name)
+    worker._memory_task.cancel()
+    await asyncio.gather(worker._memory_task, return_exceptions=True)
+    root = manager.test.roots[0]
+    async with worker.chat_stream({'stub': 'hold'}) as events:
+        await anext(events)
+        before = records(root, 'requests')
+        [initial] = await ps(client)
+        assert initial['memory']['allocation_locality']['allocations'][0]['native_properties'][property_name] == 1
+        assert records(root, 'requests') == before
+        # Invalid properties revoke locality alone, even during inference.
+        properties[property_name] = True
+        weights['snapshot_sequence'] += 1
+        (root/'memory-report').write_text(json.dumps(weights))
+        await worker.refresh_memory()
+        [bad] = await ps(client)
+        assert bad['memory']['allocation_locality']['status'] == 'unavailable'
+        assert bad['memory']['weight_storage_totals']['payload_bytes'] == 190
+        assert (bad['size'], bad['size_vram']) == (510, 478)
+        assert bad['memory']['fallback_reason'] is None
+        properties[property_name] = 0
+        weights['snapshot_sequence'] += 1
+        (root/'memory-report').write_text(json.dumps(weights))
+        await worker.refresh_memory()
+        [recovered] = await ps(client)
+        assert recovered['memory']['allocation_locality']['allocations'][0]['native_properties'][property_name] == 0
+        assert 'extension_errors' not in recovered['memory']
+        assert (recovered['size'], recovered['size_vram']) == (510, 478)
+        assert initial['memory']['allocation_locality']['allocations'][0]['native_properties'][property_name] == 1
+    assert len(manager.test.ledger) == 1
+
+
 async def test_public_ps_does_not_wait_for_a_hung_memory_refresh(native_public):
     manager, client, name, _, _, _ = native_public
     _, worker = await loaded(manager, name)

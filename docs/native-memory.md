@@ -63,6 +63,36 @@ the same display derivation and no longer require weight-assignment GPU bytes
 to equal device-buffer capacity. The client only formats server-provided
 sizes and their ratio; it does not infer placement from a GGUF size or layers.
 
+## Allocation locality: CUDA, HIP and SYCL (0116)
+
+The optional `memory.allocation_locality` section describes native allocation
+objects and their buffer bindings, independently of buffer capacities and
+weight assignment. The reader follows the pinned
+[native allocation contract](https://github.com/ByCzech/llama.cpp/blob/0e9433bfd33d8cdb194285b70c0d421d39135df2/docs/development/tllama-memory-allocations.md).
+Alongside the four Vulkan properties and `level_zero.memory_ordinal`, it retains
+`cuda.device_integrated`, `hip.device_integrated` and
+`level_zero.device_integrated`. These require unsigned integer **0 or 1**;
+JSON booleans are invalid. Absent attributes stay absent, not zero. The Level
+Zero ordinal belongs to the successful direct allocation, not a Vulkan heap;
+ordinary SYCL USM does not imply an ordinal. Unknown native properties remain
+filtered so private handles are not exposed.
+
+Preserve the successful API and its conservative kind/locality. HIP managed
+allocation fallback can report `hipMalloc` with `kind=device`, rather than the
+failed managed attempt. CUDA `cudaMallocHost` can be `host` when page locking is
+unproved; SYCL host USM is `host`, and aligned allocation is `system`. A failed
+host attempt returning a CPU buffer carries no failed GPU allocation record.
+Managed/shared/system kinds and integrated devices do not measure page
+residency. Integrated device buffers do not imply CPU weight offload. No
+allocation span or binding is added to buffer capacity or weight payload totals.
+
+Coverage describes relationship enumeration, so `known` can still have unknown
+attributes. Missing CPU, registration/alias or split exporters leave their own
+coverage incomplete without erasing valid buffers or weights. Invalid recognized
+properties withdraw only locality with `extension_errors`; SIZE/PROCESSOR
+continue to use independent weight evidence. These parser tests do not qualify
+native allocation/free paths or GPU inference; hardware checks remain separate.
+
 ## Occupied weight storage (0114)
 
 The optional V1 `weight_storage` section describes occupied model-weight bytes

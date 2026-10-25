@@ -137,8 +137,18 @@ def _native_properties(value, path):
     obj = _object(value, path)
     names = {"vulkan.memory_type_index", "vulkan.heap_index",
              "vulkan.memory_property_flags", "vulkan.heap_flags", "level_zero.memory_ordinal"}
+    integrated = {"cuda.device_integrated", "hip.device_integrated",
+                  "level_zero.device_integrated"}
     # Never expose unrecognized native handles/tokens. Zero is known evidence.
-    return {key: _unsigned(obj[key], f"{path}.{key}") for key in obj if key in names}
+    result = {}
+    for key in obj:
+        if key in names or key in integrated:
+            item_path = f"{path}.{key}"
+            number = _unsigned(obj[key], item_path)
+            if key in integrated and number > 1:
+                raise MemoryReportError(f"{item_path}: expected unsigned 0 or 1")
+            result[key] = number
+    return result
 
 
 _assignment = _record(status=_status, device_ids=_array(_string),
