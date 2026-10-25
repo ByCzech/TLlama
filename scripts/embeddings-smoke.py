@@ -37,7 +37,7 @@ def require(condition, message):
 
 @dataclass(frozen=True)
 class ProbeLaunchSpec(WorkerLaunchSpec):
-    """Diagnostic mode only; production load configuration stays unchanged."""
+    """Independent native embedding CLI reference for production comparisons."""
 
     pooling: str = 'auto'
 

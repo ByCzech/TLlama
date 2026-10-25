@@ -27,7 +27,7 @@ ENUM_FLAGS = {"split_mode": ("--split-mode", SPLIT_MODES),
               "numa": ("--numa", NUMA_MODES)}
 RUNTIME_OPTION_NAMES = frozenset(VALUE_FLAGS) | frozenset(BOOL_FLAGS) | frozenset(ENUM_FLAGS) | {
     "use_mmap", "use_mlock", "tensor_split", "swa_full", "kv_overrides",
-    "lora_path", "lora_scale", "spm_infill", "verbose",
+    "lora_path", "lora_scale", "spm_infill",
     "spec_type", "draft_n_max",
 }
 MMPROJ_FLAGS = {"image_min_tokens": "--image-min-tokens", "image_max_tokens": "--image-max-tokens",

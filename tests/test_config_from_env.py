@@ -81,22 +81,22 @@ class TestAValueThatWillNotParseIsRefused:
     def test_a_boolean_variable_rejects_a_word_it_does_not_know(self, monkeypatch):
         # "maybe" used to be silently false, which is the same outcome as
         # "off" and reads as if the setting had been honoured.
-        monkeypatch.setenv("TLLAMA_DEBUG", "maybe")
+        monkeypatch.setenv("TLLAMA_APP_RELOAD", "maybe")
 
-        with pytest.raises(ConfigError, match="TLLAMA_DEBUG"):
+        with pytest.raises(ConfigError, match="TLLAMA_APP_RELOAD"):
             app_config()
 
     @pytest.mark.parametrize("value", ["1", "true", "TRUE", "yes", "on"])
     def test_the_accepted_true_spellings_still_work(self, monkeypatch, value):
-        monkeypatch.setenv("TLLAMA_DEBUG", value)
+        monkeypatch.setenv("TLLAMA_APP_RELOAD", value)
 
-        assert app_config().debug is True
+        assert app_config().reload is True
 
     @pytest.mark.parametrize("value", ["0", "false", "no", "OFF"])
     def test_the_accepted_false_spellings_still_work(self, monkeypatch, value):
-        monkeypatch.setenv("TLLAMA_DEBUG", value)
+        monkeypatch.setenv("TLLAMA_APP_RELOAD", value)
 
-        assert app_config().debug is False
+        assert app_config().reload is False
 
     def test_a_host_with_an_unparseable_port_is_refused(self, monkeypatch):
         # This one was the most misleading of the lot: the port failed to

@@ -72,7 +72,6 @@ a shell; paths and serialized values stay individual argv elements.
 | `no_perf` | `--no-perf` / `--perf` | Internal libllama perf; server request wall-clock timings remain separate |
 | `kv_overrides` | Typed CSV `--override-kv` entries | TOML-only; bool/int64/finite float/string |
 | `lora_path`, `lora_scale` | `--lora` / `--lora-scaled` | Resolved inside model store; no new `[lora]` section |
-| `verbose` | Only true accepted; supervisor log policy stays enabled | Diagnostics |
 | `spec_type` | Omitted when unset; `--spec-type none/draft-mtp` when explicit | Load; embedded MTP is opt-in |
 | `draft_n_max` | `--spec-draft-n-max` only with MTP; default 3 when enabled | Load; see [native-mtp.md](native-mtp.md) |
 | `embedding` | `--embeddings` when true; speculation explicitly disabled | Load mode; see [native-embeddings.md](native-embeddings.md) |
@@ -91,7 +90,7 @@ pinned parser and are refused. CSV quotes/commas in other paths/metadata strings
 are escaped. KV override keys/strings must fit the native 127-byte UTF-8 fields.
 TOML round-trip content is retained; resolving does not rewrite supplied files.
 
-## Request mapping and migration errors
+## Request mapping and validation
 
 `build_native_sampling()` applies the existing TLlama precedence and translates
 `mirostat_mode` to `mirostat`, `max_tokens` to `n_predict`, nonpositive top_k to 0,
@@ -111,12 +110,6 @@ prompts are inserted only when the request does not provide its own.
 |---|---|
 | `tfs_z`, even 1.0 | No native tail-free equivalent; no silent emulation |
 | Negative temperature | Native would clamp to greedy; refuse the semantic change |
-| `chat_format`, `chat_handler` | Python handler registry is not native; use `[template]` / `[mmproj]` |
-| `draft_model`, `tokenizer` | Python objects cannot be serialized; embedded MTP uses `spec_type`, external drafts remain unintegrated |
-| `vocab_only` | Metadata reads do not need a worker |
-| `logits_all` | Public logprobs require separate integration |
-| `attention_type` | Pinned server CLI has no override; attention stays the model default |
-| `lora_base` | No equivalent in pinned parser |
 | Unknown names, unsupported KV/enum values, nonfinite values | Explicit configuration/request errors rather than a silent drop/clamp |
 
 `model_path` still comes from `[llm]`. Dedicated context/K/V environment spellings

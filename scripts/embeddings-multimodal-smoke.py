@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Audit native image embeddings before integrating multimodal public APIs."""
+"""Compare independent, managed and public image embedding paths."""
 
 import argparse
 import asyncio
@@ -37,7 +37,7 @@ def require(condition, message):
 
 @dataclass(frozen=True)
 class ProbeLaunchSpec(WorkerLaunchSpec):
-    """Diagnostic-only projector launch; production embedding guards stay intact."""
+    """Independent native CLI reference for the managed embedding launch."""
 
     def command(self, api_key_file, template_file=None, socket_file=None):
         return super().command(api_key_file, template_file, socket_file) + ('--embeddings', '--pooling', 'last')

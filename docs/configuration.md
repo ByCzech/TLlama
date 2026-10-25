@@ -155,12 +155,10 @@ Credentials are never allowed: TLlama has no cookie or session for a browser to 
 
 A request carrying an `Origin` header must send `Content-Type: application/json`; anything else is refused with `415`. Everywhere else TLlama accepts a JSON body whatever the content type says, because `curl -d` with no header sends `application/x-www-form-urlencoded` and the Ollama documentation shows exactly that. Those lenient content types are also the ones that let a browser skip the preflight entirely, so accepting them from a page would put the request beyond the reach of the origin list. `curl` never sends `Origin` and is unaffected; `fetch()` sends it always and should be declaring JSON in any case.
 
-### `TLLAMA_DEBUG` and `TLLAMA_LOG_LEVEL`
+### `TLLAMA_LOG_LEVEL`
 
 `TLLAMA_LOG_LEVEL` selects critical/error/warning/info/debug/trace. The default
-is info. `TLLAMA_DEBUG=true` remains a compatibility alias for debug;
-`TLLAMA_LOG_LEVEL` wins within the environment layer. CLI `--log-level` overrides
-both. Trace enables Uvicorn trace and TLlama debug output.
+is info. CLI `--log-level` overrides the environment. Trace enables Uvicorn trace and TLlama debug output.
 
 Routine outbound HTTP request and transport logs are suppressed below debug.
 Native worker memory polling remains enabled; quieter logging does not change
@@ -251,9 +249,9 @@ retain the first occurrence. CPU helper libraries such as BLAS/BLIS are not
 independent placement choices. See [backend-priority.md](backend-priority.md)
 for matching, failure handling and native fitting limits.
 
-### `TLLAMA_FLASH_ATTENTION`
+### `TLLAMA_RUNTIME_FLASH_ATTN`
 
-An alias for `TLLAMA_RUNTIME_FLASH_ATTN`, kept because it is the spelling Ollama uses. An explicit `TLLAMA_RUNTIME_FLASH_ATTN` overrides it.
+Sets the global `runtime.flash_attn` default. A model definition can override it.
 
 Whether it helps depends on the backend, the model, the quantization and the context length. Two consequences are worth knowing: without flash attention `llama.cpp` ignores a quantized KV cache, so the cache-type variables below have no effect; and a vision model's projector can need dramatically more compute buffer without it.
 

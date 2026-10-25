@@ -8,7 +8,6 @@ There are no client `serve` or `start` commands.
 ```sh
 tllamad                         # foreground server; existing TLLAMA_* environment
 python -m tllama.daemon          # equivalent from a checkout
-python -m tllama.main            # retained explicit ASGI/server module spelling
 tllama --help
 python -m tllama --help          # client from a checkout
 tllama --version                # installed client version; no network access

@@ -101,9 +101,9 @@ unchanged. There is no arbitrary native CLI passthrough.
 Within one layer, a dedicated port wins over a port inside `host`; a host-only
 override retains the lower layer's port. Bracketed IPv6 and the legacy HTTP(S)
 listener spelling work; an HTTP(S) spelling does not enable TLS.
-`TLLAMA_DEBUG=true` is a compatibility alias for global `log_level=debug`;
-`TLLAMA_LOG_LEVEL` wins over that alias. `TLLAMA_FLASH_ATTENTION` remains an
-alias; explicit `TLLAMA_RUNTIME_FLASH_ATTN` wins. A K/V shorthand overrides both
+Use `TLLAMA_LOG_LEVEL` and `TLLAMA_RUNTIME_FLASH_ATTN` for logging and flash
+attention. Unknown nonempty `TLLAMA_*` environment settings stop startup rather
+than being ignored. A K/V shorthand overrides both
 lower-layer sides, then explicit same-layer sides override the shorthand.
 `--print-config` shows those expanded effective sides and their origins.
 

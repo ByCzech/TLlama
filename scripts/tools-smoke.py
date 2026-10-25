@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Capture native Tools before changing public Ollama/OpenAI adapters.
+"""Capture independent native Tools references for public adapter comparisons.
 
 Only the diagnostic supplies deterministic in-memory tool results. No generated
-code is executed. This is not TLlama's future Tools implementation.
+code is executed. Reference assembly stays independent of production Tools.
 """
 
 import argparse

@@ -190,18 +190,7 @@ def load_daemon_config(config_path=None, overrides=None, *, environ=None, discov
         if not raw.strip() and name != 'TLLAMA_BACKEND_PRIORITY':
             continue
         key = ENV_KEYS.get(name)
-        if name == 'TLLAMA_DEBUG':
-            try:
-                debug = _convert('server.reload', raw, text=True)
-            except ConfigError as exc:
-                raise ConfigError(f'{name}: {exc}') from None
-            environment.setdefault('server.log_level', ('debug' if debug else 'info', name))
-            continue
-        if name == 'TLLAMA_FLASH_ATTENTION':
-            key = 'runtime.flash_attn'
-            if env.get('TLLAMA_RUNTIME_FLASH_ATTN', '').strip():
-                continue
-        elif key is None and name.startswith('TLLAMA_RUNTIME_'):
+        if key is None and name.startswith('TLLAMA_RUNTIME_'):
             runtime_name = name[len('TLLAMA_RUNTIME_'):].lower()
             if runtime_name in {'n_ctx', 'type_k', 'type_v', 'type_kv'}:
                 raise ConfigError(f'{name}: use dedicated context/K/V environment variables')
@@ -209,7 +198,7 @@ def load_daemon_config(config_path=None, overrides=None, *, environ=None, discov
         elif key is None and name.startswith('TLLAMA_SAMPLING_'):
             key = 'sampling.' + name[len('TLLAMA_SAMPLING_'):].lower()
         if key is None:
-            continue  # Unrelated client settings and future environment names.
+            raise ConfigError(f'{name}: unknown daemon environment variable')
         environment[key] = (raw, name)
     host_item = environment.pop('server.host', None)
     if host_item:
@@ -274,7 +263,7 @@ def load_daemon_config(config_path=None, overrides=None, *, environ=None, discov
     except ValueError as exc:
         raise ConfigError(str(exc)) from None
     app = AppConfig(host=values['server.host'], port=values['server.port'],
-                    reload=values['server.reload'], debug=values['server.log_level'] in {'debug', 'trace'},
+                    reload=values['server.reload'],
                     log_level=values['server.log_level'])
     return DaemonConfig(app, backend, origins, values, sources, path)
 

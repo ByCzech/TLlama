@@ -79,7 +79,7 @@ def locality_summary(raw, fingerprint, profile):
     """Inspect extension evidence without adding allocation spans to totals.
 
     This diagnostic checks presence and snapshot-local references, not the
-    complete future production adapter's validation/public display policy.
+    complete production adapter's validation/public display policy.
     Unknown fields and nullable ranges remain untouched in raw_native.body.
     """
     report = raw.get("body") or {}

@@ -72,16 +72,22 @@ def test_bad_environment_retains_variable_name(name, value):
         load(environ={name: value})
 
 
-def test_aliases_empty_values_and_cors_keep_existing_semantics():
+@pytest.mark.parametrize('name', ['TLLAMA_DEBUG', 'TLLAMA_FLASH_ATTENTION', 'TLLAMA_LOG_LEVLE'])
+def test_unknown_environment_settings_are_not_silently_ignored(name):
+    with pytest.raises(ConfigError, match=name):
+        load(environ={name: 'true'})
+
+
+def test_empty_values_canonical_settings_and_cors():
     config = load(environ={'TLLAMA_HOST': '[::1]:1234', 'TLLAMA_PORT': '2345',
-                          'TLLAMA_FLASH_ATTENTION': 'false', 'TLLAMA_RUNTIME_FLASH_ATTN': 'true',
-                          'TLLAMA_BACKEND_PRIORITY': '', 'TLLAMA_DEBUG': 'true',
+                          'TLLAMA_RUNTIME_FLASH_ATTN': 'true',
+                          'TLLAMA_BACKEND_PRIORITY': '',
                           'TLLAMA_LOG_LEVEL': 'warning', 'TLLAMA_ORIGINS': 'https://example,,',
                           'TLLAMA_CONTEXT_LENGTH': ' '})
     assert (config.app.host, config.app.port) == ('::1', 2345)
     assert config.backend.runtime_overrides['flash_attn'] is True
     assert config.backend.backend_priority == ()
-    assert config.app.log_level == 'warning' and not config.app.debug
+    assert config.app.log_level == 'warning'
     assert 'https://example' in config.cors_origins and 'http://localhost' in config.cors_origins
     assert config.backend.context_length == 0
 

@@ -248,5 +248,4 @@ class AppConfig:
     host: str = "127.0.0.1"
     port: int = 54800
     reload: bool = False
-    debug: bool = False
     log_level: str = "info"

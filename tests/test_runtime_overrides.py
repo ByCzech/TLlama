@@ -104,24 +104,6 @@ class TestCollectionFromTheEnvironment:
 
         assert load_daemon_config(False, discover=False).backend.runtime_overrides == {"n_threads": 8}
 
-    def test_flash_attention_is_kept_as_an_alias(self, monkeypatch):
-        monkeypatch.delenv("TLLAMA_RUNTIME_FLASH_ATTN", raising=False)
-        monkeypatch.setenv("TLLAMA_FLASH_ATTENTION", "1")
-
-        config = load_daemon_config(False, discover=False).backend
-
-        assert config.runtime_overrides == {"flash_attn": True}
-        assert coerce_runtime_overrides(config.runtime_overrides) == {
-            "flash_attn": True
-        }
-
-    def test_the_explicit_spelling_beats_the_alias(self, monkeypatch):
-        monkeypatch.setenv("TLLAMA_FLASH_ATTENTION", "1")
-        monkeypatch.setenv("TLLAMA_RUNTIME_FLASH_ATTN", "0")
-
-        assert load_daemon_config(False, discover=False).backend.runtime_overrides == {"flash_attn": False}
-
-
 class TestLayering:
 
 

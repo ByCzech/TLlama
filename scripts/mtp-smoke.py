@@ -93,7 +93,7 @@ def require(condition, message):
 
 @dataclass(frozen=True)
 class ProbeLaunchSpec(WorkerLaunchSpec):
-    """Diagnostic-only CLI extension, deliberately outside production config."""
+    """Independent MTP CLI reference for production configuration checks."""
     speculation: str = 'none'
     draft_tokens: int = 3
 
