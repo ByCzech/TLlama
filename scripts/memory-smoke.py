@@ -2,7 +2,7 @@
 """Collect memory API/log evidence for one explicit 08c hardware profile.
 
 Uses physical GGUF paths and a private worker, independently of model TOML.
-See memory-smoke-08c.md for the four initial runs and result interpretation.
+See memory-smoke-08c.md and docs/runtime-qualification-070.md for profiles.
 """
 
 import argparse
@@ -151,7 +151,7 @@ def weight_summary(report):
     return result
 
 
-def summarize(telemetry, profile):
+def summarize(telemetry, profile, *, require_weights=False):
     memory = public_memory(telemetry)
     native = (telemetry.get("comparison") or {}).get("native")
     log = ((telemetry.get("comparison") or {}).get("log") or {}).get("report") or {}
@@ -161,10 +161,18 @@ def summarize(telemetry, profile):
               "log": {key: log.get(key) for key in
                       ("status", "reason", "allocated_bytes", "host_bytes", "device_bytes")},
               "checks": {"native_inventory_known": False}}
+    if require_weights:
+        result["checks"].update(weight_storage_known=False, weight_assignment_classified=False)
     if native is None:
         return result
     report, totals = native["report"], native["totals"]
     result["weight_storage"] = weight_summary(report)
+    if require_weights:
+        evidence = result["weight_storage"]
+        result["checks"]["weight_storage_known"] = evidence.get("status") == "known"
+        result["checks"]["weight_assignment_classified"] = all(
+            evidence.get("totals", {}).get(key) is not None
+            for key in ("payload_bytes", "cpu_bytes", "accelerator_bytes"))
     groups = report["placement"]["layer_groups"]
     buffers = report["buffers"]
     weights = [b for b in buffers if any(o["component"] == "model_weights" for o in b["owners"])]
@@ -186,6 +194,11 @@ def summarize(telemetry, profile):
         noninput = [g for g in groups if g["component"] != "input_weights"]
         checks["cpu_layers"] = any(g["location"] in ("cpu", "mixed") for g in noninput)
         checks["accelerator_layers"] = any(g["location"] in ("accelerator", "mixed") for g in noninput)
+    if profile == "full":
+        # All layers are requested; actual mixed placement is evidence to inspect,
+        # not something to conceal or reject merely to obtain a 100% GPU label.
+        checks["accelerator_weights"] = any(g["component"] != "input_weights"
+            and g["location"] in ("accelerator", "mixed") for g in groups)
     if profile in ("vision", "no-mmap"):
         noninput = [g for g in groups if g["component"] != "input_weights"]
         checks["accelerator_weights"] = bool(noninput) and all(g["location"] == "accelerator" for g in noninput)
@@ -216,7 +229,7 @@ async def exercise(args, spec, emit):
         raw = await raw_memory(worker)
         await worker.refresh_memory()
         telemetry = worker.memory_snapshot()
-        summary = summarize(telemetry, args.profile)
+        summary = summarize(telemetry, args.profile, require_weights=args.weight_storage)
         if args.memory_tensor_diagnostics:
             selected = (telemetry.get("measurement") or {}).get("report") or {}
             diagnostics = selected.get("weight_storage", {}).get("tensor_diagnostics")
@@ -280,7 +293,7 @@ async def exercise(args, spec, emit):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--profile", choices=("cpu", "partial", "vision", "no-mmap"), required=True)
+    parser.add_argument("--profile", choices=("cpu", "partial", "full", "vision", "no-mmap"), required=True)
     parser.add_argument("--model", type=Path, required=True, help="Physical GGUF path, not a registered model name")
     parser.add_argument("--mmproj", type=Path)
     parser.add_argument("--output", type=Path, required=True, help="New directory; existing directories are refused")
@@ -293,6 +306,7 @@ def main(argv=None):
     parser.add_argument("--executable", type=Path)
     parser.add_argument("--expected-fingerprint", help="Pin this diagnostic worker to an exact build; no global policy change")
     parser.add_argument("--locality", action="store_true", help="Check the optional assignment/locality extension in raw endpoint replies")
+    parser.add_argument("--weight-storage", action="store_true", help="Require known weight payload and classified assignment for this capture")
     parser.add_argument("--memory-tensor-diagnostics", type=int, default=0, metavar="N",
                         help="Collect up to N tensor-role records (0..4096; default: disabled)")
     parser.add_argument("--load-timeout", type=float, default=600)

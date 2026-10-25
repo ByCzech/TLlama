@@ -119,7 +119,7 @@ def test_version_parser_uses_explicit_build_and_commit_not_diagnostic_noise():
     assert runtime_fingerprint(VERSION, VERSION) is None
 
 
-def stub(path, mode='normal'):
+def stub(path, mode='normal', version=VERSION):
     source = f'''#!{sys.executable}
 import os,sys,time,signal,json
 from pathlib import Path
@@ -141,7 +141,7 @@ if mode=='pipe-child':
         time.sleep(30)
     sys.exit(0)
 if '--version' in sys.argv:
-    os.write(2,{VERSION!r} if mode!='wrong-build' else b'version: 0.6.0 (build 1, commit abc)\\n')
+    os.write(2,{version!r} if mode!='wrong-build' else b'version: 0.6.0 (build 1, commit abc)\\n')
 else:
     if mode=='exit':sys.exit(19)
     os.write(1,{TABLE!r} if mode!='drift' else b'Changed table\\n')
@@ -219,7 +219,40 @@ def test_cli_captures_without_models_listener_or_registered_file_writes(tmp_path
     assert 'secret' not in run.stdout
 
 
+@pytest.mark.parametrize('mode,expected,ok', [('normal', None, False),
+    ('normal', 'b11850-0e9433bfd3', True), ('normal', 'b11850-deadbeef', False),
+    ('drift', 'b11850-0e9433bfd3', False)])
+def test_candidate_capture_requires_exact_opt_in_and_never_claims_audit(tmp_path, mode, expected, ok):
+    version = b'version: 0.7.0 (build 11850, commit 0e9433bfd3)\nbuilt for Linux\n'
+    exe = stub(tmp_path/'native', mode, version=version)
+    root = tmp_path/'pci'
+    pci(root)
+    output = tmp_path/'capture'
+    command = [sys.executable,str(SCRIPT),'--executable',str(exe),'--pci-root',str(root),
+               '--output',str(output)]
+    if expected is not None:
+        command += ['--expected-fingerprint',expected]
+    calls = tmp_path/'calls'
+    run = subprocess.run(command, capture_output=True, text=True, timeout=8,
+        env={**os.environ,'CAPTURE':str(calls),'PYTHONPATH':str(SCRIPT.parents[1]/'src')})
+    report = json.loads(run.stdout)
+    assert run.returncode == int(not ok), run.stderr
+    assert report['protocol_ok'] is ok
+    assert report['runtime_fingerprint'] == 'b11850-0e9433bfd3'
+    assert report['audited_runtime'] == 'b11552-3144c167ef'
+    assert report['expected_runtime'] == (expected or report['audited_runtime'])
+    assert report['runtime_audited'] is False and report['review_required'] is True
+    assert report['models_loaded'] is report['listener_started'] is False
+    assert (output/'version.stderr').read_bytes() == version
+    assert not report['placement_ready']
+    probes = [json.loads(line)['argv'] for line in calls.read_text().splitlines()]
+    assert len(probes) == (2 if expected == 'b11850-0e9433bfd3' else 1)
+    if len(probes) == 2:
+        assert (output/'devices.stdout').read_bytes() == (TABLE if mode == 'normal' else b'Changed table\n')
+
+
 @pytest.mark.parametrize('arguments', [['--timeout', 'nan'], ['--output-limit', '0'],
+    ['--expected-fingerprint', ''], ['--expected-fingerprint', 'new-runtime'],
     ['--env', 'LLAMA_ARG_MODEL=x'], ['--env', 'CUDA_VISIBLE_DEVICES=1', '--env', 'CUDA_VISIBLE_DEVICES=2']])
 def test_invalid_cli_does_not_create_output_or_spawn(tmp_path, arguments):
     output = tmp_path / 'result'

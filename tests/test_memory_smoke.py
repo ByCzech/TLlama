@@ -87,7 +87,7 @@ def test_tensor_capture_preserves_raw_and_separate_summary(tmp_path, diagnosed, 
     output = tmp_path/'output'
     code = smoke.main(['--profile','cpu','--model',str(model),'--executable',str(executable),
         '--output',str(output),'--expected-fingerprint',diagnosed['runtime_fingerprint'],
-        '--memory-tensor-diagnostics','4096'])
+        '--memory-tensor-diagnostics','4096','--weight-storage'])
     assert code == int(invalid), capsys.readouterr()
     raw = [json.loads(line) for line in (output/'raw.jsonl').read_text().splitlines()]
     concise = [json.loads(line) for line in (output/'summary.jsonl').read_text().splitlines()]
@@ -99,6 +99,8 @@ def test_tensor_capture_preserves_raw_and_separate_summary(tmp_path, diagnosed, 
         assert summary['totals']['payload_bytes'] == 190
         assert summary['tensor_diagnostics']['status'] == ('unavailable' if invalid else 'partial')
         assert record['summary']['checks']['tensor_diagnostics_adapter_valid'] is (not invalid)
+        assert record['summary']['checks']['weight_storage_known'] is True
+        assert record['summary']['checks']['weight_assignment_classified'] is True
     assert not any('raw_native' in r or 'telemetry' in r for r in concise)
     argv = raw[0]['argv']
     assert argv[argv.index('--memory-tensor-diagnostics')+1] == '4096'
@@ -107,6 +109,7 @@ def test_tensor_capture_preserves_raw_and_separate_summary(tmp_path, diagnosed, 
 
 @pytest.mark.parametrize("profile,layers,load_mode", [
     ("cpu", "0", "mmap"), ("partial", "20", "mmap"),
+    ("full", "all", "mmap"),
     ("vision", "all", "mmap"), ("no-mmap", "all", "none"),
 ])
 def test_profiles_are_explicit_and_dry_run_writes_nothing(tmp_path, capsys, monkeypatch, profile, layers, load_mode):
@@ -128,6 +131,46 @@ def test_profiles_are_explicit_and_dry_run_writes_nothing(tmp_path, capsys, monk
     assert ("--no-kv-offload" in command) == (profile == "cpu")
     assert ("--no-op-offload" in command) == (profile == "cpu")
     assert not output.exists()
+
+
+def test_full_profile_retains_real_cpu_weights_instead_of_asserting_full_gpu(diagnosed):
+    from tllama.native_memory_api import NativeMemoryReport
+    from tllama.native_telemetry import MemoryTelemetry
+    from test_native_memory import observe
+    for group in diagnosed['placement']['layer_groups']:
+        if group['component'] == 'repeating_layers':
+            group.update(location='accelerator', device_ids=['gpu0'])
+    telemetry = MemoryTelemetry(observe(''), compare=True)
+    telemetry.accept(NativeMemoryReport(diagnosed))
+    summary = smoke.summarize(telemetry.snapshot(), 'full')
+    assert summary['checks']['accelerator_weights'] is True
+    assert summary['display']['size'] == 510 and summary['display']['size_vram'] == 478
+
+
+@pytest.mark.parametrize('state,known,classified', [('known',True,True), ('absent',False,False),
+    ('partial',False,False), ('invalid',False,False), ('unknown_device',True,False), ('http_failure',False,False)])
+def test_requested_weight_qualification_requires_payload_and_assignment(weights, state, known, classified):
+    from tllama.native_memory_api import NativeMemoryReport
+    from tllama.native_telemetry import MemoryTelemetry
+    from test_native_memory import observe
+    if state == 'absent':
+        del weights['weight_storage']
+    elif state == 'partial':
+        weights['weight_storage'].update(status='partial', missing_components=[dict(
+            owner_id='model', component='other_weights', layer_index=None, reason='unsupported')])
+    elif state == 'invalid':
+        weights['weight_storage']['intervals'][0]['buffer_id'] = 'missing'
+    elif state == 'unknown_device':
+        weights['devices'][1]['type'] = 'unknown'
+    telemetry = MemoryTelemetry(observe(''), compare=True)
+    if state == 'http_failure':
+        telemetry.fail('authentication_failed', http_status=401)
+    else:
+        telemetry.accept(NativeMemoryReport(weights))
+    checks = smoke.summarize(telemetry.snapshot(), 'full', require_weights=True)['checks']
+    assert checks['weight_storage_known'] is known
+    assert checks['weight_assignment_classified'] is classified
+    assert 'weight_storage_known' not in smoke.summarize(telemetry.snapshot(), 'full')['checks']
 
 
 @pytest.mark.parametrize("profile,status,locality", [

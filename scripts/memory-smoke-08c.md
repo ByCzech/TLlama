@@ -2,6 +2,13 @@
 
 Working test instructions; final user documentation remains deferred.
 
+For candidate 0.7.0 captures, start with
+[runtime-qualification-070.md](../docs/runtime-qualification-070.md). The original
+0.6.0 commands below remain an explicit historical baseline. The added `full`
+profile requests all GPU layers with mmap and no projector. `--weight-storage`
+requires known payload/assignment evidence for a qualification run; defaults
+remain compatible with older V1 captures.
+
 Updated for native commit `3144c167ef703e93cee0b58d7236b6a28c6e50ad`
 (package `0.6.0~dev+b11552.3-1`). The complete contract remains native
 `tools/server/tllama-memory-v1.md`, installed under
