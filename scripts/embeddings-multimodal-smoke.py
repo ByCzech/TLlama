@@ -19,7 +19,7 @@ import zlib
 import tomlkit
 
 from tllama.backend import ModelManager
-from tllama.config import load_backend_config_from_env
+from tllama.daemon_config import load_daemon_config
 from tllama.embedding_contract import embedding_contract
 from tllama.native_config import _plain
 from tllama.worker import NativeWorker, WorkerError, WorkerRequestError
@@ -180,7 +180,7 @@ async def exercise(args, emit):
          public_api='requested' if args.public else 'not_exercised', mode='native_multimodal_embeddings', pooling='last',
          prompt_policy='literal_content_no_implicit_template_or_instruction',
          native_cancellation='early_compute_stop_not_proven')
-    config = load_backend_config_from_env()
+    config = load_daemon_config(False, discover=False).backend
     if args.models_dir:
         config = replace(config, models_dir=str(args.models_dir.expanduser().resolve()))
     workers, notes, ok = [], [], True

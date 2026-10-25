@@ -13,7 +13,7 @@ import httpx
 import uvicorn
 
 from tllama.backend import ModelManager
-from tllama.config import load_backend_config_from_env
+from tllama.daemon_config import load_daemon_config
 from tllama.native_memory import buffer_location
 from tllama.worker import WorkerError
 
@@ -46,7 +46,7 @@ def public_mtp_stats(payload):
 async def exercise(args):
     from tllama import main
     from tllama.routers import ollama, openai
-    config = load_backend_config_from_env()
+    config = load_daemon_config(False, discover=False).backend
     if args.models_dir:
         config = replace(config, models_dir=str(args.models_dir.expanduser().resolve()))
     def pinned_runtime(values):

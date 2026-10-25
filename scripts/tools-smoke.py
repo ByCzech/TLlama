@@ -16,7 +16,7 @@ import signal
 import time
 
 from tllama.backend import ModelManager
-from tllama.config import load_backend_config_from_env
+from tllama.daemon_config import load_daemon_config
 from tllama.worker import NativeWorker, WorkerError, WorkerRequestError
 
 
@@ -291,7 +291,7 @@ async def exercise_worker(worker, args, emit):
 
 
 async def exercise(args, emit):
-    config = load_backend_config_from_env()
+    config = load_daemon_config(False, discover=False).backend
     if args.models_dir:
         config = replace(config,models_dir=str(args.models_dir.expanduser().resolve()))
     all_ok, all_review = True, []

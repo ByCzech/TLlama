@@ -11,10 +11,7 @@ import socket
 
 import pytest
 
-from tllama.config import (
-    ConfigError,
-    load_backend_config_from_env,
-)
+from tllama.config import ConfigError
 
 
 from tllama.daemon_config import load_daemon_config
@@ -40,7 +37,7 @@ class TestUnsetAndEmptyStillMeanDefault:
         ):
             monkeypatch.delenv(name, raising=False)
 
-        config = load_backend_config_from_env()
+        config = load_daemon_config(False, discover=False).backend
 
         assert config.context_length == 0
         assert config.max_loaded_models == 1
@@ -56,7 +53,7 @@ class TestUnsetAndEmptyStillMeanDefault:
         monkeypatch.setenv("TLLAMA_CONTEXT_LENGTH", "")
         monkeypatch.setenv("TLLAMA_RUNTIME_N_THREADS", "   ")
 
-        config = load_backend_config_from_env()
+        config = load_daemon_config(False, discover=False).backend
 
         assert config.context_length == 0
         assert config.runtime_overrides == {}
@@ -67,7 +64,7 @@ class TestAValueThatWillNotParseIsRefused:
         monkeypatch.setenv("TLLAMA_CONTEXT_LENGTH", "8k")
 
         with pytest.raises(ConfigError) as excinfo:
-            load_backend_config_from_env()
+            load_daemon_config(False, discover=False).backend
 
         # The message has to carry the variable name: an operator reading
         # it in a journal has no other way to tell which of a dozen
@@ -79,7 +76,7 @@ class TestAValueThatWillNotParseIsRefused:
         monkeypatch.setenv("TLLAMA_JANITOR_INTERVAL", "often")
 
         with pytest.raises(ConfigError, match="TLLAMA_JANITOR_INTERVAL"):
-            load_backend_config_from_env()
+            load_daemon_config(False, discover=False).backend
 
     def test_a_boolean_variable_rejects_a_word_it_does_not_know(self, monkeypatch):
         # "maybe" used to be silently false, which is the same outcome as

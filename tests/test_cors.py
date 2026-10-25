@@ -8,7 +8,8 @@ is exactly the step that could be wrong while the arguments look right.
 
 import pytest
 
-from tllama.config import BUILTIN_CORS_ORIGINS, ConfigError, resolve_cors_origins
+from tllama.config import BUILTIN_CORS_ORIGINS, ConfigError
+from tllama.daemon_config import load_daemon_config
 from tllama.helpers.cors import split_origin_patterns
 
 
@@ -123,7 +124,7 @@ class TestConfiguredOrigins:
     def test_a_configured_origin_is_added_to_the_built_in_ones(self, monkeypatch):
         monkeypatch.setenv("TLLAMA_ORIGINS", "https://ui.example")
 
-        origins = resolve_cors_origins()
+        origins = load_daemon_config(False, discover=False).cors_origins
 
         assert "https://ui.example" in origins
         for builtin in BUILTIN_CORS_ORIGINS:
@@ -132,24 +133,24 @@ class TestConfiguredOrigins:
     def test_several_are_split_on_commas(self, monkeypatch):
         monkeypatch.setenv("TLLAMA_ORIGINS", "https://a.example, https://b.example")
 
-        origins = resolve_cors_origins()
+        origins = load_daemon_config(False, discover=False).cors_origins
 
         assert {"https://a.example", "https://b.example"} <= set(origins)
 
     def test_empty_entries_are_formatting_not_a_mistake(self, monkeypatch):
         monkeypatch.setenv("TLLAMA_ORIGINS", "https://a.example,,")
 
-        assert "https://a.example" in resolve_cors_origins()
+        assert "https://a.example" in load_daemon_config(False, discover=False).cors_origins
 
     def test_nothing_configured_leaves_the_built_in_list(self, monkeypatch):
         monkeypatch.delenv("TLLAMA_ORIGINS", raising=False)
 
-        assert resolve_cors_origins() == BUILTIN_CORS_ORIGINS
+        assert load_daemon_config(False, discover=False).cors_origins == BUILTIN_CORS_ORIGINS
 
     def test_a_repeated_origin_is_listed_once(self, monkeypatch):
         monkeypatch.setenv("TLLAMA_ORIGINS", "http://localhost")
 
-        origins = resolve_cors_origins()
+        origins = load_daemon_config(False, discover=False).cors_origins
 
         assert origins.count("http://localhost") == 1
 
@@ -167,7 +168,7 @@ class TestConfiguredOrigins:
         monkeypatch.setenv("TLLAMA_ORIGINS", value)
 
         with pytest.raises(ConfigError) as raised:
-            resolve_cors_origins()
+            load_daemon_config(False, discover=False).cors_origins
 
         # Naming the variable is the point: guessing it from the text of
         # somebody else's exception does not work.

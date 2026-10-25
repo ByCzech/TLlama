@@ -249,7 +249,9 @@ def test_supplied_profiles_work_through_the_preview_entry_point(tmp_path, filena
     repo = Path(__file__).resolve().parents[1]
     profile = repo / "tests" / "fixtures" / "native-config" / filename
     env = {name: value for name, value in os.environ.items() if not name.startswith("TLLAMA_")}
-    env.update(PYTHONPATH=str(repo / "src"), TLLAMA_RUNTIME_DEVICE="Vulkan0")
+    # An explicit environment-only preview must not discover a daemon TOML.
+    env.update(PYTHONPATH=str(repo / "src"), TLLAMA_RUNTIME_DEVICE="Vulkan0",
+               TLLAMA_CONFIG=str(tmp_path / "missing-server.toml"))
     result = subprocess.run([sys.executable, str(repo / "scripts" / "worker-config.py"),
                              "--toml", str(profile), "--models-dir", str(tmp_path)],
                             env=env, capture_output=True, text=True, check=True)

@@ -3,7 +3,8 @@
 import pytest
 
 
-from tllama.config import ConfigError, load_backend_config_from_env
+from tllama.config import ConfigError
+from tllama.daemon_config import load_daemon_config
 from tllama.helpers.model_toml import parse_model_toml
 from tllama.helpers.runtime_params import (
     coerce_runtime_overrides,
@@ -55,7 +56,7 @@ class TestWhatIsSettable:
 
 class TestTypesComeFromTheAnnotation:
     def test_an_int_parameter_arrives_as_an_int(self):
-        assert coerce_runtime_overrides({"n_threads": "8"}) == {"n_threads": 8}
+        assert coerce_runtime_overrides({"n_threads": 8}) == {"n_threads": 8}
 
     def test_a_float_parameter_arrives_as_a_float(self):
         coerced = coerce_runtime_overrides({"rope_freq_base": "10000"})
@@ -101,15 +102,15 @@ class TestCollectionFromTheEnvironment:
     def test_a_prefixed_variable_becomes_a_parameter(self, monkeypatch):
         monkeypatch.setenv("TLLAMA_RUNTIME_N_THREADS", "8")
 
-        assert load_backend_config_from_env().runtime_overrides == {"n_threads": "8"}
+        assert load_daemon_config(False, discover=False).backend.runtime_overrides == {"n_threads": 8}
 
     def test_flash_attention_is_kept_as_an_alias(self, monkeypatch):
         monkeypatch.delenv("TLLAMA_RUNTIME_FLASH_ATTN", raising=False)
         monkeypatch.setenv("TLLAMA_FLASH_ATTENTION", "1")
 
-        config = load_backend_config_from_env()
+        config = load_daemon_config(False, discover=False).backend
 
-        assert config.runtime_overrides == {"flash_attn": "1"}
+        assert config.runtime_overrides == {"flash_attn": True}
         assert coerce_runtime_overrides(config.runtime_overrides) == {
             "flash_attn": True
         }
@@ -118,7 +119,7 @@ class TestCollectionFromTheEnvironment:
         monkeypatch.setenv("TLLAMA_FLASH_ATTENTION", "1")
         monkeypatch.setenv("TLLAMA_RUNTIME_FLASH_ATTN", "0")
 
-        assert load_backend_config_from_env().runtime_overrides == {"flash_attn": "0"}
+        assert load_daemon_config(False, discover=False).backend.runtime_overrides == {"flash_attn": False}
 
 
 class TestLayering:

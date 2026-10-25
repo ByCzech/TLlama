@@ -21,7 +21,7 @@ import uvicorn
 from starlette.requests import ClientDisconnect
 
 from tllama.backend import ModelManager
-from tllama.config import load_backend_config_from_env
+from tllama.daemon_config import load_daemon_config
 from tllama.native_config import _plain
 from tllama.worker import NativeWorker, WorkerError, WorkerRequestError
 
@@ -370,7 +370,7 @@ async def phase(args, config, model, definition, item, controls, emit, notes, *,
 
 
 async def exercise_model(args, model, emit):
-    config = load_backend_config_from_env()
+    config = load_daemon_config(False, discover=False).backend
     if args.models_dir:
         config = replace(config, models_dir=str(args.models_dir.expanduser().resolve()))
     source = ModelManager(config)

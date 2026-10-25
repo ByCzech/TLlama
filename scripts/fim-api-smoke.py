@@ -16,7 +16,7 @@ import httpx
 import uvicorn
 
 from tllama.backend import ModelManager
-from tllama.config import load_backend_config_from_env
+from tllama.daemon_config import load_daemon_config
 from tllama.native_config import build_native_sampling
 from tllama.native_routes import lease_metadata
 from tllama.worker import WorkerError
@@ -55,7 +55,7 @@ def emit(stage, **values):
 async def exercise(args):
     from tllama import main
     from tllama.routers import ollama, openai
-    config = load_backend_config_from_env()
+    config = load_daemon_config(False, discover=False).backend
     if args.models_dir:
         config = replace(config, models_dir=str(args.models_dir.expanduser().resolve()))
     manager = ModelManager(config, native_launch_options={

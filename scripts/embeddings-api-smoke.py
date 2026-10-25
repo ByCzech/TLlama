@@ -24,7 +24,7 @@ import uvicorn
 from starlette.requests import ClientDisconnect
 
 from tllama.backend import ModelManager
-from tllama.config import load_backend_config_from_env
+from tllama.daemon_config import load_daemon_config
 from tllama.native_config import _plain
 from tllama.worker import NativeWorker, WorkerError, WorkerRequestError
 
@@ -369,7 +369,7 @@ async def cancel_public_request(audit, address, manager, path, body):
 async def exercise_model(args, model, profile, sdks, emit):
     from tllama import main
     from tllama.routers import ollama, openai
-    config = load_backend_config_from_env()
+    config = load_daemon_config(False, discover=False).backend
     if args.models_dir:
         config = replace(config, models_dir=str(args.models_dir.expanduser().resolve()))
     source = ModelManager(config)

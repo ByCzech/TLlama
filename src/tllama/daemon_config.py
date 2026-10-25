@@ -222,7 +222,7 @@ def load_daemon_config(config_path=None, overrides=None, *, environ=None, discov
     layer(overrides, 'CLI', text=True)
 
     def invalid(key, message):
-        raise ConfigError(f'{sources[key]} ({key}): {message}')
+        raise ConfigError(f'{sources[key]} ({key}): {message}; got {values[key]!r}')
 
     for key, minimum, inclusive in [('server.port', 1, True), ('runtime.n_ctx', 0, True),
                                    ('lifecycle.max_loaded_models', 1, True),

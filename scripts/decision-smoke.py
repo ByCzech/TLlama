@@ -16,7 +16,7 @@ import time
 import gguf
 
 from tllama.backend import ModelManager
-from tllama.config import load_backend_config_from_env
+from tllama.daemon_config import load_daemon_config
 from tllama.helpers.gguf_metadata import _field_to_python_value
 from tllama.helpers.model_toml import resolve_repo_relative_path
 from tllama.native_config import _plain
@@ -235,7 +235,7 @@ async def exercise(args, emit):
          mode='native_decision_reference', public_api='not_exercised',
          prompt_policy='embedded_systemone_template_native_head_and_calibration',
          semantic_quality='observations_only', native_early_compute_stop='unknown')
-    config = load_backend_config_from_env()
+    config = load_daemon_config(False, discover=False).backend
     if args.models_dir:
         config = replace(config, models_dir=str(args.models_dir.expanduser().resolve()))
     workers, notes, inventory_rows, originals = [], [], {}, {}

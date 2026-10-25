@@ -4,7 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from tllama.config import BackendConfig, ConfigError, load_backend_config_from_env
+from tllama.config import BackendConfig, ConfigError
+from tllama.daemon_config import load_daemon_config
 from tllama.helpers.model_toml import parse_model_toml, TomlModelError
 from tllama.native_config import resolve_worker_config
 from tllama.worker import WorkerError
@@ -71,11 +72,11 @@ def test_environment_uses_the_same_config_contract(monkeypatch):
     monkeypatch.setenv('TLLAMA_RUNTIME_DEVICE', 'none')
     monkeypatch.setenv('TLLAMA_RUNTIME_SPEC_TYPE', 'draft-mtp')
     monkeypatch.setenv('TLLAMA_RUNTIME_DRAFT_N_MAX', '4')
-    resolved = resolve_worker_config(load_backend_config_from_env(), Path('/models/m.gguf'))
+    resolved = resolve_worker_config(load_daemon_config(False, discover=False).backend, Path('/models/m.gguf'))
     assert option(command(resolved), '--spec-draft-n-max') == '4'
     monkeypatch.setenv('TLLAMA_RUNTIME_DRAFT_N_MAX', '-1')
     with pytest.raises(ConfigError, match='draft_n_max'):
-        resolve_worker_config(load_backend_config_from_env(), Path('/models/m.gguf'))
+        resolve_worker_config(load_daemon_config(False, discover=False).backend, Path('/models/m.gguf'))
 
 
 async def test_changes_retire_the_old_configuration_without_mutating_a_live_lease(native_manager):

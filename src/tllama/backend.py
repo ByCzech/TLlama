@@ -12,7 +12,8 @@ from hashlib import sha256
 
 from typing import Dict, Optional, Any, List, Mapping
 
-from tllama.config import BackendConfig, ConfigError, load_backend_config_from_env
+from tllama.config import BackendConfig, ConfigError
+from tllama.daemon_config import current_daemon_config, load_daemon_config
 from tllama.helpers.common import normalize_keep_alive
 from tllama.helpers.gguf_metadata import read_gguf_metadata, build_model_metadata_payload
 from tllama.helpers.model_toml import (
@@ -37,7 +38,7 @@ from tllama.helpers.metadata_cache import (
     save_digest_cache,
 )
 
-__all__ = ('model_manager', 'load_backend_config_from_env')
+__all__ = ('model_manager',)
 
 logger = logging.getLogger(__name__)
 
@@ -157,7 +158,7 @@ class CachedMetadataEntry:
 class ModelManager:
     def __init__(self, config: BackendConfig | None = None, *, native_worker_factory=NativeWorker,
                  native_launch_options: Mapping[str, Any] | None = None):
-        self.config = config or load_backend_config_from_env()
+        self.config = config or load_daemon_config(False, discover=False).backend
 
         self._metadata_lock = asyncio.Lock()
 
@@ -1788,8 +1789,6 @@ class ModelManager:
         if file_path.is_relative_to(self.tllama_models_dir):
             return self.tllama_models_dir
         raise ValueError(f"File path is outside known model repositories: {file_path}")
-
-from tllama.daemon_config import current_daemon_config
 
 model_manager = ModelManager(current_daemon_config().backend)
 

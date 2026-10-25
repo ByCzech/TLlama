@@ -14,14 +14,14 @@ from pathlib import Path
 import runpy
 import signal
 
-from tllama.config import load_backend_config_from_env
+from tllama.daemon_config import load_daemon_config
 from tllama.native_reporting import ollama_memory_sizes, public_memory
 from tllama.worker import NativeWorker, WorkerError, WorkerRequestError
 from tllama.worker_config import RUNTIME_FINGERPRINT, WorkerLaunchSpec
 
 
 def launch_spec(args):
-    config = load_backend_config_from_env()
+    config = load_daemon_config(False, discover=False).backend
     cpu = args.profile == "cpu"
     vision = args.profile == "vision"
     if vision != (args.mmproj is not None):
