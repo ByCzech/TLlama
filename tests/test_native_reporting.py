@@ -28,6 +28,11 @@ async def test_ps_reports_native_allocations_and_effective_context_without_extra
     generation = await manager.preload_native_model(name, keep_alive=-1)
     worker = manager.test.ledger[0]
     await wait_until(lambda: worker.memory.snapshot()['status'] == 'known')
+    # Log readiness does not mean the independent HTTP sampler has settled.
+    # Finish its first observation, then isolate reads of the cached report.
+    await wait_until(lambda: worker.memory_snapshot()['native']['reason'] != 'not_observed')
+    worker._memory_task.cancel()
+    await asyncio.gather(worker._memory_task, return_exceptions=True)
     before = records(manager.test.roots[0], 'requests')
     for _ in range(3):
         [model] = await ps(client)
