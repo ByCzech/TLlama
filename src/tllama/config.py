@@ -474,19 +474,3 @@ def load_backend_config_from_env() -> BackendConfig:
         memory_source=_env_str("TLLAMA_MEMORY_SOURCE", "auto").strip().lower(),
         memory_compare=_env_bool("TLLAMA_MEMORY_COMPARE", False),
     )
-
-
-def load_app_config_from_env() -> AppConfig:
-    host, port = _parse_host_port(
-        "TLLAMA_HOST",
-        _env_str("TLLAMA_HOST", "127.0.0.1:54800"),
-        default_host="127.0.0.1",
-        default_port=54800,
-    )
-
-    return AppConfig(
-        host=host,
-        port=port,
-        reload=_env_bool("TLLAMA_APP_RELOAD", False),
-        debug=_env_bool("TLLAMA_DEBUG", False),
-    )

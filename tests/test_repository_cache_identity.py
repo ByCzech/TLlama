@@ -13,10 +13,10 @@ from tllama.helpers import metadata_cache as cache
 def entry(request):
     if request.param == 'metadata':
         return (cache.save_metadata_cache, cache.load_metadata_cache,
-                cache.get_metadata_cache_path, cache.delete_metadata_cache,
+                cache.get_metadata_cache_path,
                 '.json', {'arch': 'qwen3'})
     return (cache.save_digest_cache, cache.load_digest_cache,
-            cache.get_digest_cache_path, cache.delete_digest_cache,
+            cache.get_digest_cache_path,
             '.digest.json',
             {'content_sha256': 'a' * 64, 'source': 'local'})
 
@@ -31,7 +31,7 @@ def store(root):
 
 
 def test_distinct_roots_reuse_one_shared_entry(tmp_path, entry):
-    save, load, path_for, _, suffix, payload = entry
+    save, load, path_for, suffix, payload = entry
     directory, weights = store(tmp_path / 'server-models')
     other = tmp_path / 'client-mount'
     mirrored = other / 'Local' / weights.name
@@ -53,7 +53,7 @@ def test_distinct_roots_reuse_one_shared_entry(tmp_path, entry):
 
 
 def test_moving_repository_keeps_entries_valid(tmp_path, entry):
-    save, load, path_for, _, _, payload = entry
+    save, load, path_for, _, payload = entry
     root = tmp_path / 'original'
     directory, weights = store(root)
     save(directory, 'model', weights, payload)
@@ -66,7 +66,7 @@ def test_moving_repository_keeps_entries_valid(tmp_path, entry):
 
 
 def test_repository_symlink_uses_same_identity(tmp_path, entry):
-    save, load, path_for, _, _, payload = entry
+    save, load, path_for, _, payload = entry
     root = tmp_path / 'models'
     directory, weights = store(root)
     alias = tmp_path / 'alias'
@@ -80,7 +80,7 @@ def test_repository_symlink_uses_same_identity(tmp_path, entry):
 
 @pytest.mark.parametrize('change', ['size', 'mtime'])
 def test_relative_entry_still_invalidates_changed_weights(tmp_path, entry, change):
-    save, load, _, _, _, payload = entry
+    save, load, _, _, payload = entry
     directory, weights = store(tmp_path / 'models')
     save(directory, 'model', weights, payload)
     if change == 'size':
@@ -92,7 +92,7 @@ def test_relative_entry_still_invalidates_changed_weights(tmp_path, entry, chang
 
 
 def test_captured_fingerprint_survives_delayed_write(tmp_path, entry):
-    save, load, path_for, _, _, payload = entry
+    save, load, path_for, _, payload = entry
     directory, weights = store(tmp_path / 'models')
     captured = cache.build_model_file_fingerprint(weights)
     weights.write_bytes(b'new and substantially longer weights after scan')
@@ -105,7 +105,7 @@ def test_captured_fingerprint_survives_delayed_write(tmp_path, entry):
 
 
 def test_absolute_path_entries_are_ignored_and_left_untouched(tmp_path, entry):
-    save, load, path_for, _, suffix, payload = entry
+    save, load, path_for, suffix, payload = entry
     directory, weights = store(tmp_path / 'models')
     section = 'metadata' if suffix == '.json' else 'digest'
     version = cache.SCHEMA_VERSION if section == 'metadata' else cache.DIGEST_SCHEMA_VERSION
@@ -120,17 +120,8 @@ def test_absolute_path_entries_are_ignored_and_left_untouched(tmp_path, entry):
     assert old.read_text() == document
 
 
-def test_deleting_relative_entry_removes_only_that_section(tmp_path, entry):
-    save, load, path_for, delete, _, payload = entry
-    directory, weights = store(tmp_path / 'models')
-    save(directory, 'model', weights, payload)
-    delete(directory, weights)
-    assert not path_for(directory, weights).exists()
-    assert load(directory, weights) is None
-
-
 def test_same_basename_in_distinct_directories_does_not_collide(tmp_path, entry):
-    save, load, path_for, _, _, payload = entry
+    save, load, path_for, _, payload = entry
     directory, weights = store(tmp_path / 'models')
     other = weights.parent.parent / 'TLlama' / 'author' / weights.name
     other.parent.mkdir(parents=True)
@@ -143,7 +134,7 @@ def test_same_basename_in_distinct_directories_does_not_collide(tmp_path, entry)
 
 
 def test_outside_weights_are_not_cached(tmp_path, entry):
-    save, load, _, _, _, payload = entry
+    save, load, _, _, payload = entry
     directory, _ = store(tmp_path / 'models')
     outside = tmp_path / 'outside.gguf'
     outside.write_bytes(b'outside')

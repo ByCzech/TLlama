@@ -168,10 +168,6 @@ class ModelManager:
 
         self._metadata_cache: Dict[str, CachedMetadataEntry] = {}
 
-        # Paths already reported as sitting outside the reference scheme, so a
-        # stray file does not produce a warning on every model listing.
-        self._reported_unusable_files: set[str] = set()
-
         # Validate global cache types at startup without loading a model.
         self._validate_global_kv_cache_types()
 
@@ -363,12 +359,8 @@ class ModelManager:
     def _toml_path_for_reference(self, model_ref: str) -> Optional[Path]:
         """Where a virtual model's .toml would live for this reference, if any.
 
-        Mirrors resolve_model_storage_path's segment-based routing, but for
-        .toml files at their fixed depth (spec doc §5) instead of a raw
-        .gguf's own (unbounded-below for HuggingFace) depth. There is no
-        Local-nested fallback for a 2-segment reference the way
-        resolve_model_storage_path has for .gguf: the fixed-depth invariant
-        makes that ambiguity impossible for .toml in the first place.
+        One segment names Local, two name TLlama and three name HuggingFace.
+        Weight files are resolved separately from the definition contents.
 
         Returns None for a reference with more than 3 segments -- a .toml
         never sits deeper than that, so there is nowhere to look.
@@ -484,19 +476,6 @@ class ModelManager:
         # to fall back to here.
         return None
 
-
-    def _filter_metadata_raw_for_cache(self, meta: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Keep only small scalar metadata values in cache.
-        This avoids holding large/raw structures in memory.
-        """
-        filtered: Dict[str, Any] = {}
-
-        for key, value in (meta or {}).items():
-            if isinstance(value, (str, int, float, bool)) or value is None:
-                filtered[key] = value
-
-        return filtered
 
     def _get_cached_metadata_entry(self, model_name: str, fingerprint: str) -> Optional[Dict[str, Any]]:
         entry = self._metadata_cache.get(model_name)
@@ -962,11 +941,8 @@ class ModelManager:
     def _iter_repository_gguf_files(self):
         """Every .gguf on disk, at any depth, in all three repositories.
 
-        Deliberately not _iter_repository_model_files(), which enforces the
-        depths the old .gguf-derived naming scheme needed. A .gguf may now
-        sit anywhere, because the .toml that names it does not have to sit
-        with it -- so for the purpose of finding files that lack a
-        definition, every one of them counts.
+        Weights may sit anywhere because their TOML definitions need not
+        sit beside them. Every GGUF counts when finding unregistered files.
         """
         for attribute, _ in self._TOML_DEPTH_BY_REPOSITORY:
             repo_dir = getattr(self, attribute)
@@ -1558,60 +1534,6 @@ class ModelManager:
 
         return f"{cleaned}.gguf"
 
-    def resolve_model_storage_path(self, model_ref: str) -> Path:
-        """
-        Resolve a model reference to its on-disk path inside known repositories.
-
-        The repository is chosen by how many segments the reference has:
-
-        - one:            Local/<name>.gguf
-        - two:            TLlama/<namespace>/<name>.gguf
-        - three or more:  HuggingFace/<namespace>/<repo>/<path>.gguf
-
-        A HuggingFace reference may nest further, because a repository there
-        can keep a quantisation in a subdirectory.
-        """
-        parts = self._split_model_reference(model_ref)
-
-        def _normalized_file_path(base_dir: Path, rel_parts: List[str]) -> Path:
-            normalized_parts = list(rel_parts)
-            normalized_parts[-1] = self._normalize_pull_filename(normalized_parts[-1])
-            return base_dir.joinpath(*normalized_parts)
-
-        def _first_existing_or_default(candidates: List[Path]) -> Path:
-            for candidate in candidates:
-                if candidate.exists():
-                    return candidate
-            return candidates[0]
-
-        # Prefixless Local reference.
-        # Example: "MyModel-Instruct-Q4_K_L"
-        if len(parts) == 1:
-            return _normalized_file_path(self.local_models_dir, parts)
-
-        # Prefixless TLlama reference.
-        # Example: "collection/model-file"
-        #
-        # If a matching Local nested file exists and the TLlama file does not, keep it
-        # usable as a fallback. Explicit "Local/..." remains the unambiguous form.
-        if len(parts) == 2:
-            return _first_existing_or_default([
-                _normalized_file_path(self.tllama_models_dir, parts),
-                _normalized_file_path(self.local_models_dir, parts),
-            ])
-
-        if len(parts) >= 3:
-            normalized_parts = list(parts)
-            normalized_parts[-1] = self._normalize_pull_filename(normalized_parts[-1])
-            return self.hf_models_dir.joinpath(*normalized_parts)
-
-        raise ValueError(
-            "Unsupported model reference. Expected one of: "
-            "'namespace/repo/file', 'namespace/repo/path/to/file[.gguf]', "
-            "'Local/name', 'Local/path/to/file', "
-            "'TLlama/name', or 'TLlama/path/to/file'."
-        )
-
     def _remove_empty_parents(self, start_dir: Path, stop_dir: Path) -> None:
         current = start_dir
 
@@ -1718,10 +1640,8 @@ class ModelManager:
 
         Fixed depth per category (spec doc TLlama_virtual_models_spec.md
         §5): exactly 1 for Local, exactly 2 for TLlama, exactly 3 for
-        HuggingFace. Unlike a raw .gguf's depth (see
-        _iter_repository_model_files), a .toml's own depth has nothing to
-        do with how deep the .gguf/mmproj it points at physically sits --
-        decoupling the two is the whole point of the indirection.
+        HuggingFace. This constrains definition names, independently of
+        the depth of their referenced GGUF/projector files.
         """
         repositories = (
             (self.local_models_dir, 1),
@@ -1860,43 +1780,6 @@ class ModelManager:
 
         return target
 
-    def _iter_repository_model_files(self):
-        """Yield the model files that the reference scheme can name.
-
-        A reference has one segment for Local, two for TLlama and three or
-        more for HuggingFace, so a file is only usable at the matching depth
-        inside its repository. The scan used to accept any depth, which meant
-        a file placed a level too deep was listed by /api/tags and then failed
-        to load, because the name it was given resolved somewhere else.
-        """
-        repositories = (
-            (self.local_models_dir, 1, 1, "directly in the repository"),
-            (self.tllama_models_dir, 2, 2, "one directory deep"),
-            (self.hf_models_dir, 3, None, "at least two directories deep"),
-        )
-
-        for repo_dir, min_depth, max_depth, expectation in repositories:
-            if not repo_dir.exists():
-                continue
-
-            for file_path in sorted(repo_dir.rglob("*.gguf")):
-                if not file_path.is_file():
-                    continue
-
-                depth = len(file_path.relative_to(repo_dir).parts)
-
-                if depth < min_depth or (max_depth is not None and depth > max_depth):
-                    key = str(file_path)
-                    if key not in self._reported_unusable_files:
-                        self._reported_unusable_files.add(key)
-                        logger.warning(
-                            "Ignoring %s: a model in %s has to sit %s",
-                            file_path, repo_dir.name, expectation,
-                        )
-                    continue
-
-                yield file_path
-
     def _get_repo_root_for_path(self, file_path: Path) -> Path:
         if file_path.is_relative_to(self.hf_models_dir):
             return self.hf_models_dir
@@ -1905,36 +1788,6 @@ class ModelManager:
         if file_path.is_relative_to(self.tllama_models_dir):
             return self.tllama_models_dir
         raise ValueError(f"File path is outside known model repositories: {file_path}")
-
-    def _get_hf_repo_dir_for_file(self, file_path: Path) -> Path | None:
-        if not file_path.is_relative_to(self.hf_models_dir):
-            return None
-
-        rel = file_path.relative_to(self.hf_models_dir)
-        if len(rel.parts) < 2:
-            return None
-
-        return self.hf_models_dir / rel.parts[0] / rel.parts[1]
-
-    def _cleanup_hf_repo_auxiliary(self, file_path: Path) -> None:
-        """
-        Best-effort cleanup for HuggingFace repo-local helper data.
-
-        If no GGUF files remain in the HuggingFace repo subtree, remove the
-        repo-local .cache directory so normal empty-parent cleanup can finish.
-        """
-        repo_dir = self._get_hf_repo_dir_for_file(file_path)
-        if repo_dir is None or not repo_dir.exists():
-            return
-
-        has_remaining_models = any(repo_dir.rglob("*.gguf"))
-        if has_remaining_models:
-            return
-
-        cache_dir = repo_dir / ".cache"
-        if cache_dir.exists():
-            shutil.rmtree(cache_dir, ignore_errors=True)
-
 
 from tllama.daemon_config import current_daemon_config
 

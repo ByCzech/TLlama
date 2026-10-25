@@ -57,21 +57,16 @@ def _cache_key(cache_dir: Path, model_path: Path) -> str:
     return sha256(_relative_path(cache_dir, model_path).encode("utf-8")).hexdigest()
 
 
-def _cache_path(cache_dir: Path, model_path: Path, section: str) -> Path:
-    suffix = ".digest.json" if section == _DIGEST_SECTION else ".json"
-    return cache_dir / f"{_cache_key(cache_dir, model_path)}{suffix}"
-
-
 def get_metadata_cache_path(cache_dir: Path, model_path: str | Path) -> Path:
     """Return the JSON metadata cache file path for a model file."""
     path = Path(model_path)
-    return _cache_path(cache_dir, path, _METADATA_SECTION)
+    return cache_dir / f"{_cache_key(cache_dir, path)}.json"
 
 
 def get_digest_cache_path(cache_dir: Path, model_path: str | Path) -> Path:
     """Return the JSON content digest cache file path for a model file."""
     path = Path(model_path)
-    return _cache_path(cache_dir, path, _DIGEST_SECTION)
+    return cache_dir / f"{_cache_key(cache_dir, path)}.digest.json"
 
 
 def build_model_file_fingerprint(model_path: str | Path) -> Dict[str, Any]:
@@ -125,7 +120,8 @@ def _load_cache_document(
             **build_model_file_fingerprint(model_path),
             "path": _relative_path(cache_dir, model_path),
         }
-        cache_path = _cache_path(cache_dir, model_path, section)
+        path_for = get_digest_cache_path if section == _DIGEST_SECTION else get_metadata_cache_path
+        cache_path = path_for(cache_dir, model_path)
         with cache_path.open("r", encoding="utf-8") as handle:
             document = json.load(handle)
 
@@ -158,7 +154,8 @@ def _save_cache_document(
     Cache write failures are intentionally non-fatal for the application.
     """
     try:
-        cache_path = _cache_path(cache_dir, model_path, section)
+        path_for = get_digest_cache_path if section == _DIGEST_SECTION else get_metadata_cache_path
+        cache_path = path_for(cache_dir, model_path)
 
         if fingerprint is None:
             fingerprint = build_model_file_fingerprint(model_path)
@@ -209,23 +206,6 @@ def _save_cache_document(
         return
 
 
-def _delete_cache_document(cache_path: Path) -> None:
-    """Delete a cache document if it exists."""
-    try:
-        cache_path.unlink()
-    except FileNotFoundError:
-        return
-    except Exception:
-        return
-
-
-def _delete_cache_section(cache_dir: Path, model_path: Path, section: str) -> None:
-    try:
-        _delete_cache_document(_cache_path(cache_dir, model_path, section))
-    except Exception:
-        return
-
-
 def load_metadata_cache(
     cache_dir: str | Path,
     model_path: str | Path,
@@ -270,14 +250,6 @@ def save_metadata_cache(
     )
 
 
-def delete_metadata_cache(
-    cache_dir: str | Path,
-    model_path: str | Path,
-) -> None:
-    """Delete a model metadata cache file if it exists."""
-    _delete_cache_section(Path(cache_dir), Path(model_path), _METADATA_SECTION)
-
-
 def load_digest_cache(
     cache_dir: str | Path,
     model_path: str | Path,
@@ -315,11 +287,3 @@ def save_digest_cache(
         payload=digest,
         fingerprint=fingerprint,
     )
-
-
-def delete_digest_cache(
-    cache_dir: str | Path,
-    model_path: str | Path,
-) -> None:
-    """Delete a model content digest cache file if it exists."""
-    _delete_cache_section(Path(cache_dir), Path(model_path), _DIGEST_SECTION)

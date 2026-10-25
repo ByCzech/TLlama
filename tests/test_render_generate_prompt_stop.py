@@ -21,7 +21,7 @@ class TestStopDefaultsFallback:
         request = make_request(options={"stop": ["CLIENT"]})
         metadata_info = {"template": SIMPLE_TEMPLATE, "stop_defaults": ["TOML"]}
 
-        _, stop = render_generate_text(metadata_info, request, bos_token="", eos_token="", mode="prompt")
+        _, stop = render_generate_text(metadata_info, request, bos_token="", eos_token="")
 
         assert "CLIENT" in stop
         assert "TOML" not in stop
@@ -30,7 +30,7 @@ class TestStopDefaultsFallback:
         request = make_request(options=None)
         metadata_info = {"template": SIMPLE_TEMPLATE, "stop_defaults": ["TOML"]}
 
-        _, stop = render_generate_text(metadata_info, request, bos_token="", eos_token="", mode="prompt")
+        _, stop = render_generate_text(metadata_info, request, bos_token="", eos_token="")
 
         assert "TOML" in stop
 
@@ -38,6 +38,6 @@ class TestStopDefaultsFallback:
         request = make_request(options=None)
         metadata_info = {"template": SIMPLE_TEMPLATE}
 
-        _, stop = render_generate_text(metadata_info, request, bos_token="", eos_token="", mode="prompt")
+        _, stop = render_generate_text(metadata_info, request, bos_token="", eos_token="")
 
         assert stop == []

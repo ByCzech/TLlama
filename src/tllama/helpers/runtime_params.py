@@ -144,11 +144,6 @@ def _coerce(
     )
 
 
-def runtime_parameters() -> Dict[str, str]:
-    """The pinned TLlama runtime contract, independent of Python bindings."""
-    return dict(RUNTIME_TYPES)
-
-
 def settable_parameters() -> Dict[str, str]:
     return {name: kind for name, kind in RUNTIME_TYPES.items() if name not in _HANDLED_ELSEWHERE}
 

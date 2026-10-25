@@ -180,9 +180,3 @@ def start_server():
     uvicorn.run("tllama.main:create_app", **kwargs)
 
     return
-
-
-def main(argv=None) -> int:
-    """Retain `python -m tllama.main` as an explicit server spelling."""
-    from tllama.daemon import main as daemon_main
-    return daemon_main(argv)

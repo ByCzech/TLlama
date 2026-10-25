@@ -66,7 +66,6 @@ class _FormatSpec:
 class ReasoningStreamSplitter:
     def __init__(self, fmt: ReasoningFormat, think_value=None):
         self.fmt = fmt
-        self.think_value = think_value
         self.buffer = ""
 
         self.spec = self._build_spec(fmt)
@@ -279,64 +278,3 @@ class ReasoningStreamSplitter:
             break
 
         return out
-
-
-def split_full_text_by_reasoning_format(
-    full_text: str,
-    fmt: ReasoningFormat,
-    think_value=None,
-) -> tuple[str, str]:
-    full_text = full_text or ""
-
-    if fmt == "qwen_like":
-        stripped = full_text.strip()
-
-        # 1) Standard tagged form: <think> ... </think> answer
-        if "<think>" in stripped and "</think>" in stripped:
-            left, right = stripped.split("</think>", 1)
-            left = left.split("<think>", 1)[-1]
-            return left.strip(), right.strip()
-
-        # 2) Qwen-like broken form: reasoning ... </think> answer
-        #    (missing starting <think>, but ending are there)
-        if "</think>" in stripped:
-            left, right = stripped.split("</think>", 1)
-            return left.strip(), right.strip()
-
-        # 3) If thinking is explicitly disabled, without end marker we don't guess nothing
-        think_disabled = (
-            think_value is False
-            or (
-                isinstance(think_value, str)
-                and think_value.strip().lower() in {"false", "none"}
-            )
-        )
-        if think_disabled:
-            return "", stripped
-
-        # 4) If thinking is enabled and text seems like reasoning-only output,
-        #    we getting it whole as thinking
-        lowered = stripped.lower()
-        if (
-            lowered.startswith("thinking process:")
-            or lowered.startswith("here's a thinking process:")
-            or lowered.startswith("here is a thinking process:")
-        ):
-            return stripped, ""
-
-    splitter = ReasoningStreamSplitter(fmt, think_value=think_value)
-
-    parts: list[tuple[str, str]] = []
-    parts.extend(splitter.push(full_text))
-    parts.extend(splitter.finish())
-
-    thinking_parts: list[str] = []
-    response_parts: list[str] = []
-
-    for kind, piece in parts:
-        if kind == "thinking":
-            thinking_parts.append(piece)
-        else:
-            response_parts.append(piece)
-
-    return "".join(thinking_parts).strip(), "".join(response_parts).strip()

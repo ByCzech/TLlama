@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import gguf
 from tllama.helpers.fim import read_fim_metadata
-from typing import Any, Dict, Iterable, Mapping, Optional
+from typing import Any, Dict, Iterable, Mapping
 from enum import IntEnum
 
 try:

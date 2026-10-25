@@ -7,7 +7,6 @@ from starlette.requests import ClientDisconnect
 from fastapi.responses import StreamingResponse, JSONResponse
 from tllama.schemas.ollama import OllamaChatRequest, OllamaGenerateRequest
 from tllama.backend import model_manager, HF_LOOKUP_MISSING, PullProgress
-from tllama.helpers.model_toml import TomlModelError
 from tllama.version import get_version as get_tllama_version
 from tllama.helpers.runner import RUNNER, validate_runner
 from tllama.helpers.common import format_ollama_parameters

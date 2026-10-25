@@ -36,7 +36,7 @@ class TestGeneratePromptMode:
         request = make_request(system="from request")
         metadata_info = {"template": SIMPLE_TEMPLATE, "default_system_prompt": "from toml"}
 
-        prompt, _ = render_generate_text(metadata_info, request, bos_token="", eos_token="", mode="prompt")
+        prompt, _ = render_generate_text(metadata_info, request, bos_token="", eos_token="")
 
         assert "system:from request" in prompt
         assert "from toml" not in prompt
@@ -45,7 +45,7 @@ class TestGeneratePromptMode:
         request = make_request(system=None)
         metadata_info = {"template": SIMPLE_TEMPLATE, "default_system_prompt": "from toml"}
 
-        prompt, _ = render_generate_text(metadata_info, request, bos_token="", eos_token="", mode="prompt")
+        prompt, _ = render_generate_text(metadata_info, request, bos_token="", eos_token="")
 
         assert "system:from toml" in prompt
 
@@ -53,7 +53,7 @@ class TestGeneratePromptMode:
         request = make_request(system=None)
         metadata_info = {"template": SIMPLE_TEMPLATE}
 
-        prompt, _ = render_generate_text(metadata_info, request, bos_token="", eos_token="", mode="prompt")
+        prompt, _ = render_generate_text(metadata_info, request, bos_token="", eos_token="")
 
         assert "system:" not in prompt
 
@@ -63,7 +63,7 @@ class TestGeneratePromptMode:
         request = make_request(system="")
         metadata_info = {"template": SIMPLE_TEMPLATE, "default_system_prompt": "from toml"}
 
-        prompt, _ = render_generate_text(metadata_info, request, bos_token="", eos_token="", mode="prompt")
+        prompt, _ = render_generate_text(metadata_info, request, bos_token="", eos_token="")
 
         assert "system:" in prompt
         assert "from toml" not in prompt
@@ -75,7 +75,7 @@ class TestGeneratePromptMode:
         request = make_request(system="")
         metadata_info = {"template": TEMPLATE_WITH_BAKED_DEFAULT}
 
-        prompt, _ = render_generate_text(metadata_info, request, bos_token="", eos_token="", mode="prompt")
+        prompt, _ = render_generate_text(metadata_info, request, bos_token="", eos_token="")
 
         assert "BAKED DEFAULT" not in prompt
 
@@ -83,7 +83,7 @@ class TestGeneratePromptMode:
         request = make_request(system=None)
         metadata_info = {"template": TEMPLATE_WITH_BAKED_DEFAULT, "default_system_prompt": ""}
 
-        prompt, _ = render_generate_text(metadata_info, request, bos_token="", eos_token="", mode="prompt")
+        prompt, _ = render_generate_text(metadata_info, request, bos_token="", eos_token="")
 
         assert "BAKED DEFAULT" not in prompt
 
@@ -91,31 +91,6 @@ class TestGeneratePromptMode:
         request = make_request(system=None)
         metadata_info = {"template": TEMPLATE_WITH_BAKED_DEFAULT}
 
-        prompt, _ = render_generate_text(metadata_info, request, bos_token="", eos_token="", mode="prompt")
+        prompt, _ = render_generate_text(metadata_info, request, bos_token="", eos_token="")
 
         assert "BAKED DEFAULT" in prompt
-
-
-class TestGeneratePromptMessagesMode:
-    """mode="messages" is currently unreachable from any router, but the
-    contract should still hold if/when it is."""
-
-    def test_existing_system_message_wins_over_default(self):
-        request = make_request(messages=[
-            {"role": "system", "content": "from messages"},
-            {"role": "user", "content": "hi"},
-        ])
-        metadata_info = {"template": SIMPLE_TEMPLATE, "default_system_prompt": "from toml"}
-
-        prompt, _ = render_generate_text(metadata_info, request, bos_token="", eos_token="", mode="messages")
-
-        assert "system:from messages" in prompt
-        assert "from toml" not in prompt
-
-    def test_default_prepended_when_no_system_message(self):
-        request = make_request(messages=[{"role": "user", "content": "hi"}])
-        metadata_info = {"template": SIMPLE_TEMPLATE, "default_system_prompt": "from toml"}
-
-        prompt, _ = render_generate_text(metadata_info, request, bos_token="", eos_token="", mode="messages")
-
-        assert "system:from toml" in prompt
