@@ -1,10 +1,11 @@
-# Native 0.7.0 qualification captures (0118)
+# Native 0.7.0 qualification captures (0118–0119)
 
 Target: `b11850-0e9433bfd3`, native commit
 `0e9433bfd33d8cdb194285b70c0d421d39135df2`, Debian package
-`0.7.0~dev+b11850.1-1`. TLlama integration through 0117 passed the user's full
-suite: **3842 passed, 2 warnings**. That result verifies the adapter tests;
-hardware captures for the new memory accounting remain required.
+`0.7.0~dev+b11850.1-1`. TLlama integration through 0118a passed the user's full
+suite: **3866 passed, 2 warnings**. Memory full/partial/vision captures have been
+reviewed on MI50/Vulkan, MI100/HIP and P100/CUDA12.9; lifecycle and remaining
+feature qualification are separate, as described below.
 
 This preparation adds capture options to existing tools. It does not change
 `RUNTIME_FINGERPRINT`, `SUPPORTED_RUNTIME_FINGERPRINTS`, the log grammar
@@ -99,7 +100,94 @@ Inspect P100 native layers 39/40 using the query in
 Use main intervals for totals and tensor-role records only for explanation.
 Native IDs cannot be joined across raw and selected observations.
 
-## 3. Acceptance after captures
+## 3. Worker lifecycle capture (0119)
+
+After applying 0118a, the user's complete suite passed **3866 tests, 2 warnings**.
+Full/partial/vision captures have been reviewed on MI50/Vulkan, MI100/HIP and
+P100/CUDA12.9. P100 automatic fitting also produced valid mixed CPU/GPU weights.
+The original sparse mmap-span subtraction has not been reproduced on hardware;
+more context/memory pressure is not requested. These results do not qualify the
+lifecycle or other features below.
+
+`lifecycle-smoke.py` uses the production `NativeResidency` supervisor and
+`NativeWorker` against the installed executable, with physical GGUF paths and
+no registered model/TOML edits. It is a private diagnostic, not a daemon HTTP API
+test. Its exact fingerprint is mandatory and checked in strict mode, independently
+of the daemon's version policy. No production allowlists/defaults are changed.
+It performs, sequentially:
+
+1. Load; health/props startup checks; template rendering and tokenization;
+   chat/completion, each nonstream and stream; cancel a long chat stream after
+   actual content/reasoning; successfully infer again.
+2. Unload during another active long stream. The held lease must keep that
+   generation alive and draining. Cancel the stream, release the lease and
+   require removal from reporting plus process/private-directory cleanup.
+3. Reload as a new generation with fresh telemetry. While its lease is held,
+   request a replacement using a tiny intentionally invalid GGUF created only
+   inside the new capture directory. Require failed startup, a positive failure exit code,
+   cleanup and absence of the failed generation from reporting. The old draining
+   lease must still infer and retain its own evidence, then close on release.
+4. Recover as a fresh generation. Only this diagnostic launch changes the native
+   `--sleep-idle-seconds` from the production `-1` to `5`. Wait for `/props` to
+   report sleeping; require known empty buffers, weight intervals, locality
+   allocations/bindings and tensor records, with an advanced snapshot sequence.
+   Repeated memory/props reads must leave it asleep. A chat request must reload
+   it in the same process with a newer sequence and valid nonempty evidence.
+5. Final unload/shutdown, requiring every owned process and private directory to
+   be cleaned, including failed attempts. Raw errors and partial captures remain
+   available on failure.
+
+This means **three successful initial loads plus one native wake/reload** and
+one tiny failed load. No two valid models are loaded concurrently. The invalid
+GGUF failure is expected and is recorded as a successful negative check only
+when the runtime actually rejects it and cleanup succeeds; a timeout, crash
+or forced termination is not accepted as that rejection. Original weights
+are never modified. TLlama's ordinary idle expiry closes the worker; native
+sleep/wake here is a separate protocol check, enabled only for this diagnostic.
+The script does not claim testing nonstream request cancellation, arbitrary
+model-to-model replacement, process crash, full prompts filling the context,
+projectors, MTP, embeddings, FIM, tools, Decision or physical residency.
+
+Start on **MI50/Vulkan0** using the already tested Q4_K_XL GGUF, ctx=4096,
+K/V=q4_0, FA=on. Release the service's loaded model first, as for memory smoke.
+Use its actual physical GGUF path below. Each output directory must be new:
+
+```bash
+PYTHONPATH=src python3 scripts/lifecycle-smoke.py \
+  --expected-fingerprint b11850-0e9433bfd3 \
+  --model /absolute/path/to/Qwen3.6-35B-A3B-MTP-UD-Q4_K_XL.gguf \
+  --device Vulkan0 --ctx 4096 \
+  --type-k q4_0 --type-v q4_0 --flash-attn on \
+  --output /tmp/tllama-070-mi50-lifecycle
+
+tar -cJf /tmp/tllama-070-mi50-lifecycle.tar.xz \
+  -C /tmp tllama-070-mi50-lifecycle
+```
+
+Send the archive **even on failure**, including `result.json`, `raw.jsonl`,
+`summary.jsonl`, `worker.log`, all `worker-N.load.log` files and the intentionally
+invalid GGUF. Do not replace a failed capture with a second run in the same
+output directory. `--dry-run` prints the initial and sleep argv without creating
+files/starting processes. `--transport tcp` explicitly selects authenticated
+loopback instead of the default private UDS; record any transport change.
+
+After reviewing the first MI50 result, use the same command on **MI100/ROCm0**
+with the same Q4_K_XL file and a new `...-mi100-lifecycle` output. On **P100/CUDA0**
+use its already tested **IQ3_XXS** model and a new `...-p100-lifecycle` output.
+Keep ctx=4096, matching q4_0 caches and FA; no projector or active MTP in this
+step. Do not repeat the high-context pressure/vision profiles. Native rebuild
+and daemon restart are not needed for this script-only patch.
+
+Each raw response and selected telemetry observation is validated independently;
+IDs and sequences are not joined across observations or generations. Sequence
+advancement is checked only across sleep/wake within the same worker lifetime.
+Partial valid locality and bounded tensor diagnostics are retained; malformed
+extensions, missing requested diagnostics, unknown weight payload/assignment,
+wrong model state or HTTP errors fail the capture. HTTP 401/503 cannot pass by
+falling back to loader logs or masquerading as an unsupported endpoint. Native
+state and the compatibility SIZE/PROCESSOR policy are kept separate.
+
+## 4. Acceptance after captures
 
 Review actual worker health/props, stream/nonstream inference, tokenization,
 template rendering, cancellation and cleanup. Qualify log fallback, device

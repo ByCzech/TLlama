@@ -9,6 +9,7 @@ import os
 import signal
 import sys
 import struct
+import time
 import zlib
 from pathlib import Path
 
@@ -51,6 +52,48 @@ if os.environ.get('STUB_PUBLIC_MTP') and arg('--spec-type') == 'draft-mtp':
     TIMINGS.update(draft_n=12, draft_n_accepted=6)
 USAGE = {"prompt_tokens": 25, "completion_tokens": 10, "total_tokens": 35,
          "prompt_tokens_details": {"cached_tokens": 19}}
+
+
+# Opt-in lifecycle fixture; all existing stub protocols retain their behavior.
+LIFECYCLE = os.environ.get("STUB_LIFECYCLE")
+if LIFECYCLE == "invalid-timeout" and Path(arg("--model")).name == "invalid-model.gguf":
+    MODE = "hang-load"
+SLEEPING = False
+MEMORY_SEQUENCE = 17
+LAST_ACTIVITY = time.monotonic()
+
+
+def lifecycle_idle():
+    global SLEEPING, MEMORY_SEQUENCE
+    interval = int(arg("--sleep-idle-seconds", "-1"))
+    if (LIFECYCLE and LIFECYCLE != "no-sleep" and interval > 0
+            and not SLEEPING and time.monotonic() - LAST_ACTIVITY >= interval):
+        SLEEPING = True
+        MEMORY_SEQUENCE += 1
+
+
+def lifecycle_wake():
+    global SLEEPING, MEMORY_SEQUENCE, LAST_ACTIVITY
+    if SLEEPING:
+        SLEEPING = False
+        if LIFECYCLE != "wake-no-sequence":
+            MEMORY_SEQUENCE += 1
+    LAST_ACTIVITY = time.monotonic()
+
+
+def lifecycle_memory(data):
+    report = json.loads(data)
+    report["snapshot_sequence"] = MEMORY_SEQUENCE
+    if SLEEPING and LIFECYCLE != "stale-sleep":
+        report.update(model_state="sleeping", snapshot_stage="after_unload",
+                      owners=[], devices=[], buffers=[])
+        report["placement"].update(status="known", missing_components=[], layer_groups=[])
+        report["weight_storage"].update(status="known", missing_components=[], intervals=[])
+        report["allocation_locality"].update(status="known", missing_components=[], allocations=[], bindings=[])
+        tensor = report["weight_storage"].get("tensor_diagnostics")
+        if tensor is not None:
+            tensor.update(status="known", missing_components=[], truncated=False, records=[])
+    return encode(report)
 
 
 def image_reply(body):
@@ -658,6 +701,10 @@ async def handle(reader, writer):
         if headers.get("authorization") != "Bearer " + KEY:
             await json_response(writer, {"error": "unauthorized"}, 401)
             return
+        if LIFECYCLE:
+            lifecycle_idle()
+            if path not in {"/props", "/health", "/tllama/memory"}:
+                lifecycle_wake()
         if path == "/health":
             HEALTH_READS += 1
             if MODE == "hang-load" or MODE == "loading" and HEALTH_READS <= 3:
@@ -676,6 +723,7 @@ async def handle(reader, writer):
             await json_response(writer, {
                 "build_info": (None if MODE == "missing-build" else "wrong" if MODE == "wrong-build"
                                else os.environ.get("STUB_BUILD", "b11552-ec2797836f")),
+                **({"is_sleeping": SLEEPING} if LIFECYCLE else {}),
                 "model_alias": "wrong" if MODE == "wrong-alias" else arg("--alias"),
                 "total_slots": 4 if MODE == "wrong-slots" else 1,
                 "model_path": arg("--model"),
@@ -701,6 +749,8 @@ async def handle(reader, writer):
                 await json_response(writer, {"error": "not found"}, 404)
                 return
             data = file.read_bytes()
+            if LIFECYCLE:
+                data = lifecycle_memory(data)
             writer.write(f"HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\n"
                          f"Content-Length: {len(data)}\r\nConnection: close\r\n\r\n".encode() + data)
             await writer.drain()
@@ -830,6 +880,9 @@ async def handle(reader, writer):
 
 
 async def main():
+    if LIFECYCLE and LIFECYCLE not in {"accept-invalid", "invalid-timeout"} and Path(arg("--model")).name == "invalid-model.gguf":
+        print("gguf_init: invalid model file", file=sys.stderr, flush=True)
+        return 24
     mark("launch", {"argv": sys.argv[1:], "cwd": os.getcwd(),
                     "cwd_mode": oct(Path.cwd().stat().st_mode & 0o777),
                     "key_mode": oct(Path(arg("--api-key-file")).stat().st_mode & 0o777),
