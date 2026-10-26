@@ -1,12 +1,14 @@
-# Native 0.7.0 qualification captures (0118–0120)
+# Native 0.7.0 qualification captures (0118–0121)
 
 Target: `b11850-0e9433bfd3`, native commit
 `0e9433bfd33d8cdb194285b70c0d421d39135df2`, Debian package
-`0.7.0~dev+b11850.1-1`. TLlama integration through 0119 passed the user's full
-suite: **3903 passed, 2 warnings**. Memory full/partial/vision and the 0119
+`0.7.0~dev+b11850.1-1`. TLlama integration through 0120 passed the user's full
+suite: **3933 passed, 2 warnings**. Memory full/partial/vision and the 0119
 lifecycle have been reviewed on MI50/Vulkan, MI100/HIP and P100/CUDA12.9.
-P100 wake completed with a 600-second request timeout. Remaining feature
-qualification is separate, as described below.
+P100 wake completed with a 600-second request timeout. Active embedded MTP
+passed on all three backends: 62 checks and 12 memory snapshots per capture,
+off/on parity, measured draft acceptance and cancellation/recovery, all with
+mmap. Remaining public feature qualification is separate, as described below.
 
 This preparation adds capture options to existing tools. It does not change
 `RUNTIME_FINGERPRINT`, `SUPPORTED_RUNTIME_FINGERPRINTS`, the log grammar
@@ -272,7 +274,124 @@ wrong model state or HTTP errors fail the capture. HTTP 401/503 cannot pass by
 falling back to loader logs or masquerading as an unsupported endpoint. Native
 state and the compatibility SIZE/PROCESSOR policy are kept separate.
 
-## 4. Acceptance after captures
+## 5. Public functional qualification (0121)
+
+`scripts/functional-qualification-smoke.py` runs the existing public probes
+inside an isolated diagnostic manager, with one registered model per capture.
+It pins the candidate fingerprint strictly before admission and checks the
+observed fingerprint for exact equality. This also refuses drift between old
+otherwise-supported fingerprints. It does not change production allowlists.
+Decision models are refused and require a separate qualification.
+
+| Profile | Existing reference | Evidence |
+|---|---|---|
+| `text` | `api-smoke.py` | Ollama chat/generate, raw generate, OpenAI chat, stream/nonstream, JSON schema, public ps, cancel/recovery and unload |
+| `text --require-mtp` | Same | Additionally native measured drafting and all eight public result/stream counter projections |
+| `tools` | `tools-api-smoke.py` | OpenAI/Ollama tool assembly, parallel/escaped arguments, followup histories, partial-argument cancel and recovery; no tools are executed |
+| `fim` | `fim-api-smoke.py` | Supported suffix, independent full-prompt native reference, token counts, long input, stream/nonstream and recovery |
+| `fim-unsupported` | Same | Explicit unsupported suffix response and ordinary completion recovery on a genuinely unsupported model |
+| `embeddings` | `embeddings-api-smoke.py` | Three public text embedding endpoints against direct native vectors, float/base64, token arrays, usage, bounds/errors, transport close/reuse and unload |
+
+The wrapper uses the ordinary metadata/configuration and public adapters. Its
+diagnostic manager applies explicit request-level runtime overrides and adds
+strict identity/transport/telemetry settings to the immutable resolved launch
+before residency creates the worker. It does not mock API responses or replace
+production tool/FIM/embedding consumers. All public requests use loopback TCP;
+`--transport uds|tcp` selects the **private native** connection only.
+
+Every worker has independently captured raw/selected memory after load and
+before close, exact fingerprint, genuine device assignment, valid payload,
+locality and bounded diagnostics, unchanged payload, and known SIZE/PROCESSOR.
+Missing/invalid memory evidence fails qualification; log fallback cannot pass.
+Native and public failures remain in `raw.jsonl`, `summary.jsonl`, `result.json`
+and `worker.log`, with `qualification-N-load.log` for each owned worker.
+
+Registered TOML and GGUF files are read only, checked by stat identity before
+and after use (not a full-content hash of all shards). Metadata caches and the
+embedding profile's temporary TOML stay under `--output`. Server runtime and
+sampling overrides are not inherited; the model's template/sampling/system/FIM
+recipe still applies to generation profiles. Choose a text-only definition
+without a projector. Embeddings use the reference's text-only temporary
+definition: no projector/template/system/FIM/sampling settings, spec=none,
+F16 K/V, FA=off, ctx=256, batch/ubatch at least 512. Generation profiles default
+to ctx=4096, q4_0 K/V, FA=on, batch/ubatch=512, MTP off unless explicitly
+requested by `text --require-mtp`. Device, mmap and full offload are explicit.
+Keep the default mmap on Vulkan and MI100/HIP; `--no-mmap` is optional for a
+HIP problem and records a different tested configuration.
+
+First apply 0121 after 0120 and run the whole pytest suite. Start on MI50/Vulkan0.
+Use `tllama list` to identify the **registered reference**, not a GGUF path.
+Use the existing Qwen3.6 embedded-MTP Q4_K_XL reference for text/tools.
+Set `MODEL` below to that exact reference. With an external model store, pass
+its actual path through `--models-dir`; otherwise the configured storage path
+is used. No registered model is created or edited by the qualification.
+
+```bash
+tllama list
+# Set this to the exact registered Qwen3.6 reference from that list:
+MODEL='REPLACE_WITH_REGISTERED_QWEN_REFERENCE'
+
+PYTHONPATH=src python3 scripts/functional-qualification-smoke.py \
+  --profile text --model "$MODEL" --device Vulkan0 \
+  --expected-fingerprint b11850-0e9433bfd3 \
+  --ctx 4096 --require-mtp --dry-run \
+  --output /tmp/tllama-070-mi50-public-text
+
+PYTHONPATH=src python3 scripts/functional-qualification-smoke.py \
+  --profile text --model "$MODEL" --device Vulkan0 \
+  --expected-fingerprint b11850-0e9433bfd3 \
+  --ctx 4096 --require-mtp \
+  --output /tmp/tllama-070-mi50-public-text
+
+tar -cJf /tmp/tllama-070-mi50-public-text.tar.xz \
+  -C /tmp tllama-070-mi50-public-text
+
+PYTHONPATH=src python3 scripts/functional-qualification-smoke.py \
+  --profile tools --model "$MODEL" --device Vulkan0 \
+  --expected-fingerprint b11850-0e9433bfd3 \
+  --ctx 4096 --predict 256 \
+  --output /tmp/tllama-070-mi50-public-tools
+
+tar -cJf /tmp/tllama-070-mi50-public-tools.tar.xz \
+  -C /tmp tllama-070-mi50-public-tools
+```
+
+Send both captures even on failure. `--dry-run` resolves the actual model and
+prints the pinned command without starting a worker or creating the capture;
+any temporary metadata cache is removed. It is not a hardware pass. Existing
+output directories are refused by actual runs. Load/request timeouts default
+to 600 seconds, including P100's slow reload; no rebuild/restart is needed.
+
+Do not use the chat Qwen model as a positive FIM/semantic-embedding model.
+After reviewing text/tools and the available references, select a supported
+code GGUF (e.g. an already imported codegemma/starcoder2/qwen-coder with a
+verified FIM recipe), a genuinely unsupported FIM control, and an already
+imported pooled embedding model such as MiniLM or Qwen3-Embedding. Reuse the
+same command with `--profile fim`, `fim-unsupported` or `embeddings`, the
+appropriate model, and a fresh output. Embeddings default to ctx=256; omit
+generation `--ctx 4096`/`--require-mtp` options when switching profiles.
+Send `tllama list` if the appropriate registered references are unclear.
+Do not download additional models merely to run every profile at once.
+
+`embeddings --with-sdks` additionally runs the existing optional OpenAI/Ollama
+Python SDK cycles and requires those packages in the same Python environment.
+Without it, HTTP contracts are still exercised, but SDKs are explicitly marked
+not exercised. The tools wrapper exercises HTTP consumers; optional tools SDK
+cycles remain a separate existing smoke. Multimodal embeddings, Responses,
+Decision, prefix-cache rollback and arbitrary model combinations are outside
+this capture's claim.
+
+Protocol success and semantic review are separate: a known model-specific
+tool mismatch, a FIM semantic miss or embedding vector drift retains
+`protocol_ok=true` when appropriate, but sets `review_required=true`,
+`ok=false` and exit 1. Inspect generated text without executing it. Tools
+historically had escaped-key semantic misses; do not repair arguments or
+silently reinterpret those captures as a full pass. Cancellation after a
+public frame and later reuse alone do not establish early native compute
+stop; inspect actual native `cancel task`/release logs. Nonstream embedding
+transport closure likewise does not prove early compute cancellation.
+
+## 6. Acceptance after captures
 
 Review actual worker health/props, stream/nonstream inference, tokenization,
 template rendering, cancellation and cleanup. Qualify log fallback, device
