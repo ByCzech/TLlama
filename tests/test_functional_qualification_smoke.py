@@ -1,18 +1,23 @@
 """Public exact-build qualification over owned native TCP subprocess fixtures."""
 
 from copy import deepcopy
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+import asyncio
 import json
 import os
 from pathlib import Path
 import runpy
 import subprocess
 import sys
+from types import SimpleNamespace
 
 import gguf
 import pytest
 
 from tllama.native_memory_api import NativeMemoryReport
+from tllama.backend import ModelManager
+from tllama.config import BackendConfig
 from tllama.worker import WorkerError
 from test_native_memory_api import payload
 from test_native_memory_locality import extended
@@ -91,6 +96,9 @@ def test_public_reference_profiles_owned_cleanup_and_unmodified_store(tmp_path, 
     memory = [r for r in rows if r['stage'] == 'qualification-memory']
     assert len(memory) == 2 and {r['observation'] for r in memory} == {'loaded', 'before-close'}
     assert all(r['raw_native']['http_status'] == 200 for r in memory)
+    if profile == 'text':
+        recovery = next(r for r in rows if r['stage'] == 'after-stream-cancel-start')
+        assert recovery['request_timeout'] == 5
     assert len([r for r in rows if r['stage'] == 'worker-cleanup']) == 1
     assert (models / 'a.toml').read_text() == definition
     assert not (models.parent / '.tllama').exists()
@@ -200,3 +208,146 @@ def test_candidate_pin_does_not_admit_decision_or_change_global_policy(tmp_path)
     assert accepted.resolved.launch.runtime_fingerprint == BUILD
     assert accepted.resolved.launch.version_policy == 'strict'
     assert RUNTIME_FINGERPRINT != BUILD and BUILD not in SUPPORTED_RUNTIME_FINGERPRINTS
+
+
+def test_external_model_headers_scanned_once_without_store_cache(tmp_path, diagnosed, monkeypatch):
+    root, models, executable, env, definition = setup_files(tmp_path, diagnosed, 'embeddings')
+    args = smoke['parser']().parse_args(arguments(tmp_path, 'embeddings',
+        '--output', str(tmp_path / 'isolated' / 'capture')))
+    smoke['validate'](args)
+    args.output.mkdir(parents=True)
+    capture = smoke['Capture'](args)
+    module = smoke['module_for']('embeddings')
+    manager = smoke['manager_type'](args, capture, module)(
+        BackendConfig(models_dir=str(models.parent), runtime_executable=executable))
+    original = ModelManager._get_model_metadata_sync
+    scans = []
+    def scan(self, path):
+        scans.append(path)
+        return original(self, path)
+    monkeypatch.setattr(ModelManager, '_get_model_metadata_sync', scan)
+    first = manager._resolve_native_definition_sync('a', args.ctx)
+    second = manager._resolve_native_definition_sync('a', args.ctx)
+    assert first == second and len(scans) == 1
+    assert first.metadata['arch'] == 'bert'
+    assert not list(manager.metadata_cache_dir.glob('*'))
+    assert not (models.parent / '.tllama').exists()
+    assert (models / 'a.toml').read_text() == definition
+
+
+def header_manager(tmp_path):
+    args = smoke['parser']().parse_args(arguments(tmp_path))
+    smoke['validate'](args)
+    args.output.mkdir()
+    capture = smoke['Capture'](args)
+    manager = smoke['manager_type'](args, capture, smoke['module_for']('tools'))(
+        BackendConfig(models_dir=str(tmp_path / 'models')))
+    return manager
+
+
+def test_header_cache_concurrent_reads_and_returned_mutation(tmp_path, monkeypatch):
+    manager = header_manager(tmp_path)
+    model = tmp_path / 'weights.gguf'
+    model.write_bytes(b'original')
+    scans = []
+    def scan(self, path):
+        scans.append(path)
+        return {'nested': {'values': [1, 2]}}
+    monkeypatch.setattr(ModelManager, '_get_model_metadata_sync', scan)
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        values = list(pool.map(manager._get_model_metadata_sync, [str(model)] * 8))
+    assert len(scans) == 1
+    values[0]['nested']['values'].append(3)
+    assert manager._get_model_metadata_sync(str(model)) == {'nested': {'values': [1, 2]}}
+
+
+@pytest.mark.parametrize('change', ['replace', 'during-scan', 'missing-result'])
+def test_header_cache_retries_changed_or_unsuccessful_scans(tmp_path, monkeypatch, change):
+    manager = header_manager(tmp_path)
+    model = tmp_path / 'weights.gguf'
+    model.write_bytes(b'original')
+    scans = []
+    def scan(self, path):
+        scans.append(path)
+        if len(scans) == 1:
+            if change == 'during-scan':
+                model.write_bytes(b'changed while scanning')
+            if change == 'missing-result':
+                return None
+        return {'scan': len(scans)}
+    monkeypatch.setattr(ModelManager, '_get_model_metadata_sync', scan)
+    manager._get_model_metadata_sync(str(model))
+    if change == 'replace':
+        replacement = tmp_path / 'replacement.gguf'
+        replacement.write_bytes(b'original')
+        stat = model.stat()
+        os.utime(replacement, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+        replacement.replace(model)
+    assert manager._get_model_metadata_sync(str(model)) == {'scan': 2}
+    assert manager._get_model_metadata_sync(str(model)) == {'scan': 2}
+    assert len(scans) == 2
+
+
+@pytest.mark.parametrize('profile', ['text', 'tools'])
+def test_startup_error_survives_cleanup_with_reaped_nonzero_process(tmp_path, diagnosed, profile):
+    root, models, executable, env, definition = setup_files(tmp_path, diagnosed, profile)
+    env['STUB_DEVICE_FAILURES'] = json.dumps({'none': 'invalid device: CUDA0'})
+    run = subprocess.run([sys.executable, str(SCRIPT), *arguments(tmp_path, profile,
+        '--executable', str(executable), '--transport', 'tcp', '--load-timeout', '5', '--request-timeout', '5')],
+        env=env, capture_output=True, text=True, timeout=45)
+    result = json.loads((tmp_path / 'capture' / 'result.json').read_text())
+    assert run.returncode == 1 and not result['ok'] and not result['protocol_ok']
+    rows = [json.loads(line) for line in (tmp_path / 'capture' / 'raw.jsonl').read_text().splitlines()]
+    assert any('invalid device: CUDA0' in row.get('error', '') for row in rows)
+    assert all(c['ok'] for c in result['checks'] if c['stage'] == 'worker-cleanup')
+    assert not any(c['stage'] == 'worker-exit' for c in result['checks'])
+    if profile == 'text':
+        assert 'invalid device: CUDA0' in result['error']
+
+
+async def test_cleanup_failure_keeps_primary_error_and_restores_managers(tmp_path):
+    from tllama import main
+    from tllama.routers import ollama, openai
+    args = smoke['parser']().parse_args(arguments(tmp_path, 'text'))
+    smoke['validate'](args)
+    args.output.mkdir()
+    capture = smoke['Capture'](args)
+    definition = tmp_path / 'definition.toml'
+    definition.write_text('original')
+    class Manager:
+        def __init__(self, config=None):
+            pass
+        def _toml_path_for_reference(self, name):
+            return definition
+        async def shutdown(self):
+            raise WorkerError('cleanup also failed')
+    async def fail(args):
+        main.model_manager = ollama.model_manager = openai.model_manager = object()
+        raise WorkerError('original startup failure')
+    module = SimpleNamespace(ModelManager=Manager, load_daemon_config=lambda: SimpleNamespace(backend=None),
+                             exercise=fail)
+    capture.managers.append(Manager())
+    previous = main.model_manager, ollama.model_manager, openai.model_manager
+    with pytest.raises(WorkerError, match='^original startup failure$'):
+        await smoke['exercise'](args, module, capture)
+    assert previous == (main.model_manager, ollama.model_manager, openai.model_manager)
+    assert any(row['stage'] == 'cleanup-error' and 'cleanup also failed' in row['error'] for row in capture.events)
+
+
+async def test_cancel_recovery_uses_requested_deadline_and_reports_expiry(monkeypatch):
+    api = smoke['module_for']('text')
+    calls = []
+    async def post(path, body):
+        assert path == '/api/chat' and body == {'model': 'a'}
+        await asyncio.sleep(0.02)
+        return 'response'
+    real_wait_for = asyncio.wait_for
+    async def timed(awaitable, timeout):
+        calls.append(timeout)
+        return await real_wait_for(awaitable, timeout)
+    monkeypatch.setattr(api.asyncio, 'wait_for', timed)
+    monkeypatch.setattr(api, 'report', lambda *a, **k: None)
+    assert await api.request_after_cancel(post, {'model': 'a'}, 600) == 'response'
+    with pytest.raises(WorkerError, match='--request-timeout'):
+        await api.request_after_cancel(post, {'model': 'a'}, 0.001)
+    assert calls == [600, 0.001]

@@ -381,6 +381,77 @@ cycles remain a separate existing smoke. Multimodal embeddings, Responses,
 Decision, prefix-cache rollback and arbitrary model combinations are outside
 this capture's claim.
 
+### 5.1 Follow-up 0121a: external-store metadata and recovery deadline
+
+The first captures exposed two diagnostic defects. Moving the ordinary disk
+metadata cache outside the model repository made its relative paths invalid;
+every public admission scanned the GGUF again. The wrapper now memoizes
+successful header scans in its own process, guarded by the resolved file's
+device/inode/size/mtime identity and a lock. Changed files and unsuccessful
+scans are not reused. Each admission still resolves the registered TOML and
+checks file identities. Production cache layout and schema are unchanged;
+no metadata or digest is written into the registered model store.
+
+The text recovery request after stream cancellation had a hard-coded 15-second
+deadline. It now uses `--request-timeout` and names that stage on expiry.
+Cleanup records reaping/removal separately from a started worker's exit status
+and retains the original exercise exception if cleanup also fails.
+
+Reviewed initial captures for `b11850-0e9433bfd3`:
+
+| Backend | Text | Tools |
+|---|---|---|
+| MI50 / Vulkan0 | Passed, including all eight public MTP projections, cancel/recovery and unload | Protocol passed; four escaped-key semantic mismatches remain under review |
+| MI100 | Both captures requested CUDA0; native rejected the unavailable device before loading | No HIP qualification from these runs |
+| P100 / CUDA0 | All eight public MTP projections and schemas passed; recovery hit the diagnostic 15-second deadline | Protocol passed; four escaped-key semantic mismatches remain under review |
+
+All 16 available raw/selected memory snapshots passed independent replay;
+main/MTP intervals reconcile without double counting. GPU placement remains
+full for noninput weights. The elapsed times here are not GPU benchmarks:
+MI50 performed 64 header scans totalling about 763 seconds; P100 performed 63
+totalling about 1675 seconds. No rerun of MI50 is needed for functional evidence.
+Tools semantic mismatches remain unsuccessful captures (`ok=false`); existing
+data do not independently locate them in model/native output versus adapters.
+Do not repair escaped arguments or mark those cases accepted.
+
+After applying 0121a after 0121 and running pytest, repeat only the two MI100
+profiles with **ROCm0**, and P100 **text**. Keep mmap on. Use fresh outputs:
+
+```bash
+# MI100 / HIP
+MODEL='byczech/qwen3.6-MTP-UD-Q4_K_XL:35b'
+PYTHONPATH=src python3 scripts/functional-qualification-smoke.py \
+  --profile text --model "$MODEL" --device ROCm0 \
+  --expected-fingerprint b11850-0e9433bfd3 \
+  --ctx 4096 --require-mtp \
+  --output /tmp/tllama-070-mi100-public-text-retry
+tar -cJf /tmp/tllama-070-mi100-public-text-retry.tar.xz \
+  -C /tmp tllama-070-mi100-public-text-retry
+
+PYTHONPATH=src python3 scripts/functional-qualification-smoke.py \
+  --profile tools --model "$MODEL" --device ROCm0 \
+  --expected-fingerprint b11850-0e9433bfd3 \
+  --ctx 4096 --predict 256 \
+  --output /tmp/tllama-070-mi100-public-tools-retry
+tar -cJf /tmp/tllama-070-mi100-public-tools-retry.tar.xz \
+  -C /tmp tllama-070-mi100-public-tools-retry
+
+# P100 / CUDA
+MODEL='qwen3.6-35b-A3B-MTP-UD-IQ3_XXS:35'
+PYTHONPATH=src python3 scripts/functional-qualification-smoke.py \
+  --profile text --model "$MODEL" --device CUDA0 \
+  --expected-fingerprint b11850-0e9433bfd3 \
+  --ctx 4096 --require-mtp --request-timeout 600 \
+  --output /tmp/tllama-070-P100-public-text-retry
+tar -cJf /tmp/tllama-070-P100-public-text-retry.tar.xz \
+  -C /tmp tllama-070-P100-public-text-retry
+```
+
+The model references above are copied from the reviewed captures. Adjust only
+if the registered names have since changed. No native rebuild or daemon restart
+is needed. Send failed captures as well. MI50 and P100 tools need no immediate
+repeat; the escaped-key review remains open separately.
+
 Protocol success and semantic review are separate: a known model-specific
 tool mismatch, a FIM semantic miss or embedding vector drift retains
 `protocol_ok=true` when appropriate, but sets `review_required=true`,

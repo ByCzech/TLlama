@@ -8,6 +8,7 @@ are changed. Decision qualification deliberately has its own contract.
 
 import argparse
 import asyncio
+from copy import deepcopy
 from dataclasses import replace
 import importlib.util
 import json
@@ -18,6 +19,7 @@ import runpy
 import signal
 import sys
 import tempfile
+import threading
 from types import SimpleNamespace
 
 from tllama.backend import ModelManager
@@ -182,6 +184,7 @@ def manager_type(args, capture, module):
     class ProbeWorker(NativeWorker):
         async def start(self):
             await super().start()
+            self._qualification_started = True
             capture.check('exact-fingerprint', self.runtime_fingerprint == args.expected_fingerprint,
                           observed=self.runtime_fingerprint)
             await capture.memory(self, 'loaded')
@@ -214,7 +217,25 @@ def manager_type(args, capture, module):
                 return worker
             super().__init__(config, native_worker_factory=factory, **kwargs)
             self.metadata_cache_dir = getattr(args, '_cache_dir', args.output / 'metadata-cache')
+            self._qualification_headers = {}
+            self._qualification_headers_lock = threading.Lock()
             capture.managers.append(self)
+
+        def _get_model_metadata_sync(self, model_path):
+            # The ordinary disk cache is relative to the model repository.
+            # An isolated capture elsewhere cannot use that layout. Memoize
+            # successful header scans here without writing to the real store;
+            # still resolve/check TOML and GGUF identities on every request.
+            path = Path(model_path).resolve()
+            with self._qualification_headers_lock:
+                identity = MTP['file_identity'](path)
+                cached = self._qualification_headers.get(path)
+                if cached is not None and cached[0] == identity:
+                    return deepcopy(cached[1])
+                metadata = super()._get_model_metadata_sync(str(path))
+                if metadata is not None and MTP['file_identity'](path) == identity:
+                    self._qualification_headers[path] = (identity, deepcopy(metadata))
+                return metadata
 
         def _resolve_virtual_model_spec(self, name):
             source = super()._resolve_virtual_model_spec(name)
@@ -242,6 +263,7 @@ async def exercise(args, module, capture):
     from tllama import main
     from tllama.routers import ollama, openai
     previous = main.model_manager, ollama.model_manager, openai.model_manager
+    primary_error = None
     try:
         source = module.ModelManager(module.load_daemon_config().backend)
         capture.identity(source._toml_path_for_reference(args.model))
@@ -267,6 +289,10 @@ async def exercise(args, module, capture):
             passed, observations = await module.exercise_model(args, args.model, 'embeddings', sdks, capture.emit)
             capture.emit('feature-review', observations=observations)
             capture.check('public-protocol', passed)
+    except BaseException as exc:
+        primary_error = exc
+        capture.emit('exercise-error', error=f'{type(exc).__name__}: {exc}')
+        raise
     finally:
         # Own cleanup also when an older diagnostic fails before entering its
         # server's try/finally, or when its semantic review asks for inspection.
@@ -281,9 +307,13 @@ async def exercise(args, module, capture):
                 try:
                     await worker.close()
                     capture.check('worker-cleanup', worker.state == 'closed'
-                        and (worker.process is None or worker.process.returncode in (0, -signal.SIGTERM))
+                        and (worker.process is None or worker.process.returncode is not None)
                         and (worker.runtime_directory is None or not worker.runtime_directory.exists()),
                         pid=worker.pid, returncode=worker.process.returncode if worker.process else None)
+                    if getattr(worker, '_qualification_started', False):
+                        capture.check('worker-exit', worker.process is not None
+                            and worker.process.returncode in (0, -signal.SIGTERM),
+                            pid=worker.pid, returncode=worker.process.returncode if worker.process else None)
                 except Exception as exc:
                     failures.append(exc)
                 finally:
@@ -294,7 +324,10 @@ async def exercise(args, module, capture):
                 except Exception as exc:
                     failures.append(exc)
             if failures:
-                raise WorkerError('; '.join(str(exc) for exc in failures))
+                details = '; '.join(f'{type(exc).__name__}: {exc}' for exc in failures)
+                capture.emit('cleanup-error', error=details)
+                if primary_error is None:
+                    raise WorkerError(details)
         finally:
             main.model_manager, ollama.model_manager, openai.model_manager = previous
 

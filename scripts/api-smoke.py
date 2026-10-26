@@ -74,6 +74,14 @@ def public_mtp_stats(payload):
     return stats
 
 
+async def request_after_cancel(post, chat, timeout):
+    report('after-stream-cancel-start', request_timeout=timeout)
+    try:
+        return await asyncio.wait_for(post('/api/chat', chat), timeout=timeout)
+    except TimeoutError as exc:
+        raise WorkerError(f'Request after stream cancellation exceeded --request-timeout ({timeout:g} s)') from exc
+
+
 async def exercise(args):
     from tllama import main
     from tllama.routers import ollama, openai
@@ -306,7 +314,7 @@ async def exercise(args):
                 else:
                     raise WorkerError('Cancellation stream produced no actual output')
             await wait_until(lambda: manager.native_snapshot()[0]['leases'] == 0)
-            body = (await asyncio.wait_for(post('/api/chat', chat), timeout=15)).json()
+            body = (await request_after_cancel(post, chat, args.request_timeout)).json()
             require(body['done'], 'Request after stream cancellation failed')
             report('after-stream-cancel', response=body)
             same_generation()
