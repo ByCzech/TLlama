@@ -506,8 +506,10 @@ async def mtp_request(reader, writer, body):
         if mode == 'changed-control' and enabled and MTP_CONTROL_READS > 1:
             content = 'CHANGED'
     timings = {**TIMINGS, 'predicted_per_second': 90.0 if enabled else 45.0}
-    if enabled and mode != 'no-drafting':
-        timings.update(draft_n=12, draft_n_accepted=6 if mode != 'bad-counts' else 13)
+    if (enabled and mode != 'no-drafting'
+            and not (mode == 'no-stream-drafting' and body['stream'])
+            and not (mode == 'no-full-drafting' and not body['stream'])):
+        timings.update(draft_n=12, draft_n_accepted=0 if mode == 'no-acceptance' else 6 if mode != 'bad-counts' else 13)
     finish = None if mode == 'no-finish' else 'stop'
     state_mode = os.environ.get('STUB_MTP_STATE')
     if state_mode:
@@ -535,6 +537,11 @@ async def mtp_request(reader, writer, body):
             mark('started', 'mtp')
             await reader.read()
             mark('cancelled', 'mtp')
+            if enabled and mode == 'changed-weights':
+                report_path = ROOT / 'memory-report'
+                report = json.loads(report_path.read_text())
+                report['weight_storage']['intervals'][0]['size_bytes'] += 1
+                report_path.write_text(json.dumps(report))
             return
     await stream_bytes(writer, event({'choices': [{'index': 0, 'delta': {}, 'finish_reason': finish}]}))
     await stream_bytes(writer, event({'choices': [], 'timings': timings, 'usage': USAGE}))

@@ -1,11 +1,12 @@
-# Native 0.7.0 qualification captures (0118–0119)
+# Native 0.7.0 qualification captures (0118–0120)
 
 Target: `b11850-0e9433bfd3`, native commit
 `0e9433bfd33d8cdb194285b70c0d421d39135df2`, Debian package
-`0.7.0~dev+b11850.1-1`. TLlama integration through 0118a passed the user's full
-suite: **3866 passed, 2 warnings**. Memory full/partial/vision captures have been
-reviewed on MI50/Vulkan, MI100/HIP and P100/CUDA12.9; lifecycle and remaining
-feature qualification are separate, as described below.
+`0.7.0~dev+b11850.1-1`. TLlama integration through 0119 passed the user's full
+suite: **3903 passed, 2 warnings**. Memory full/partial/vision and the 0119
+lifecycle have been reviewed on MI50/Vulkan, MI100/HIP and P100/CUDA12.9.
+P100 wake completed with a 600-second request timeout. Remaining feature
+qualification is separate, as described below.
 
 This preparation adds capture options to existing tools. It does not change
 `RUNTIME_FINGERPRINT`, `SUPPORTED_RUNTIME_FINGERPRINTS`, the log grammar
@@ -177,6 +178,90 @@ use its already tested **IQ3_XXS** model and a new `...-p100-lifecycle` output.
 Keep ctx=4096, matching q4_0 caches and FA; no projector or active MTP in this
 step. Do not repeat the high-context pressure/vision profiles. Native rebuild
 and daemon restart are not needed for this script-only patch.
+
+## 4. Active embedded MTP capture (0120)
+
+After 0119, the user's complete suite passed **3903 tests, 2 warnings**.
+The lifecycle captures on all three backends passed, including P100 sleep/wake
+after extending the HTTP request timeout to 600 seconds. Do not repeat them.
+
+`mtp-qualification-smoke.py` uses physical GGUF paths, the installed executable
+and private workers. It bypasses registered aliases/TOML and daemon runtime
+environment overrides. The expected fingerprint is mandatory and strict. It
+does not change production allowlists or qualify public APIs/Decision.
+
+The same embedded-MTP GGUF is loaded twice, sequentially: explicit `none`, then
+`draft-mtp` with a positive draft limit. The first worker is closed before the
+second starts. Both use ctx=4096, K/V=q4_0, FA=on, batch/ubatch=512, all GPU
+layers and fit off. The default load and request timeouts are both 600 seconds.
+No projector, registered-model modification, download or native rebuild is needed.
+
+Each profile checks nonempty inference for number-copy and Python-code prompts,
+nonstream/stream parity of exact content/reasoning, finish and generated count,
+then closes a long stream after a live content/reasoning delta and compares the
+next control answer with its pre-cancel control in the same PID. The MTP profile
+requires measured drafted **and accepted** tokens in both streaming modes;
+argv, model filename or an allocated MTP context alone cannot pass this check.
+The off profile must have no positive draft counters. Missing MTP measurements
+remain unknown and fail qualification. Inspect the saved native log for actual
+early task stop: transport closure and successful reuse do not prove it alone.
+
+Each profile saves raw HTTP and separately selected memory observations after
+load, inference and cancel: **12 memory snapshots** for a complete capture.
+Every observation requires known, classified weight payload and actual device
+assignment, valid extensions, locality and bounded diagnostics when requested.
+The active profile additionally requires the shared main/MTP model owner and
+nonempty `mtp_layers` payload. Role-filtered totals are checked against the union
+of unique intervals; overlapping main/MTP subtotals are never added. Tensor
+diagnostic records do not supply totals. Payloads must remain unchanged within
+each worker, including after cancel; raw and selected IDs are never joined.
+No equality of total memory between off/on is required: MTP allocates additional
+weights/context/work buffers. Sizes are backend accounting, not physical VRAM/RSS.
+
+Off/on output comparisons are saved separately. A difference yields
+`protocol_ok=true`, `review_required=true`, `ok=false` and exit 1 if the other
+checks passed. This preserves possible numerical/model differences for review;
+it does not silently call a changed answer a successful qualification. A normal
+capture has `ok=true`; generated code correctness and broad model quality still
+need human review. Short timing samples are not a performance benchmark.
+
+Start on **MI50/Vulkan0**, using the same physical Q4_K_XL embedded-MTP GGUF
+as the previous captures. Release any service-loaded model first. Run the full
+pytest suite after applying 0120, then:
+
+```bash
+PYTHONPATH=src python3 scripts/mtp-qualification-smoke.py \
+  --expected-fingerprint b11850-0e9433bfd3 \
+  --model /absolute/path/to/Qwen3.6-35B-A3B-MTP-UD-Q4_K_XL.gguf \
+  --device Vulkan0 --ctx 4096 --draft 3 --predict 128 \
+  --type-k q4_0 --type-v q4_0 --flash-attn on \
+  --output /tmp/tllama-070-mi50-mtp
+
+tar -cJf /tmp/tllama-070-mi50-mtp.tar.xz \
+  -C /tmp tllama-070-mi50-mtp
+```
+
+Return the entire archive even on failure: `result.json`, `raw.jsonl`,
+`summary.jsonl`, `worker.log`, `off-load.log` and `mtp-load.log` when reached.
+Use a new output directory on every attempt; an existing directory is refused.
+`--dry-run` prints both argv without creating output or starting a process.
+`--transport tcp` explicitly selects authenticated loopback instead of UDS.
+
+After reviewing MI50, repeat on **MI100/ROCm0** with its same Q4_K_XL GGUF,
+then **P100/CUDA0** with its previously tested IQ3_XXS embedded-MTP GGUF and a
+new `...-p100-mtp` directory. Lower-context MTP memory requirements can still
+differ from the previous non-MTP run: preserve any OOM capture before changing
+settings. Do not rerun the high-context pressure/vision matrix.
+
+The parallel legacy HIP investigation reportedly points strongly at amdgpu/KFD
+handling of mmap, with disabling mmap as a workaround. That is separate from
+the original sparse mmap **accounting** case and from MI100/gfx908 qualification;
+this patch neither diagnoses the kernel nor closes that issue. If this problem
+blocks a HIP capture, add **`--no-mmap`** to both off/on diagnostic launches
+using a new output directory. The actual native option is `--load-mode none`,
+saved in argv; `result.json` also records `mmap=false`. Such a result qualifies
+only that explicit no-mmap configuration. Do not silently change production
+defaults or describe no-mmap success as validation of the mmap path.
 
 Each raw response and selected telemetry observation is validated independently;
 IDs and sequences are not joined across observations or generations. Sequence
