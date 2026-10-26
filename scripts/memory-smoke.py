@@ -194,12 +194,12 @@ def summarize(telemetry, profile, *, require_weights=False):
         noninput = [g for g in groups if g["component"] != "input_weights"]
         checks["cpu_layers"] = any(g["location"] in ("cpu", "mixed") for g in noninput)
         checks["accelerator_layers"] = any(g["location"] in ("accelerator", "mixed") for g in noninput)
-    if profile == "full":
-        # All layers are requested; actual mixed placement is evidence to inspect,
-        # not something to conceal or reject merely to obtain a 100% GPU label.
+    if profile in ("full", "vision"):
+        # Requested GPU layers can still include CPU tensors after fitting or
+        # loader selection. Retain that evidence, including for vision captures.
         checks["accelerator_weights"] = any(g["component"] != "input_weights"
             and g["location"] in ("accelerator", "mixed") for g in groups)
-    if profile in ("vision", "no-mmap"):
+    if profile == "no-mmap":
         noninput = [g for g in groups if g["component"] != "input_weights"]
         checks["accelerator_weights"] = bool(noninput) and all(g["location"] == "accelerator" for g in noninput)
     if profile == "vision":

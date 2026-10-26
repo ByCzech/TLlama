@@ -133,7 +133,8 @@ def test_profiles_are_explicit_and_dry_run_writes_nothing(tmp_path, capsys, monk
     assert not output.exists()
 
 
-def test_full_profile_retains_real_cpu_weights_instead_of_asserting_full_gpu(diagnosed):
+@pytest.mark.parametrize('profile', ['full', 'vision'])
+def test_accelerator_profiles_retain_real_cpu_weights_instead_of_asserting_full_gpu(diagnosed, profile):
     from tllama.native_memory_api import NativeMemoryReport
     from tllama.native_telemetry import MemoryTelemetry
     from test_native_memory import observe
@@ -142,8 +143,30 @@ def test_full_profile_retains_real_cpu_weights_instead_of_asserting_full_gpu(dia
             group.update(location='accelerator', device_ids=['gpu0'])
     telemetry = MemoryTelemetry(observe(''), compare=True)
     telemetry.accept(NativeMemoryReport(diagnosed))
-    summary = smoke.summarize(telemetry.snapshot(), 'full')
+    summary = smoke.summarize(telemetry.snapshot(), profile)
     assert summary['checks']['accelerator_weights'] is True
+    assert summary['display']['size'] == 510 and summary['display']['size_vram'] == 478
+
+
+@pytest.mark.parametrize('profile', ['full', 'vision', 'no-mmap'])
+@pytest.mark.parametrize('placement', ['mixed', 'cpu', 'empty'])
+def test_accelerator_requirement_matches_profile_without_changing_payload(diagnosed, profile, placement):
+    from tllama.native_memory_api import NativeMemoryReport
+    from tllama.native_telemetry import MemoryTelemetry
+    from test_native_memory import observe
+    groups = diagnosed['placement']['layer_groups']
+    for group in groups:
+        if group['component'] != 'input_weights':
+            group.update(location=placement if placement != 'empty' else 'cpu',
+                         device_ids=['cpu', 'gpu0'] if placement == 'mixed' else ['cpu'])
+    if placement == 'empty':
+        diagnosed['placement']['layer_groups'] = []
+    telemetry = MemoryTelemetry(observe(''), compare=True)
+    telemetry.accept(NativeMemoryReport(diagnosed))
+    summary = smoke.summarize(telemetry.snapshot(), profile, require_weights=True)
+    assert summary['checks']['accelerator_weights'] is (placement == 'mixed' and profile != 'no-mmap')
+    assert summary['checks']['weight_storage_known'] is True
+    assert summary['weight_storage']['totals']['payload_bytes'] == 190
     assert summary['display']['size'] == 510 and summary['display']['size_vram'] == 478
 
 

@@ -72,6 +72,12 @@ a projector, or `partial --gpu-layers N` to request a known partial placement.
 CPU and available Vulkan runs remain useful independent profiles. CPU inference
 on the large original model can be slow; record any smaller-model substitution.
 
+Like `full`, `vision` accepts actual mixed CPU/GPU weight placement while
+requiring at least some accelerator noninput weights and a projector. CPU
+weights remain in the report and display; this check does not assert 100% GPU.
+This also applies when a diagnostic caller enables automatic fitting through
+`WorkerLaunchSpec`. The default CLI launch still uses fixed offload with fit off.
+
 `--weight-storage` requires known deduplicated payload coverage and classified
 CPU/accelerator assignment. Missing, partial, malformed or unclassified evidence
 fails this qualification check, with all raw output retained. This opt-in
