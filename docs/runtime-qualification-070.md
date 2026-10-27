@@ -462,6 +462,78 @@ public frame and later reuse alone do not establish early native compute
 stop; inspect actual native `cancel task`/release logs. Nonstream embedding
 transport closure likewise does not prove early compute cancellation.
 
+### 5.2 Follow-up 0122: raw escaped-key evidence
+
+The three existing tools captures contain the same incorrect keys in native
+`Parsed message` and public API results. That locates the difference before
+the TLlama response adapters, but does not distinguish generation from the
+native parser. Qwen3-Coder issue #531 describes similar symptoms; it does not
+establish that the cause is the same. Ollama issue #15574 concerns a separate
+XML parsing defect reported by this user.
+
+The focused `tools-escape` profile sends four nonstream calls: the original
+JSON-encoded key containing a real LF, and a control containing literal
+backslash+n, each through TLlama's Ollama and OpenAI API surfaces. These are
+compatibility endpoints of the isolated TLlama listener. A comparison against
+the actual Ollama service is a subsequent experiment, not part of this profile.
+There are no followup or cancellation calls in this focused capture; their
+prior qualification is unchanged. MTP is off, ctx=4096, full GPU offload,
+mmap on, K/V=q4_0, FA=on, and the original tool declarations and prompts are
+reused. The control changes only the requested key. Other profiles are unchanged.
+
+Only the diagnostic worker adds native `verbose: true`. In pinned native
+commit `0e9433bfd3`, the nonstream `__verbose.content` comes from the raw
+`slot.generated` text, while `choices[].message.tool_calls` contains the
+parsed output. The same response also carries the actual prompt and generation
+settings. Parsing and the tool grammar remain enabled; no second inference,
+`parse_tool_calls` override, manually rendered completion, or raw endpoint is
+used to manufacture the reference. No native rebuild is necessary.
+
+`raw.jsonl` stores each complete `native-debug-response`, its actual native
+request, the public request/response, and `escape-comparison` records. Missing
+debug text/prompt/grammar or a native/public argument difference fails the
+capture. A recognized single string parameter is inspected literally, without
+unescaping or repairing it. Unrecognized XML and input text differences remain
+review items. The diagnoses are observations about the recorded boundaries:
+
+| Diagnosis | Evidence |
+|---|---|
+| `exact` | Raw XML value, native argument and public argument all match the requested key |
+| `generated-value-mismatch` | Prompt preserves the user text; raw value is already wrong and survives parsing unchanged |
+| `native-parser-difference` | Raw XML value differs from the parsed native argument |
+| `input-needs-review` | The actual native prompt does not contain the submitted user text verbatim |
+| `raw-format-needs-review` | The diagnostic cannot identify the exact single-parameter XML envelope safely |
+
+The first two error diagnoses still need review of the captured prompt and
+grammar before assigning responsibility to model weights versus template or
+sampling. `exact` in this shorter fresh-worker sequence does not clear the
+older failures. A mismatch retains `protocol_ok=true` when the protocol is
+valid, but sets `review_required=true`, `ok=false`, and exit 1. Send the archive
+in either case. The profile never executes a generated tool.
+
+First capture: **MI100 / ROCm0**, with the same registered Q4_K_XL model that
+showed the mismatch. Use a new output directory. After applying 0122 after
+0121a and running the full pytest suite, run from the repository root:
+
+```bash
+MODEL='byczech/qwen3.6-MTP-UD-Q4_K_XL:35b'
+PYTHONPATH=src python3 scripts/functional-qualification-smoke.py \
+  --profile tools-escape --model "$MODEL" --device ROCm0 \
+  --expected-fingerprint b11850-0e9433bfd3 \
+  --ctx 4096 --predict 256 --request-timeout 600 \
+  --output /tmp/tllama-070-mi100-tools-escape
+tar -cJf /tmp/tllama-070-mi100-tools-escape.tar.xz \
+  -C /tmp tllama-070-mi100-tools-escape
+```
+
+Only this one backend is needed initially. Do not repeat the full memory,
+lifecycle, MTP or text matrix. Daemon restart and native rebuild are unnecessary.
+The registered model TOML is not modified. A later actual-Ollama comparison
+must use the same GGUF bytes and record its template and sampling; an Ollama
+catalog alias alone does not establish model identity. Passing there would be
+useful for locating a parser/template workaround, but two different generations
+by themselves cannot prove which implementation is at fault.
+
 ## 6. Acceptance after captures
 
 Review actual worker health/props, stream/nonstream inference, tokenization,

@@ -439,8 +439,31 @@ async def tools_request(reader, writer, body):
                 'name':'lookup_record','arguments':json.dumps({'key':'wrong' if mode == 'semantic-bad' else key},ensure_ascii=False)}})
     finish = 'tool_calls' if calls else 'stop'
     if not body['stream']:
-        await json_response(writer,{'choices':[{'index':0,'message':{'role':'assistant','content':content,'tool_calls':calls},
-                                               'finish_reason':finish}],'usage':USAGE,'timings':TIMINGS})
+        response = {'choices':[{'index':0,'message':{'role':'assistant','content':content,'tool_calls':calls},
+                                               'finish_reason':finish}],'usage':USAGE,'timings':TIMINGS}
+        if body.get('verbose') and calls:
+            fault = os.environ.get('STUB_TOOLS_DEBUG', 'normal')
+            key = json.loads(calls[0]['function']['arguments'])['key']
+            raw_key = key.replace('\n', '\\n') if fault == 'generated' else key
+            parsed_key = key.replace('\n', '\\n') if fault in {'generated', 'parser'} else key
+            calls[0]['function']['arguments'] = json.dumps({'key': parsed_key}, ensure_ascii=False)
+            response['__verbose'] = {
+                'content': '<tool_call>\n<function=lookup_record>\n<parameter=key>\n' + raw_key
+                           + '\n</parameter>\n</function>\n</tool_call>',
+                'prompt': '\n'.join(m['content'] for m in messages),
+                'generation_settings': {'grammar': 'synthetic-test-tool-grammar'},
+            }
+            if fault == 'missing-debug':
+                del response['__verbose']
+            elif fault == 'no-raw':
+                response['__verbose']['content'] = None
+            elif fault == 'no-grammar':
+                response['__verbose']['generation_settings']['grammar'] = ''
+            elif fault == 'bad-prompt':
+                response['__verbose']['prompt'] = 'unrelated prompt'
+            elif fault == 'unknown-xml':
+                response['__verbose']['content'] = '<different-format>' + key
+        await json_response(writer,response)
         return
     writer.write(b'HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n')
     await writer.drain()

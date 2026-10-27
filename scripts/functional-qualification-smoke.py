@@ -33,7 +33,7 @@ from tllama.worker import NativeWorker, WorkerError
 HERE = Path(__file__).resolve().parent
 MTP = runpy.run_path(str(HERE / 'mtp-qualification-smoke.py'))
 LIFECYCLE = MTP['LIFECYCLE']
-PROFILES = {'text': 'api-smoke.py', 'tools': 'tools-api-smoke.py',
+PROFILES = {'text': 'api-smoke.py', 'tools': 'tools-api-smoke.py', 'tools-escape': 'tools-api-smoke.py',
             'fim': 'fim-api-smoke.py', 'fim-unsupported': 'fim-api-smoke.py',
             'embeddings': 'embeddings-api-smoke.py'}
 
@@ -128,6 +128,7 @@ class Capture:
         with (self.args.output / 'raw.jsonl').open('a', encoding='utf-8') as stream:
             stream.write(json.dumps(row, ensure_ascii=False, allow_nan=False) + '\n')
         if stage not in {'request', 'native-response', 'native-event', 'public-event', 'public-response',
+                         'native-debug-response',
                          'sdk-response', 'sdk-wire-response', 'native-memory', 'tokenization',
                          'truncation-reference', 'qualification-memory'}:
             concise = {k: v for k, v in row.items() if k not in {'argv', 'props', 'metadata'}}
@@ -276,8 +277,9 @@ async def exercise(args, module, capture):
             args.model = [] if args.unsupported_model else [args.model]
             passed = await module.exercise(args)
             capture.check('public-protocol', passed)
-        elif args.profile == 'tools':
+        elif args.profile in {'tools', 'tools-escape'}:
             args.clients_only = False
+            args.escape_only = args.profile == 'tools-escape'
             capture.check('public-protocol', await module.exercise(args, capture.emit))
         else:
             args.atol, args.rtol, args.norm_tolerance, args.cancel_after_ms = 1e-4, 1e-3, 1e-3, 5

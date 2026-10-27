@@ -3,6 +3,7 @@
 
 import argparse
 import asyncio
+from copy import deepcopy
 from contextlib import aclosing
 from dataclasses import replace
 import importlib.util
@@ -250,6 +251,64 @@ async def exercise_clients(args, address, emit):
     return review
 
 
+def escape_probes(predict):
+    original = next(case for case in reference.probes(predict) if case[0] == 'escaped-required')
+    literal = deepcopy(original[1])
+    key = reference.ESCAPED.replace('\n', '\\n')
+    literal['messages'][-1]['content'] = (
+        'Retrieve these record keys using lookup_record, one call per key: ' + json.dumps([key], ensure_ascii=False))
+    return [original, ('literal-backslash-n', literal, [key])]
+
+
+def inspect_escape(body, payload, result, expected):
+    debug = payload.get('__verbose')
+    require(isinstance(debug, dict), 'Native response lacks __verbose evidence')
+    raw, prompt, settings = (debug.get(key) for key in ('content', 'prompt', 'generation_settings'))
+    require(isinstance(raw, str) and bool(raw) and isinstance(prompt, str) and bool(prompt),
+            'Native debug content/prompt must be nonempty strings')
+    require(isinstance(settings, dict) and isinstance(settings.get('grammar'), str) and bool(settings['grammar']),
+            'Native debug evidence lacks the active tool grammar')
+    native = reference.full_result(payload)
+    require(len(native['arguments']) == 1 and native['arguments'][0]['valid'], 'Expected one complete native tool argument')
+    native_args = native['arguments'][0]['arguments']
+    require(set(native_args) == {'key'} and isinstance(native_args['key'], str), 'Expected one native string key')
+    require(reference.signatures(native) == reference.signatures(result), 'Native/public tool argument mismatch')
+    # Inspect only the exact single-parameter XML envelope. Unknown formats stay
+    # reviewable; never guess an escape convention or repair the native value.
+    opener, closer = '<parameter=key>\n', '\n</parameter>'
+    recognized = (raw.count('<tool_call>') == raw.count('</tool_call>') == 1
+                  and raw.count('<function=lookup_record>') == raw.count('</function>') == 1
+                  and raw.count(opener) == raw.count(closer) == 1)
+    raw_key = raw.split(opener, 1)[1].split(closer, 1)[0] if recognized else None
+    input_preserved = body['messages'][-1]['content'] in prompt
+    native_key = native_args['key']
+    diagnosis = ('input-needs-review' if not input_preserved else
+                 'raw-format-needs-review' if not recognized else
+                 'native-parser-difference' if raw_key != native_key else
+                 'generated-value-mismatch' if raw_key != expected else 'exact')
+    return {'diagnosis': diagnosis, 'input_text_preserved': input_preserved,
+            'raw_xml_recognized': recognized, 'expected_key': expected,
+            'raw_xml_key': raw_key, 'native_key': native_key,
+            'native_public_match': True, 'raw_native_match': recognized and raw_key == native_key,
+            'semantic_match': reference.semantics(result, [expected]),
+            'note': 'Raw debug text is from the same nonstream inference; no parser/grammar override.'}
+
+
+async def exercise_escapes(args, client, worker, emit):
+    review = []
+    for api, path in (('ollama', '/api/chat'), ('openai', '/v1/chat/completions')):
+        for probe, native, keys in escape_probes(args.predict):
+            body = body_for(args.model, api, probe, native, False, args.predict)
+            before = worker.escape_serial
+            result = await collect(client, path, body, api, emit, probe=probe, stream=False, phase='call')
+            require(worker.escape_serial == before + 1, 'Missing or ambiguous native debug response')
+            evidence = inspect_escape(body, worker.escape_response, result, keys[0])
+            emit('escape-comparison', api=api, probe=probe, stream=False, **evidence)
+            if evidence['diagnosis'] != 'exact' or not evidence['semantic_match']:
+                review.append(f"{api}:{probe}:{evidence['diagnosis']}")
+    return review
+
+
 async def exercise(args, emit):
     from tllama import main
     from tllama.routers import ollama, openai
@@ -257,8 +316,24 @@ async def exercise(args, emit):
     if args.models_dir:
         config = replace(config, models_dir=str(args.models_dir.expanduser().resolve()))
     workers = []
+    escape_only = getattr(args, 'escape_only', False)
+    class EscapeWorker(NativeWorker):
+        escape_serial = 0
+        escape_response = None
+
+        async def chat(self, payload):
+            # verbose only adds raw debug fields; keep parsing and generation
+            # grammar enabled, and return the original parsed response as well.
+            body = self._body({**payload, 'verbose': True}, chat=True, stream=False)
+            response = await super().chat(body)
+            self.escape_serial += 1
+            self.escape_response = deepcopy(response)
+            emit('native-debug-response', serial=self.escape_serial, pid=self.pid, request=body, payload=response)
+            return response
+
     def factory(spec):
-        worker = NativeWorker(replace(spec, runtime_options={**spec.runtime_options, 'n_batch': 512, 'n_ubatch': 512}))
+        worker_type = EscapeWorker if escape_only else NativeWorker
+        worker = worker_type(replace(spec, runtime_options={**spec.runtime_options, 'n_batch': 512, 'n_ubatch': 512}))
         workers.append(worker)
         return worker
     class SmokeManager(ModelManager):
@@ -287,7 +362,9 @@ async def exercise(args, emit):
                 worker = lease.worker
                 emit('ready', pid=worker.pid, generation=lease.generation, argv=worker.command,
                      fingerprint=worker.runtime_fingerprint, context=worker.props['default_generation_settings']['n_ctx'])
-            for api, path in (() if args.clients_only else (('ollama', '/api/chat'), ('openai', '/v1/chat/completions'))):
+            if escape_only:
+                review.extend(await exercise_escapes(args, client, worker, emit))
+            for api, path in (() if args.clients_only or escape_only else (('ollama', '/api/chat'), ('openai', '/v1/chat/completions'))):
                 cases = reference.probes(args.predict)
                 if api == 'ollama':
                     # Ollama has no public tool_choice / parallel switch. Test
@@ -327,7 +404,7 @@ async def exercise(args, emit):
                             emit('error', api=api, error=f'{type(exc).__name__}: {exc}', **labels)
             if args.clients_only:
                 review.extend(await exercise_clients(args, str(client.base_url).rstrip('/'), emit))
-            else:
+            elif not escape_only:
                 # Cancel while OpenAI still exposes only partial string arguments.
                 native = reference.probes(args.predict)[1][1]
                 body = body_for(args.model, 'openai', 'single-required', native, True, 512)
