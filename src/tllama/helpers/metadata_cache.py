@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import json
 import os
-import tempfile
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, Dict, Optional
+
+from tllama.helpers.repository_files import repository_tempfile
 
 
 SCHEMA_VERSION = 8
@@ -178,10 +179,10 @@ def _save_cache_document(
             section: payload,
         }
 
-        fd, tmp_name = tempfile.mkstemp(
+        fd, tmp_name = repository_tempfile(
             prefix=f".{cache_path.name}.",
             suffix=".tmp",
-            dir=str(cache_dir),
+            directory=cache_dir,
         )
 
         try:

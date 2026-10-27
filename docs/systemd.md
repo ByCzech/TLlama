@@ -91,6 +91,34 @@ model/request precedence is described in [daemon.md](daemon.md). The unit
 does not read `/etc/default/tllama` automatically. An administrator can add an
 `EnvironmentFile` in a drop-in when needed.
 
+### File creation mask
+
+To allow the service group to read and write newly created model-store data,
+add a drop-in with `sudo systemctl edit tllamad.service`:
+
+```ini
+[Service]
+UMask=0002
+```
+
+Apply it and inspect the service mask:
+
+```sh
+sudo systemctl daemon-reload
+sudo systemctl restart tllamad.service
+systemctl show tllamad.service -p User -p Group -p UMask
+```
+
+Without directory default ACLs, `0002` gives new repository files `0664` and
+directories `0775`; `0022` gives `0644`/`0755`, and `0077` gives `0600`/`0700`.
+The supplied unit sets `UMask=0027`, giving new repository files `0640` and
+directories `0750` without default ACLs. Interactive startup inherits its shell's
+mask. Shared access also needs the correct group and parent traversal rights.
+Existing TOML access bits are retained on replacement; existing files are not
+bulk-chmodded. See [repository permissions](model-repositories.md#file-permissions)
+for uploads, cache files, third-party downloads and default ACLs.
+Worker runtime directories and sockets remain private.
+
 On shutdown, SIGTERM first reaches the daemon so it can drain and close its
 managed workers. `KillMode=mixed` lets systemd kill any remaining processes in
 the unit's cgroup after the stop timeout. A failed daemon restarts after five

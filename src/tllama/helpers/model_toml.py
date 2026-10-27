@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-import tempfile
+import stat
 
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 import tomlkit
 import tomlkit.exceptions
 from tllama.helpers.fim import FIM_ORDERS
+from tllama.helpers.repository_files import repository_tempfile
 
 
 __all__ = (
@@ -569,6 +570,10 @@ def write_model_toml(path: Path, text: str, *, overwrite: bool = False) -> Path:
     overwrite=False by default: a .toml is a file a person edits, and
     silently replacing one that already exists would discard their work.
     Callers that mean to replace one have to say so.
+
+    New files use the daemon's umask/default ACLs. Replacement retains the
+    existing access bits, but not special bits or the old inode's ownership
+    and extended ACLs.
     """
     path = Path(path)
 
@@ -577,30 +582,43 @@ def write_model_toml(path: Path, text: str, *, overwrite: bool = False) -> Path:
 
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    handle = tempfile.NamedTemporaryFile(
-        mode="w",
-        encoding="utf-8",
-        newline="",
-        dir=str(path.parent),
+    existing_mode = None
+    if overwrite:
+        try:
+            # Preserve access bits, not setuid/setgid/sticky bits. Start the
+            # temporary no more permissively than this existing document.
+            existing_mode = stat.S_IMODE(path.stat().st_mode) & 0o777
+        except FileNotFoundError:
+            pass
+
+    descriptor, temporary = repository_tempfile(
+        directory=path.parent,
         prefix=f".{path.name}.",
         suffix=".tmp",
-        delete=False,
+        mode=existing_mode if existing_mode is not None else 0o666,
     )
     try:
-        with handle:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as handle:
             handle.write(text)
             handle.flush()
+            if existing_mode is not None:
+                # Creation applied umask/default ACLs; restore the selected
+                # access bits before publishing the complete replacement.
+                if hasattr(os, "fchmod"):
+                    os.fchmod(handle.fileno(), existing_mode)
+                else:
+                    os.chmod(temporary, existing_mode)
             os.fsync(handle.fileno())
 
         if overwrite:
-            os.replace(handle.name, path)
+            os.replace(temporary, path)
         else:
             # Unlike an exists/replace pair, link publishes without ever
             # clobbering a concurrent writer's newly created definition.
-            os.link(handle.name, path)
-            Path(handle.name).unlink()
+            os.link(temporary, path)
+            temporary.unlink()
     except BaseException:
-        Path(handle.name).unlink(missing_ok=True)
+        temporary.unlink(missing_ok=True)
         raise
 
     return path

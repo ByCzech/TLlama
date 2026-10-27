@@ -136,3 +136,22 @@ The following still need concrete disposition before 1.0.0:
 The [runtime audit](runtime-audit-070.md) remains authoritative for accepted
 feature/hardware scope. Personal evidence archives and work plans stay outside
 Git; this document is the repository-facing review record.
+
+## Repository permissions follow-up (0131)
+
+The model-store writer review found that private `tempfile` defaults forced
+new TOMLs, imported uploads and cache entries to `0600` regardless of the daemon
+mask. These repository writers now share exclusive temporary-file creation with
+ordinary `0666` permissions subject to the kernel's umask/default ACL handling.
+Atomic publication and upload verification remain in place; no process-wide
+mask changes occur during a request. Existing TOML access bits survive explicit
+replacement, including a replacement temporary that starts no more permissively
+than the original document. See [repository permissions](model-repositories.md#file-permissions)
+and [systemd mask configuration](systemd.md#file-creation-mask).
+
+The supplied unit retains `UMask=0027`; administrators can override it to `0002`
+for group writes. Existing `0600` data needs a separate deliberate permission
+adjustment. This code change does not by itself close the reported Pull errno 13
+case: the actual affected account/path must still be retested. Hugging Face
+downloads, locks and cache remain under that dependency's filesystem behavior.
+No native runtime rebuild or new GPU captures are required for this change.
