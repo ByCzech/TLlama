@@ -1,11 +1,9 @@
-# Native residency checkpoint (block 04)
+# Native residency
 
-Native worker policy is available through ModelManager's native lease methods.
-The [05b public text routes](native-public-api.md) now use those methods;
-[06a memory reporting](native-memory.md) observes native generations without
-acquiring leases or extending TTL. One running ModelManager instance
-cannot mix the two engine modes. This is a temporary migration boundary, not a
-new public backend toggle or a permanent dual-engine commitment.
+ModelManager uses native leases for public inference and delegates process
+ownership to NativeResidency. [Memory reporting](native-memory.md) observes
+generations without acquiring leases or extending TTL. There is one inference
+engine: private native subprocesses, without a Python inference binding.
 
 Storage references retain their existing meaning: one segment is Local, two
 segments TLlama, three segments HuggingFace. `a` identifies `Local/a.toml`;
@@ -18,8 +16,7 @@ Definition/path/header I/O does not hold the residency lock.
 
 `residency.NativeResidency` owns native load/close/exit-observer tasks. It receives
 a definition resolver and worker factory, and has no Python inference binding
-dependency. ModelManager owns the janitor and delegates native expiry outside
-its legacy registry lock. Task cleanup is awaited even if its caller is cancelled.
+dependency. ModelManager owns the janitor and delegates expiry to residency. Task cleanup is awaited even if its caller is cancelled.
 
 Use one lease context around the entire request, including transport slot wait:
 
@@ -33,7 +30,7 @@ async with manager.acquire_native_model(name, num_ctx=2048, keep_alive="5m") as 
 
 The lease contains generation number, definition snapshot, resolved configuration
 and worker. Request-local timing/cache/reasoning data remains in native results;
-public result translation belongs to block 05. The manager adds no second
+public result translation is handled by the native API adapters. The manager adds no second
 inference queue: NativeWorker serializes its one-slot transport.
 
 | Event | Behavior |
@@ -78,8 +75,8 @@ lease; a zero-keep_alive preload only unloads and does not load a new worker.
 `native_snapshot()` reports lifecycle, leases, generation, PID, requested/effective
 context, keep_alive/remaining TTL and retirement/error information. Busy/pinned
 generations have no running idle TTL. It is an internal diagnostic shape, not
-`/api/ps` and not measured GPU/RAM residency. The legacy reporting methods refuse
-a native-mode instance rather than falsely presenting an empty legacy registry.
+`/api/ps` and not measured GPU/RAM residency. The public `/api/ps` adapter uses a separate reporting snapshot with memory
+provenance.
 Generation numbers remain distinct across full shutdown/start on the same manager.
 
 ## ModelManager methods and integration boundary
@@ -93,12 +90,10 @@ Generation numbers remain distinct across full shutdown/start on the same manage
 - `shutdown()` awaits native cleanup, including cancelled loads and active streams;
   even a failed janitor cannot skip this cleanup.
 
-At the original 04 checkpoint public routes still kept legacy methods. They
-now use native leases at 05b. Native instances refuse legacy get_model/slot/
-unload/reporting operations. After complete shutdown,
-start can begin a fresh run with a fresh engine choice. Metadata/storage reads
-remain engine-independent. The backend module still imports the legacy binding;
-removing that application dependency remains the final cleanup milestone.
+Public generation, embedding and Decision routes use the same native ownership
+policy with operation-specific admission. After complete shutdown, start can
+begin a fresh residency run. Metadata/storage reads remain independent of
+worker loading; the backend module does not import a Python inference binding.
 
 ## Hardware check: one registered text model, one native load
 

@@ -16,7 +16,9 @@ Next listing/show after restart: still fast
 
 ## Why Metadata Cache Exists
 
-TLlama needs model metadata for several operations:
+Metadata is used for listing, admission and request preparation. `/api/ps`
+uses the already-admitted generation snapshot; polling does not rescan GGUFs.
+Consumers include:
 
 - `/api/tags`
 - `/api/show`
@@ -70,7 +72,7 @@ The hash-like file name is not intended to be human-readable. The JSON content c
 
 The cache stores normalized metadata used by TLlama.
 
-Example structure:
+Historical schema-1 example (current header schema is 8; digest schema is 1):
 
 ```json
 {
@@ -125,7 +127,11 @@ This means the cache is automatically invalidated when:
 - the model modification time changes,
 - the cache schema version changes.
 
-TLlama does not hash the full model file by default, because hashing large GGUF files would require reading many gigabytes of data and would defeat the purpose of the cache.
+Header extraction reads GGUF metadata without loading inference weights.
+Content SHA-256 is a separate persistent digest cache: a cold listing/show may
+compute it when no valid digest is available, which can read the entire file.
+A verified download/upload digest can seed that cache. Header schema changes
+do not invalidate valid content digests.
 
 ---
 
@@ -152,7 +158,7 @@ When `ollama show` or `/api/show` is called for a model without a valid cache, T
 Example:
 
 ```bash
-OLLAMA_HOST=127.0.0.1:54800 ollama show <model-name>
+OLLAMA_HOST=127.0.0.1:54800 ollama show MODEL
 ```
 
 ### After model pull
@@ -244,7 +250,7 @@ Cache files are plain JSON.
 Example:
 
 ```bash
-python -m json.tool /var/lib/tllama/models/.tllama/metadata-cache/<cache-file>.json | less
+python -m json.tool /var/lib/tllama/models/.tllama/metadata-cache/CACHE_FILE.json | less
 ```
 
 Useful fields to inspect:
@@ -292,7 +298,10 @@ This is unusual in normal workflows.
 
 ### Cache contains old fields after a code update
 
-Remove the cache directory:
+Header schema changes normally refresh stale entries automatically, preserving
+valid independent digest entries. If manual rebuilding is needed, removing the
+whole directory also discards digest caches and may require full-file hashing:
+
 
 ```bash
 rm -rf /var/lib/tllama/models/.tllama/metadata-cache

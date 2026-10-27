@@ -6,8 +6,9 @@ retains the older audited build. See [runtime-audit-070.md](runtime-audit-070.md
 for current audit sets, measured scope and remaining release work. Explicit
 diagnostic pins still override these audit sets and require an exact match.
 
-This revision replaces the original, unapplied 0126. Apply it directly after
-0124; 0125 is a capture runner, not a patch. Do not apply both versions of 0126.
+Historical patch order: revised 0126 replaced the original, unapplied version
+and followed 0124; 0125 was a capture runner. Both revised 0126 and 0127 are
+already applied and qualified. Do not reapply or repeat accepted captures.
 
 ## One admission policy
 
@@ -41,8 +42,9 @@ with an explicit singleton pin and strict policy. There is no extra admission
 subclass, temporary warn policy, monkeypatch or after-start version bypass.
 Both the independent and managed/public worker must satisfy the same exact
 identity check before start returns and any inference lease can be delivered.
-Without --expected-fingerprint, this diagnostic still pins the previously
-audited Decision b11552-3144c167ef. Native-only Decision references use that
+Without --expected-fingerprint, the current diagnostic pins the default
+reviewed identity b11850-0e9433bfd3. The original 0126 default was the older
+b11552-3144c167ef before promotion in 0127. Native-only Decision references use that
 same strict shared startup gate. Lifecycle/MTP, functional and memory captures
 also set explicit startup pins; memory capture without a requested identity
 retains the configured warn/strict policy. Device inventory uses the same
@@ -58,8 +60,8 @@ protocols independently of version policy.
 
 ## Capture on MI50
 
-After applying the revised 0126 and running pytest, use the unchanged companion
-0126-mi50-decision-captures.sh from the current TLlama checkout, or run:
+The accepted MI50 capture used the companion 0126-mi50-decision-captures.sh.
+For a separately needed new experiment, the equivalent diagnostic command is:
 
 ```bash
 PYTHONPATH=src python3 scripts/decision-api-smoke.py \

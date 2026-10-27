@@ -95,7 +95,27 @@ curl -s http://127.0.0.1:54800/api/show \
 
 TLlama can download GGUF files from Hugging Face repositories.
 
-The exact request format depends on the current `/api/pull` implementation, but the resulting model is stored in the `HuggingFace` repository area.
+Use a repository reference, with optional subdirectories and `.gguf` suffix:
+
+```bash
+tllama pull namespace/repository/path/to/model-file.gguf
+```
+
+```json
+{"model":"namespace/repository/path/to/model-file.gguf","stream":false}
+```
+
+The JSON goes to `POST /api/pull`; `name` is also accepted. Omitted `stream`
+defaults to NDJSON progress. The server appends `.gguf` to a filename without
+that extension. This is not an Ollama registry tag or a Hugging Face browser
+`blob/main`/`resolve/main` URL. Downloaded files use the `HuggingFace` area and
+successful definition preparation makes them visible as registered models.
+The server needs the optional `huggingface` extra. Pull downloads the requested
+file; do not infer client import's complete split-shard upload behavior here.
+
+The daemon account needs suitable model-store and Hugging Face cache permissions,
+including parent traversal. Service and interactive accounts can differ; inspect
+the actual error path before changing ownership/ACLs. See [systemd.md](systemd.md).
 
 After a successful pull, TLlama creates metadata cache for the downloaded model so later `ollama list` and `ollama show` calls can be fast.
 
@@ -115,7 +135,9 @@ Qwen/Qwen2.5-3B-Instruct-GGUF/qwen2.5-3b-instruct-q8_0
 
 ## Local Models
 
-Local models are intended for manually copied GGUF files.
+Local models hold manually copied GGUF files and client-imported weights.
+Client imports use `Local/imports/`; their registered TOML remains independent
+of the physical weight path. See [cli.md](cli.md#create-and-import-models).
 
 They are stored under:
 
@@ -308,7 +330,7 @@ OLLAMA_HOST=127.0.0.1:54800 ollama list
 Show one model:
 
 ```bash
-OLLAMA_HOST=127.0.0.1:54800 ollama show <model-name>
+OLLAMA_HOST=127.0.0.1:54800 ollama show MODEL
 ```
 
 Generate with one model:

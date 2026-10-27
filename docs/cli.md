@@ -91,10 +91,12 @@ is needed. JSON, request numbers and verbatim model/template/parameter text keep
 their original machine-readable representation.
 
 `PROCESSOR` is derived from compatibility bytes, not measured execution time.
-Even with all non-input model weights on the accelerator, genuine host compute,
-state and projector buffers remain counted. The input-weight and identified
-staging-buffer exclusions do not hide those components; inspect `ps --json`
-for the precise owners and reasons.
+With complete payload/assignment evidence proving full non-input offload for
+every model owner, compatibility display excludes CPU input-only weights and
+host nonweight buffers, yielding 100% GPU. Mixed placement keeps those costs.
+Detailed `memory` inventory retains excluded buffers in both cases. See
+[native-memory.md](native-memory.md) for the metric, legacy fallback and unknown
+values; inspect `ps --json` for provenance and exclusion reasons.
 
 ## Cold metadata and waiting
 

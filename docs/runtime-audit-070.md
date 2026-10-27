@@ -3,8 +3,9 @@
 Reviewed on 27 October 2026: native **b11850-0e9433bfd3**, commit
 `0e9433bfd33d8cdb194285b70c0d421d39135df2`, Debian packages
 `0.7.0~dev+b11850.1-1`. The user's complete TLlama suite after the revised
-0126 passed **4047 tests, 2 warnings**. This is the pre-0127 result, not a
-test result for this patch or authorization to publish 1.0.0.
+0126 passed **4047 tests, 2 warnings**; after applying 0127 the user confirmed
+**4086 passed, 2 warnings**. Warning details were not supplied. These results
+do not by themselves authorize or complete the 1.0.0 release.
 
 ## Runtime policy
 
@@ -95,8 +96,8 @@ identity. No model paths, credentials or complete worker logs are added here.
 
 ## Remaining work before 1.0.0
 
-Apply 0127 and run the complete pytest suite. Existing accepted hardware captures
-need not be repeated solely for this audit update. Keep new failures and any
+0127 has passed the user's complete suite (4086 tests, 2 warnings). Accepted
+hardware captures need not be repeated solely for the documentation review. Keep new failures and any
 changed native identity separate from the reviewed results above.
 
 **A complete documentation review is required before release.** Review README,
@@ -105,7 +106,9 @@ precedence, model import/pull, API/SDK contracts, feature limitations, memory
 SIZE/PROCESSOR semantics and troubleshooting against the final code. Distinguish
 historical checkpoint notes from current instructions, verify runnable examples
 and links, and record the review result before preparing the release tag.
-The focused audit documentation in 0127 does not complete that review.
+The focused audit documentation in 0127 did not complete that review. The
+subsequent [0128 review record](release-review-100.md) lists corrections and
+validation, with release decisions kept separate.
 
 Also obtain the status of the open Pull errno 13 case and record a concrete
 release disposition for sparse mmap, legacy ROCm and the separate FIM work.

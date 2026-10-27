@@ -63,6 +63,16 @@ the same display derivation and no longer require weight-assignment GPU bytes
 to equal device-buffer capacity. The client only formats server-provided
 sizes and their ratio; it does not infer placement from a GGUF size or layers.
 
+## Source selection
+
+`telemetry.memory_source` (or `TLLAMA_MEMORY_SOURCE`) accepts `auto`, `native`
+or `log`. Auto selects a valid native observation even when its coverage is
+partial/unavailable; only a failed observation permits the separate log fallback.
+Native mode does not replace missing native data with log totals. Log mode uses
+the independently audited initial-load parser. `memory_compare=true` retains
+both observations for comparison without merging their IDs or measurements.
+`/api/ps` reads cached observations; polling does not reset TTL or load a model.
+
 ## Optional tensor diagnostics (0117)
 
 `WorkerLaunchSpec.memory_tensor_diagnostics` is an internal diagnostic setting,
@@ -182,9 +192,9 @@ failed reads and replacement do not carry old weight evidence forward.
 
 Parser/detail support was added in 0114. The payload-based display accounting
 above follows in 0115.
-Tensor diagnostics are still ignored by the filtered reader until their own
-parser is added; the existing raw smoke capture retains them independently.
-Neither step changes runtime fingerprints or qualifies native GPU backends.
+The optional tensor-diagnostics parser is integrated as described above.
+Raw captures and validated selected telemetry remain independent observations;
+parser support alone does not qualify a native GPU backend.
 
 The following historical 06a checkpoint describes the load-log source before
 native inventory and the full-offload compatibility policy were added.
@@ -200,7 +210,7 @@ This checkpoint reports initial backend allocations from pinned runtime
 comparisons with process/device telemetry remain a separate test campaign after
 the refactor; no exact physical-memory accuracy is claimed here.
 
-## Sources and values
+### Sources and values
 
 | Public value | Source and meaning |
 |---|---|
@@ -226,7 +236,7 @@ For a Vulkan iGPU, device allocations use shared system RAM; `size_vram` does
 not identify an additional dedicated memory pool. No capacity clipping or
 in-process binding telemetry is used. `physical_residency_bytes` remains null.
 
-## Missing and partial information
+### Missing and partial information
 
 The independent, bounded parser observes native pipe lines and freezes its
 initial reading at the pinned `srv load_model: initializing, n_slots = ...`
@@ -255,7 +265,7 @@ change; 06a neither rebuilds nor modifies the installed runtime.
 Parser failure never stops inference or pipe draining. Reporting errors do not
 turn diagnostic uncertainty into model-load failure.
 
-## Ownership
+### Ownership
 
 Ready, loading, draining and closing owned generations remain in the report
 until their child is known to have exited. A draining generation stays listed
@@ -268,7 +278,7 @@ busy projects the idle deadline if the request finished now; polling does not
 start that timer. Very large horizons are clipped for timestamp serialization
 only; the residency policy is unchanged.
 
-## Verification and hardware smoke
+### Verification and hardware smoke
 
 Unit tests cover captured Vulkan lines, CPU/CUDA/ROCm/Vulkan/SYCL classification,
 host staging, multiple buffers/reservations, hybrid state, malformed/missing

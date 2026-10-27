@@ -120,12 +120,13 @@ definitions. See [model-repositories.md](docs/model-repositories.md) and
 | Image input | [Native vision](docs/native-vision.md), [public API](docs/native-public-api.md) |
 | Embeddings | `/api/embed`, `/api/embeddings`, `/v1/embeddings`; [embedding API](docs/embedding-api.md) |
 | Decision models | `/v1/systemone`; [Decision API](docs/decision-api.md) |
+| Fill-in-the-middle | `/api/generate` with nonempty `suffix`; [FIM](docs/native-fim.md) |
 | Embedded MTP | Opt-in model runtime settings; [MTP](docs/native-mtp.md) |
 
 Embedding and Decision models have their own admission/capability contracts;
 a generation endpoint does not automatically work on every GGUF architecture.
 Image requests require the configured projector and live runtime support.
-Audio APIs, full Ollama parity, Responses API state and REPL conversation
+Audio APIs, `/v1/responses`, `/v1/completions`, full Ollama parity and REPL conversation
 persistence remain separate work. Native TOML create is not an Ollama
 Modelfile parser or a full implementation of Ollama's structured create body.
 
@@ -165,7 +166,8 @@ pytest -q
 
 See [development.md](docs/development.md) for focused checks and hardware smoke
 scripts, and [native-config.md](docs/native-config.md) for the supported runtime
-vocabulary. TLlama-owned settings are explicit contracts; new upstream options
+vocabulary. The [documentation review](docs/release-review-100.md) records the pre-1.0.0
+checks and remaining release decisions. TLlama-owned settings are explicit contracts; new upstream options
 are not automatically public API features.
 
 ## License

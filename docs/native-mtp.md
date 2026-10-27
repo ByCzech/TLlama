@@ -1,4 +1,4 @@
-# Embedded MTP configuration, state, statistics and rejection — 0052
+# Embedded MTP configuration, state, statistics and rejection
 
 Enable the embedded multi-token-prediction head only for a compatible model:
 
@@ -37,7 +37,15 @@ Default permissive runtime fingerprint policy still permits experimental builds;
 no fingerprint whitelist was added for MTP. Unconfigured ordinary inference does
 not gain a new requirement for the engine to understand speculative flags.
 
-## Verified native reference
+## Historical 0048–0052 evidence and recipes
+
+The following records retain their original builds, measurements and scope.
+Current 0.7.0 off/on qualification passed on MI50/Vulkan, MI100/HIP and
+P100/CUDA12.9; see [runtime-audit-070.md](runtime-audit-070.md). Instructions
+about a next checkpoint describe the historical preparation, not an outstanding
+request to repeat accepted hardware runs.
+
+### Verified native reference
 
 The 0048 hardware check used the same registered Qwen3.6 embedded-MTP GGUF,
 Vulkan0, context 4096 and draft limit 3, runtime `b11552-3144c167ef`.

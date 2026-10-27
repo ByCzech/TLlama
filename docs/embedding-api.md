@@ -193,7 +193,7 @@ still finish a cancelled embedding batch. This API does not promise early
 compute cancellation. Same-worker recovery, explicit unload and owned-directory
 cleanup retain the existing lifecycle.
 
-## Verification and next hardware gate
+## Verification and hardware scope
 
 ```bash
 pytest -q tests/test_embedding_api.py tests/test_native_embeddings.py
@@ -215,7 +215,10 @@ have been accepted separately. Keep all six accepted text models and the
 accepted0062/0063 image references. The0064 public image gate is
 [`embeddings-multimodal-smoke.py --public`](../scripts/embeddings-multimodal-smoke.md),
 with real loopback HTTP, independent raw-native controls, native usage and SDK
-wire capture. Public image hardware acceptance remains pending until reviewed.
+wire capture. These historical recipes are diagnostics, not instructions to
+repeat accepted captures. Native 0.7.0 MiniLM/Qwen text embeddings and SDKs
+passed on MI50/Vulkan; this does not establish 0.7.0 image-embedding acceptance.
+Use [runtime-audit-070.md](runtime-audit-070.md) for the current reviewed scope.
 
 Primary API references checked 2026-10-19 (the current Ollama Go type/docs also
 describe image/audio objects;0064 integrates only inline images):

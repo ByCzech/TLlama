@@ -1,130 +1,91 @@
-# Public native text API checkpoint (05b)
+# Public native generation API
 
-The three existing inference endpoints now use native workers exclusively:
-/api/chat, /api/generate and /v1/chat/completions. There is no public legacy
-fallback or selectable second engine. The backend's remaining binding imports
-and reference tests are removed in block 07. Do not deploy this checkpoint as a
-complete production migration: binding/application cleanup remains block 07.
-Native process reporting is restored in [06a](native-memory.md).
-Chat image inference is restored in [06b](native-vision.md).
+`/api/chat`, `/api/generate` and `/v1/chat/completions` use native workers
+exclusively. The Python inference binding and its fallback path have been
+removed. The supported routes are listed in [api-compatibility.md](api-compatibility.md);
+current hardware scope is in [runtime-audit-070.md](runtime-audit-070.md).
 
 ## Ownership and configuration
 
-Native text serving uses the 05a request/result adapters and ModelManager leases.
-Admission happens before returning a streaming response, so a missing model or
-broken definition still has its pre-header HTTP status. The response then owns
-the lease through slot wait, stream iteration, early disconnect and failures
-while sending headers/body. Cleanup closes the upstream iterator and releases
-the lease even if the body never starts. Cancellation does not replay inference.
+Admission precedes streaming response headers, so model/configuration/startup
+errors retain their ordinary HTTP status. The response owns a ModelManager lease
+through slot wait, upstream iteration, disconnect and send failures. Cleanup
+closes the upstream iterator and releases the lease even if the body never starts.
+There is no automatic replay of inference.
 
-Equal configurations share an owned load. Explicit unload removes a generation
-from selection but already-admitted requests, including slot waiters, finish.
-Zero keep_alive with inference retires after the last lease. Empty Ollama
-messages/prompt preload or unload without generating; zero unload of an absent
-model does not spawn a worker. TTL remains completion-based as established in 04.
+Equal immutable load configurations share a generation. Changes retire the old
+generation; already-admitted requests keep their snapshot and finish before
+cleanup. Explicit unload removes a generation from selection without killing
+protected requests. Zero keep_alive with inference retires after use. Empty
+Ollama prompt/messages preload or unload; unloading an absent model starts no
+worker. Idle TTL begins when active use finishes, not while inference is running.
+See [native-residency.md](native-residency.md).
 
-ModelDefinition now freezes header metadata alongside its resolved TOML and
-file fingerprints. Header/TOML/file changes during resolution trigger bounded
-retry. Request serving never rereads mutable definitions after acquiring its
-lease. Existing valid persistent metadata caches are reused; otherwise headers
-are read without writing a potentially changed file's scan into its cache.
-Optional header scan failure leaves native loading authoritative and does not
-invent GGUF recommendations. Storage/show/list metadata readers remain independent.
-
-Definition deletion retires native generations both before and after the file
-operation, covering overlapping acquisitions. Its owned operation completes
-retirement even if the caller cancels. Existing users can finish on the retired
-worker; the GGUF weights remain on disk as before.
+Definitions freeze TOML, GGUF header metadata and file fingerprints at admission.
+Changes during resolution trigger bounded retry. A request does not reread mutable
+definitions after acquiring its lease. Storage/list/show remain independent of
+inference loading. Definition deletion retires workers and retains weight files.
 
 ## Generate rendering and tokenization
 
-Generate retains raw input and the existing sandboxed Python Jinja renderer.
-The renderer receives BOS/EOS strings directly from the selected worker, with
-no Llama-shaped proxy. Request template/system overrides and the former aliases
-(Prompt/System/Messages/Think/ThinkLevel/IsThinkSet, developer_instructions and
-model_identity) retain their meaning. An explicit empty system value suppresses
-the TOML default. Stop precedence remains request > TOML plus native EOS.
+Ordinary generate supports raw text or TLlama's sandboxed Jinja renderer.
+Request template/system overrides and established aliases remain supported.
+BOS/EOS strings and tokenizer behavior come from the admitted worker. An explicit
+empty system override suppresses the model default. Raw mode bypasses rendering
+and rejects template/system/context combinations.
 
-The effective worker template or TOML override comes from the lease, not a later
-metadata lookup. Raw mode bypasses rendering and still refuses template/system/
-context combinations. Both modes tokenize on that same worker with special
-token parsing. The former initial duplicate-BOS rule is retained; completion
-receives the resulting integer token array, which the pinned native mixed-input
-parser does not prepend with another BOS. This is prompt preparation, not an
-estimate substituted for request-local token statistics.
+Rendered/raw prompt preparation sends exact integer tokens to native completion,
+avoiding duplicate BOS insertion. Prompt preparation is not a substitute for
+native request-local usage or timing measurements. Chat uses the selected native
+chat template/parser; template overrides belong to the immutable generation.
 
-Chat uses the native template/parser. Ollama exposes separate thinking; OpenAI
-exposes separate reasoning_content. Raw output uses the shared completion
-reasoning splitter. JSON/schema fields reach native grammar-constrained sampling
-without constructing Python grammar objects. Model-specific constrained output
-and reasoning control still require the real-runtime smoke below.
+A nonempty `suffix` instead selects the literal [FIM contract](native-fim.md).
+Chat system/template defaults are bypassed for FIM; no text is silently appended
+as a suffix to ordinary completion. Model quality is evaluated separately from
+public/native output parity.
 
-## Agreed development limitations
+## Controls and restrictions
 
-| Input/endpoint | Checkpoint behavior |
-|---|---|
-| Nonempty generate suffix | 501: native FIM is a separately verified feature |
-| Nonempty generate context | 400: token-history input is not silently ignored |
-| Deprecated functions/function_call fields or history | 400: use modern tools/tool_choice/tool messages |
-| Images in chat | Native vision since 06b; the selected worker must support images |
-| Images in generate | 501: separate extension |
-| /api/show vision capability | Configured vision since 06b, without loading a worker |
-| /api/ps | Native generation reporting since 06a; missing memory totals are null with provenance |
+| Input | Current behavior |
+| --- | --- |
+| JSON/JSON Schema output | Native constrained sampling via Ollama `format` or OpenAI `response_format` |
+| Thinking | Native template controls; separate thinking/reasoning and answer channels |
+| Modern tools | Validated declarations/history and stream assembly; [tools](native-tools.md) |
+| Chat images | Validated inline images, configured projector and live capability; [vision](native-vision.md) |
+| Generate images | HTTP 501; no image silently converted into text |
+| Nonempty generate context | HTTP 400; token-history input is not silently ignored |
+| Deprecated functions/function_call/history | HTTP 400; use modern tools |
+| Enabled logprobs/top_logprobs/debug render | HTTP 400 until integrated |
+| Explicit top-level Ollama truncate/shift | HTTP 400 until integrated |
 
-Image validation precedes model loading and does not fetch URLs. Chat image
-mapping and live capability checks are documented in native-vision.md.
-Model listing, definitions, version/runner rules and
-storage/pull remain available. Tools cycles, admission, streaming and client
-compatibility are documented in [native-tools.md](native-tools.md).
+See [request-compatibility.md](request-compatibility.md) for exact disabled/default
+value handling and [ollama-options.md](ollama-options.md) for accepted request
+runner controls. Those controls do not edit stored definitions.
 
-Statistics keep the 05a measured-source rules: OpenAI full input usage, Ollama
-evaluated input count, separate measured cache count, and ms-to-ns durations.
-Unknown measurements stay absent. Native chat empty-choice usage frames are
-handled internally. Public OpenAI streams retain their terminal SSE shape;
-the current `stream_options.include_usage` request control is described in
-[request-compatibility.md](request-compatibility.md).
+Statistics preserve measured provenance: OpenAI full input, Ollama evaluated
+input, separate cache count and native ms-to-ns timing conversion. Unknown values
+stay absent; zero remains zero. Public OpenAI usage frames are optional through
+`stream_options.include_usage`; native usage is collected internally either way.
+See [native-api-adapter.md](native-api-adapter.md) for translation details.
 
-## Verification and user hardware check
+## Verification
 
-The complete local suite passes 1422 tests. Public contract tests now use native
-leases/results instead of injected Python inference objects or C-counter resets.
-Real subprocess/socket coverage checks the six public result/stream paths,
-preload reuse, zero keep_alive, active/queued unload, client/load cancellation,
-missing-model errors before streaming headers, native HTTP/stream errors, crash
-without replay, snapshot edits and deletion. Send failures before body start and
-during body output both release resources. The smoke CLI's success/error paths
-also run over actual loopback HTTP with the native test subprocess.
+Tests cover public result/stream paths, pre-header errors, no-replay failures,
+lease ownership, disconnects, configuration snapshots, thinking, schema output,
+FIM, tools and images. Controlled subprocesses verify protocol and cleanup;
+real-model captures supply separate numerical/semantic evidence.
 
-Run on the refactor checkout with its dependencies installed:
+The text diagnostic starts its own loopback frontend and worker, without changing
+the service or model definitions:
 
 ```bash
 TLLAMA_RUNTIME_DEVICE=Vulkan0 PYTHONPATH=src python scripts/api-smoke.py \
-  --model unsloth/Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-UD-IQ3_S \
-  --log api-vulkan.log
+  --model REGISTERED_TEXT_MODEL --log api-vulkan.log
 ```
 
-The script starts its own temporary loopback TLlama frontend and one model
-generation. It uses the registered model's TOML context for every endpoint,
-including OpenAI, to avoid differing request overrides and reloads. With the
-supplied text profile this is 4096, not the earlier 2048 worker-only test.
-No model definitions are edited, extra GGUFs loaded or SDKs built. Device/TOML
-precedence is unchanged. Native and public ports are dynamically assigned.
-
-The check exercises Ollama/OpenAI chat with and without streaming, thinking
-control, raw/rendered generate with and without streaming, both structured
-output schemas, closing a live stream and using the same worker afterward,
-then empty-prompt unload/reap. Reported stages include ready, ollama-chat,
-api-chat-stream, openai-chat, v1-chat-completions-stream, generate-rendered,
-generate-raw, api-generate-stream, ollama-schema, openai-schema, stream-cancel,
-after-stream-cancel, worker-closed and manager-closed.
-
-A reasoning-only length response is valid, not an inference failure. The script
-prints reasoning separately; inspect the Qwen thinking-enabled stage to confirm
-actual model behavior. Both schema checks must decode to exactly {"answer":42}.
-worker-closed must have a reaped return code, directory_removed=true and empty
-residency. Send JSON output and pytest summary; attach api-vulkan.log on failure.
-
-The new adapters/text routers need no further hardware/backend variants for this
-checkpoint. Native allocation reporting is documented in native-memory.md;
-vision is documented in native-vision.md (06b). Physical-residency comparisons
-are a later test campaign.
+It checks public chat/generate streams and full replies, raw/rendered input,
+thinking, JSON schemas, cancel/recovery, memory reporting and unload/cleanup.
+Use an independent log/output for a new experiment and release competing service
+loads first. Scripts and model names in historical qualification records are
+recipes, not instructions to repeat already accepted GPU captures. Runtime/model
+changes require review within their actual tested configuration.

@@ -148,4 +148,5 @@ admission follows the reviewed sets in runtime-audit-070.md.
 
 ModelManager now resolves these settings for owned worker generations; see
 [native-residency.md](native-residency.md) for leases, capacity, TTL and the
-managed hardware check. Public API translation remains the next milestone.
+managed hardware check. Public API translation is integrated; see
+[native-public-api.md](native-public-api.md).

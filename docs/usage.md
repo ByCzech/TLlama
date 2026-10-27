@@ -1,476 +1,175 @@
-# Usage
+# Usage with clients and SDKs
 
-This document shows practical ways to use TLlama with existing clients, tools, libraries, and IDE integrations.
+Start `tllamad`, then select a registered model from `tllama list`.
+The default Ollama-compatible base URL is `http://127.0.0.1:54800`;
+OpenAI-compatible clients use `http://127.0.0.1:54800/v1`.
+The [route inventory](api-compatibility.md) defines the supported contracts.
 
-TLlama exposes:
+## TLlama client
 
-```text
-Ollama-compatible API: http://127.0.0.1:54800
-OpenAI-compatible API: http://127.0.0.1:54800/v1
-```
-
-The default port is:
-
-```text
-54800
-```
-
----
-
-## Native TLlama client
-
-Start `tllamad` on the server host, then use:
-
-```sh
+```bash
 tllama list
+tllama show MODEL
 tllama run MODEL
-tllama run MODEL "Explain GGUF."
-tllama --host http://server:54800 ps
+tllama run MODEL 'Explain GGUF in two sentences.'
+cat source.py | tllama run MODEL 'Review this code.'
+tllama ps --json
+tllama --host http://server:54800 list
 ```
 
-The client/server command split, REPL controls, verbose output, model copy and
-TOML imports are documented in [cli.md](cli.md). Server configuration and
-systemd setup are in [daemon.md](daemon.md) and [systemd.md](systemd.md).
+`run` chooses generation, embeddings or Decision from the model's advertised
+capabilities. With a terminal and no prompt, it opens the REPL. One-shot/stdin
+calls remain one request. The daemon does not automatically download a missing
+model. See [cli.md](cli.md) for import/copy, slash commands, reasoning display,
+verbose timings, cancellation and exit codes.
 
-## Using TLlama with the Ollama CLI
-
-The official Ollama CLI can be pointed to TLlama with `OLLAMA_HOST`.
-
-Example:
-
-```bash
-export OLLAMA_HOST=127.0.0.1:54800
-```
-
-Then use normal Ollama commands.
-
----
-
-### List models
+## Ollama CLI
 
 ```bash
 OLLAMA_HOST=127.0.0.1:54800 ollama list
+OLLAMA_HOST=127.0.0.1:54800 ollama show MODEL
+OLLAMA_HOST=127.0.0.1:54800 ollama run MODEL 'Explain GGUF.'
 ```
 
-Example output:
+Use the exact public name from the model list. Core show/chat/generate paths
+are supported, not every Ollama command. `show --modelfile` returns original
+TLlama TOML rather than an Ollama Modelfile conversion. Use TLlama's client for
+its native TOML create/import workflow.
 
-```text
-NAME                                                     ID              SIZE      MODIFIED
-unsloth/Llama-3.1-8B-Instruct-GGUF/Llama-3.1-8B...       e88c661ec170    4.7 GB    3 days ago
-DeepSeek-Coder-V2-Lite-Instruct-Q4_K_L                  486cfb4d3607    10 GB     13 seconds ago
-```
-
----
-
-### Show model details
+Pull uses a Hugging Face reference, not an Ollama registry tag:
 
 ```bash
-OLLAMA_HOST=127.0.0.1:54800 ollama show unsloth/Llama-3.1-8B-Instruct-GGUF/Llama-3.1-8B-Instruct-IQ4_NL
+tllama pull namespace/repository/model-file.gguf
 ```
 
-Example:
+The filename can include repository subdirectories; omitting `.gguf` adds it.
+Do not paste a `https://huggingface.co/.../blob/main/...` URL as the reference.
+The optional `huggingface` dependency is required on the server. Downloaded
+weights, metadata/digest cache and definition handling are described in
+[model-repositories.md](model-repositories.md).
 
-```text
-Model
-  architecture    llama
-  parameters      8B
-  quantization    IQ4_NL
-```
+## HTTP examples
 
----
-
-### Show model Modelfile/template
-
-```bash
-OLLAMA_HOST=127.0.0.1:54800 ollama show --modelfile unsloth/Llama-3.1-8B-Instruct-GGUF/Llama-3.1-8B-Instruct-IQ4_NL
-```
-
-This can be useful for checking the chat template extracted from GGUF metadata.
-
----
-
-### Run a model interactively
-
-```bash
-OLLAMA_HOST=127.0.0.1:54800 ollama run unsloth/Llama-3.1-8B-Instruct-GGUF/Llama-3.1-8B-Instruct-IQ4_NL
-```
-
-Then type prompts directly in the Ollama CLI.
-
----
-
-### Run a one-shot prompt
-
-```bash
-OLLAMA_HOST=127.0.0.1:54800 ollama run unsloth/Llama-3.1-8B-Instruct-GGUF/Llama-3.1-8B-Instruct-IQ4_NL "Explain what GGUF is in two sentences."
-```
-
----
-
-### Pull a model
-
-TLlama supports a pull workflow for Hugging Face GGUF models.
-
-Exact pull syntax depends on the current TLlama `/api/pull` implementation and supported model reference format.
-
-After a successful pull, TLlama stores the model under the `HuggingFace` repository area and creates metadata cache for it.
-
-Then it appears in:
-
-```bash
-OLLAMA_HOST=127.0.0.1:54800 ollama list
-```
-
----
-
-## Using TLlama with curl
-
-### Ollama-compatible generate
-
-```bash
-curl -s http://127.0.0.1:54800/api/generate \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "unsloth/Llama-3.1-8B-Instruct-GGUF/Llama-3.1-8B-Instruct-IQ4_NL",
-    "prompt": "Explain what a local LLM server is.",
-    "stream": false
-  }' | jq .
-```
-
----
-
-### Ollama-compatible chat
+Replace `MODEL` with a registered generation model:
 
 ```bash
 curl -s http://127.0.0.1:54800/api/chat \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "unsloth/Llama-3.1-8B-Instruct-GGUF/Llama-3.1-8B-Instruct-IQ4_NL",
-    "messages": [
-      {
-        "role": "user",
-        "content": "Give me three benefits of local LLM inference."
-      }
-    ],
-    "stream": false
-  }' | jq .
-```
+  -H 'Content-Type: application/json' \
+  -d '{"model":"MODEL","messages":[{"role":"user","content":"Say hello."}],"stream":false}'
 
----
+curl -s http://127.0.0.1:54800/api/generate \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"MODEL","prompt":"Explain GGUF.","stream":false}'
 
-### OpenAI-compatible chat completion
-
-```bash
 curl -s http://127.0.0.1:54800/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "unsloth/Llama-3.1-8B-Instruct-GGUF/Llama-3.1-8B-Instruct-IQ4_NL",
-    "messages": [
-      {
-        "role": "user",
-        "content": "Say hello from TLlama."
-      }
-    ],
-    "temperature": 0.7
-  }' | jq .
+  -H 'Content-Type: application/json' \
+  -d '{"model":"MODEL","messages":[{"role":"user","content":"Say hello."}],"stream":false}'
 ```
 
----
+Ollama streaming returns NDJSON; OpenAI chat streaming returns SSE. A stream
+can fail after partial output; consumers must check its successful terminal
+rather than treating EOF as success. See [native-public-api.md](native-public-api.md)
+for thinking, structured output, ownership and unsupported controls.
 
-## Using TLlama with Python Libraries
+## Python SDKs
 
-### Python `ollama` package
+Install `ollama` and/or `openai` in the **client's** Python environment. These
+SDKs are optional clients, not TLlama inference dependencies. Native diagnostic
+scripts that exercise SDK paths need them in the interpreter running the script.
 
 ```python
 import ollama
 
 client = ollama.Client(host="http://127.0.0.1:54800")
-
 response = client.chat(
-    model="unsloth/Llama-3.1-8B-Instruct-GGUF/Llama-3.1-8B-Instruct-IQ4_NL",
-    messages=[
-        {
-            "role": "user",
-            "content": "Explain TLlama in one sentence.",
-        }
-    ],
+    model="MODEL",
+    messages=[{"role": "user", "content": "Explain GGUF in one sentence."}],
+    stream=False,
 )
-
 print(response["message"]["content"])
 ```
-
----
-
-### OpenAI-compatible Python clients
-
-For OpenAI-compatible clients, use:
-
-```text
-base_url = http://127.0.0.1:54800/v1
-api_key  = any non-empty value if the client requires one
-```
-
-Example using the OpenAI Python client style:
 
 ```python
 from openai import OpenAI
 
-client = OpenAI(
-    base_url="http://127.0.0.1:54800/v1",
-    api_key="tllama",
-)
-
+client = OpenAI(base_url="http://127.0.0.1:54800/v1", api_key="tllama")
 response = client.chat.completions.create(
-    model="unsloth/Llama-3.1-8B-Instruct-GGUF/Llama-3.1-8B-Instruct-IQ4_NL",
-    messages=[
-        {
-            "role": "user",
-            "content": "Say hello from TLlama.",
-        }
-    ],
+    model="MODEL",
+    messages=[{"role": "user", "content": "Say hello."}],
+    stream=False,
 )
-
 print(response.choices[0].message.content)
 ```
 
----
+The placeholder key satisfies SDK construction; TLlama does not use it as
+public API authentication. It is unrelated to private native worker credentials.
+`responses.create()` and `completions.create()` are unsupported routes.
+SDK transport parsing does not imply every optional hosted-service feature is
+implemented. The [runtime audit](runtime-audit-070.md) records actually reviewed
+SDK paths and hardware settings.
 
-## GUI Clients
+For a registered embedding model:
 
-TLlama can be used with GUI clients that support either Ollama-compatible servers or OpenAI-compatible local servers.
+```python
+from openai import OpenAI
 
----
-
-### Alpaca
-
-Alpaca can work with TLlama in two possible modes:
-
-```text
-Ollama-compatible mode:
-  Base URL: http://127.0.0.1:54800
-
-OpenAI-compatible mode:
-  Base URL: http://127.0.0.1:54800/v1
-  API key:  any non-empty value if required
+client = OpenAI(base_url="http://127.0.0.1:54800/v1", api_key="tllama")
+response = client.embeddings.create(model="EMBEDDING_MODEL", input=["literal text"])
+print(response.data[0].embedding)
 ```
 
-Use one of the model names shown by:
+Embedding inputs are literal: add any model-required query/document prefix
+explicitly. Exact local token arrays, bounds, normalization, dimensions, base64
+and image extensions have the [embedding API](embedding-api.md) contract.
+A text Decision model instead uses HTTP JSON at `/v1/systemone`; see
+[decision-api.md](decision-api.md). No standard SDK Decision method is claimed.
 
-```bash
-OLLAMA_HOST=127.0.0.1:54800 ollama list
-```
+## GUI and IDE clients
 
----
+For a client supporting a custom compatible endpoint, configure:
 
-### Jan.ai
+| Setting | Ollama mode | OpenAI-compatible mode |
+| --- | --- | --- |
+| Base URL | `http://127.0.0.1:54800` | `http://127.0.0.1:54800/v1` |
+| Model | Exact registered name | Exact registered name |
+| API key | As required by the client | Nonempty placeholder if required |
 
-Jan.ai can use TLlama through the OpenAI-compatible API.
+These are generic integration settings, not a certification of a particular
+Alpaca, Jan, Continue, Cline or Roo release. Client configuration names vary;
+use its custom-provider settings and test one ordinary chat request first.
+An agent that requires Responses, unsupported controls or automatic server-side
+tool execution needs a different supported client mode.
 
-Typical settings:
-
-```text
-Provider:  OpenAI-compatible / custom OpenAI endpoint
-Base URL:  http://127.0.0.1:54800/v1
-API key:   any non-empty value if required
-Model:     one of the TLlama model names
-```
-
-Example model:
-
-```text
-unsloth/Llama-3.1-8B-Instruct-GGUF/Llama-3.1-8B-Instruct-IQ4_NL
-```
-
----
-
-### Other OpenAI-Compatible GUI Clients
-
-Any GUI client that supports a custom OpenAI-compatible base URL should be able to use TLlama for basic chat/generation workflows.
-
-Use:
-
-```text
-Base URL: http://127.0.0.1:54800/v1
-API key:  any non-empty value if required
-Model:    <model-name from TLlama>
-```
-
----
-
-## IDE and Coding Assistants
-
-Many IDE extensions and coding assistants support OpenAI-compatible custom endpoints.
-
-TLlama can be used as a local endpoint for these tools when they allow setting:
-
-```text
-Base URL
-API key
-Model name
-```
-
-Use:
-
-```text
-Base URL: http://127.0.0.1:54800/v1
-API key:  any non-empty value if required
-Model:    one of the model names returned by /v1/models or ollama list
-```
-
----
-
-### Generic OpenAI-Compatible IDE Setup
-
-Typical configuration:
-
-```text
-Provider: OpenAI-compatible
-Base URL: http://127.0.0.1:54800/v1
-API key:  tllama
-Model:    unsloth/Llama-3.1-8B-Instruct-GGUF/Llama-3.1-8B-Instruct-IQ4_NL
-```
-
-Use a model suitable for code tasks, for example a coding-focused GGUF model stored in the `Local`, `TLlama`, or `HuggingFace` repository area.
-
----
-
-### Continue-style Configuration Example
-
-For IDE tools that use a JSON/YAML-style model configuration, the shape is usually similar to:
-
-```json
-{
-  "title": "TLlama",
-  "provider": "openai",
-  "model": "unsloth/Llama-3.1-8B-Instruct-GGUF/Llama-3.1-8B-Instruct-IQ4_NL",
-  "apiBase": "http://127.0.0.1:54800/v1",
-  "apiKey": "tllama"
-}
-```
-
-Exact field names depend on the client.
-
----
-
-### Cline / Roo Code / Similar Tools
-
-For tools that support an OpenAI-compatible provider:
-
-```text
-API Provider: OpenAI-compatible
-Base URL:     http://127.0.0.1:54800/v1
-API Key:      tllama
-Model:        <TLlama model name>
-```
-
-Agentic IDE workflows may require function tools. TLlama maps modern tools and
-results through the native runtime on both chat APIs. The client executes the
-functions; model/template/parser support determines the calls produced. See
-[native-tools.md](native-tools.md) for streaming/history limitations.
-
-Basic chat/completion workflows should be the first thing to test.
-
----
-
-## Model Names
-
-Use model names exactly as TLlama exposes them.
-
-List available models:
-
-```bash
-OLLAMA_HOST=127.0.0.1:54800 ollama list
-```
-
-or:
-
-```bash
-curl -s http://127.0.0.1:54800/v1/models | jq .
-```
-
-Examples:
-
-```text
-HuggingFace:
-  unsloth/Llama-3.1-8B-Instruct-GGUF/Llama-3.1-8B-Instruct-IQ4_NL
-
-TLlama:
-  official/example-model
-
-Local:
-  DeepSeek-Coder-V2-Lite-Instruct-Q4_K_L
-```
-
----
-
-## Notes About Tool Calls
-
-Some clients and IDE agents rely heavily on tool calls.
-
-Modern function tools are supported by `/api/chat` and `/v1/chat/completions`.
-OpenAI streams provide argument-string deltas; Ollama emits complete validated
-argument objects after successful native completion. The client must execute
-functions and return their results; neither the daemon nor the REPL executes
-model-selected tools. Verify model/template support for an IDE's exact history
-and tool schema. See [native-tools.md](native-tools.md).
-
----
+For tools, the client executes functions and returns results with the required
+history/IDs. OpenAI supplies appendable argument strings; Ollama supplies complete
+validated objects after native completion. Wait for successful completion before
+executing calls. See [native-tools.md](native-tools.md). Inline images need a
+configured projector and live native support; remote image URLs are refused.
+FIM autocomplete has the separate [suffix contract](native-fim.md) and model
+quality qualification. Ordinary coding chat does not prove FIM support.
 
 ## Troubleshooting
 
-### Client cannot connect
-
-Check that TLlama is running:
+Connection failures: check the listener and selected address:
 
 ```bash
-curl -s http://127.0.0.1:54800/api/tags | jq .
+curl -s http://127.0.0.1:54800/health
+curl -s http://127.0.0.1:54800/api/tags
 ```
 
-If using OpenAI-compatible mode:
+The TLlama client does not read server TOML or `TLLAMA_PORT`; include a changed
+port in `--host`/client `TLLAMA_HOST`. A source/install update may require
+regenerating console scripts; `python -m tllama` and `python -m tllama.daemon`
+provide checkout entry points with dependencies available.
 
-```bash
-curl -s http://127.0.0.1:54800/v1/models | jq .
-```
+For missing models, check the exact registered name and valid TOML. For slow
+first listings, retain the wait while metadata/digests are prepared and check
+cache permissions. A permission-denied pull must be diagnosed under the actual
+daemon account and failing path; see [configuration.md](configuration.md).
+For tool failures, inspect declarations, histories and native/model output,
+without automatically unescaping or repairing arguments.
 
----
-
-### GUI client requires an API key
-
-Use any non-empty placeholder value:
-
-```text
-tllama
-```
-
-TLlama does not currently require a real OpenAI API key for local usage.
-
----
-
-### Model not found
-
-Check the exact model name:
-
-```bash
-OLLAMA_HOST=127.0.0.1:54800 ollama list
-```
-
-Then copy the model name exactly.
-
----
-
-### IDE agent fails when using tools
-
-This may be caused by current tool-call limitations.
-
-Try a simpler chat/completion mode first.
-
----
-
-## Related Files
-
-- `README.md`
-- `docs/configuration.md`
-- `docs/model-repositories.md`
-- `docs/metadata-cache.md`
-- `docs/api-compatibility.md`
-- `docs/development.md`
+Use [daemon.md](daemon.md) for configuration inspection, [systemd.md](systemd.md)
+for service permissions and [native-memory.md](native-memory.md) for honest
+SIZE/PROCESSOR interpretation. Public authentication/TLS belongs to the deployment
+controls described in those guides; a placeholder SDK key does not provide it.
