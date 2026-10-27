@@ -1,5 +1,9 @@
 # Development
 
+The [documentation index](../TOC.md) links current contracts, and the
+[feature source audit](feature-source-audit.md) records the source/version
+boundaries behind public feature and hardware comparisons.
+
 TLlama's Python application manages private native `tllama-server` workers.
 The native runtime is developed and packaged separately; a Python
 `llama-cpp-python` build is not required.

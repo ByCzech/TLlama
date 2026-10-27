@@ -5,8 +5,49 @@ Ollama-compatible and OpenAI-compatible APIs and runs inference in private
 `tllama-server` subprocesses based on llama.cpp. It uses FastAPI and Pydantic;
 it does not require a Python inference binding.
 
-The project is under active development. Supported API contracts, model modes
-and explicit limitations are documented below.
+TLlama combines an Ollama-style model service with direct control over the
+native runtime. One daemon can keep model-specific device placement, cache
+precision, context, sampling and speculative decoding settings, alongside
+generation, vision, embedding and Decision models.
+
+## At a glance
+
+- **Independent K and V cache precision per model:** combine, for example,
+  `type_k = "q8_0"` and `type_v = "q4_0"`, with global defaults and explicit
+  model overrides. This goes beyond Ollama's single global K/V type.
+- **Choose the device, including its backend:** assign one model to `ROCm0`,
+  another to `Vulkan0` or `CUDA0`, and another to CPU. Explicit comma-separated
+  selectors also reach the native multi-device path, including mixed backends
+  where the model and installed runtime support them.
+- **Extended AMD support:** the development runtime includes native legacy
+  Vega targets `gfx900`, `gfx906` and `gfx90c`, plus architecture-specific
+  `gfx1250` fixes for Instinct MI455X. The hardware guide separates these
+  extensions from completed inference qualification and the open HIP mmap issue.
+- **Experimental Instella-MoE:** the patched native runtime adds the converter,
+  loader and model graph for `InstellaMoEForCausalLM`, initially
+  Instella-MoE-16B-A3B-Think, beyond the reviewed official llama.cpp/Ollama sources.
+- **A choice of native backends:** CPU and OpenBLAS, Vulkan, ROCm/HIP, CUDA
+  12.4/12.9/13.3 and Intel SYCL have Debian runtime packaging. Other native
+  backends depend on a suitable build; Windows/macOS builds and installers
+  are planned.
+- **More than chat:** compatible Ollama/OpenAI generation and tools, image
+  input, semantic embeddings, text Decision models, FIM and opt-in embedded
+  MTP use the same model lifecycle. Each has its own documented support scope.
+- **Explainable memory reports:** native buffer inventory, deduplicated weight
+  payload, CPU/GPU assignment and allocation locality remain separate. Unknown
+  data stays unknown; `ps` does not guess placement from the GGUF file size.
+- **Inspectable, reusable model definitions:** human-editable TOML profiles can
+  share GGUF weights while keeping different templates, system prompts and
+  runtime settings. Persistent metadata/digest caches support moved repositories.
+- **Managed native processes:** immutable worker generations, protected active
+  requests, idle TTL, cancellation and awaited cleanup keep model changes and
+  failures local to their owned worker. No Python inference binding is required.
+
+Start with the [documentation index](TOC.md), the detailed
+[features and comparison](docs/features.md), [hardware support](docs/hardware.md)
+and [packages and platform roadmap](docs/distribution.md).
+The project is under active development toward 1.0.0. These pages distinguish
+implemented features, tested configurations and planned distribution work.
 
 ## Install and start
 
@@ -52,8 +93,9 @@ precedence. A global device setting is a default for models.
 File selection, all flags, environment names, source reporting and reload
 behavior are described in [daemon.md](docs/daemon.md). The server configuration
 is separate from per-model TOML. See [systemd.md](docs/systemd.md) for installing
-the supplied [tllamad.service](systemd/tllamad.service) manually. Debian
-application packaging follows separately.
+the supplied [tllamad.service](systemd/tllamad.service) manually. The native
+runtime already has modular Debian packaging; application packaging and planned
+Linux/Windows/macOS distribution are tracked in [distribution.md](docs/distribution.md).
 
 ## Client commands and REPL
 

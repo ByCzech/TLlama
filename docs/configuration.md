@@ -9,6 +9,10 @@ mapping, `--check-config` and `--print-config`.
 
 This keeps a server easy to run from systemd, a container or a shell, while still letting one model be configured differently from the next without a second server.
 
+For practical independent K/V and per-model device examples, see
+[features](features.md); [hardware](hardware.md) maps backend versions and native
+targets to GPU/CPU families.
+
 ---
 
 ## Quick example

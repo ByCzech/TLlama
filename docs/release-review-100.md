@@ -58,8 +58,37 @@ the model parser and owned key/value checks; 6 were complete model definitions.
 
 ## Remaining release decisions
 
-Documentation corrections are prepared in 0128; apply that patch before treating
-the source review as integrated. It does not set a release version or create a tag.
+The 0129 supplement contains the following documentation changes:
+
+- Expanded README with a practical feature summary and links to the complete TOC.
+- Added `TOC.md`, covering all 46 documentation/diagnostic Markdown guides.
+- Added the feature catalogue and a dated, source-pinned comparison with Ollama
+  and official llama.cpp, with inherited features credited explicitly.
+- Added AMD legacy/family target tables, the MI455X/gfx1250 fix, CUDA version and
+  GPU-family tables, Intel SYCL coverage, CPU variants/helper libraries and
+  source-only backend options.
+- Added the Debian package map and planned Linux/Windows/macOS build/installer
+  work, with current delivery and future work separated.
+- Added implementation/source evidence and cross-links from configuration,
+  backend selection and development guides.
+
+The supplement passed 48 Markdown-file checks, 273 local links/anchors and
+156 fenced example syntax checks. All 8 complete model TOML examples parsed;
+the two new examples also passed the real configuration resolver and native argv
+serialization, including independent K/V and a mixed-backend selector list.
+Seven selector forms, 28 ROCm target names, 9 package names and 14 x86 CPU
+variants were checked against the stated source/evidence. The shipped server
+TOML passed actual `--check-config`. These are offline documentation/configuration
+checks, not new inference or complete pytest results.
+
+The maintainer confirmed applying 0128. The subsequent 0129 documentation
+supplement adds the [feature overview](features.md), [hardware matrix](hardware.md),
+[distribution roadmap](distribution.md), [complete index](../TOC.md) and
+[source evidence](feature-source-audit.md), with a fuller README summary.
+It distinguishes project extensions, inherited native features, accepted hardware
+recipes and planned platform delivery. Applying that supplement remains separate
+from the already-confirmed 0128 source review. Neither patch sets a release
+version or creates a tag.
 The following still need concrete disposition before 1.0.0:
 
 - The open Pull errno 13 case needs the user's actual service-account/path result.
