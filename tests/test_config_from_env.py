@@ -11,11 +11,14 @@ import socket
 
 import pytest
 
-from tllama.config import (
-    ConfigError,
-    load_app_config_from_env,
-    load_backend_config_from_env,
-)
+from tllama.config import ConfigError
+
+
+from tllama.daemon_config import load_daemon_config
+
+
+def app_config():
+    return load_daemon_config(False, discover=False).app
 
 
 pytestmark = pytest.mark.usefixtures("clean_tllama_config_environment")
@@ -34,7 +37,7 @@ class TestUnsetAndEmptyStillMeanDefault:
         ):
             monkeypatch.delenv(name, raising=False)
 
-        config = load_backend_config_from_env()
+        config = load_daemon_config(False, discover=False).backend
 
         assert config.context_length == 0
         assert config.max_loaded_models == 1
@@ -50,7 +53,7 @@ class TestUnsetAndEmptyStillMeanDefault:
         monkeypatch.setenv("TLLAMA_CONTEXT_LENGTH", "")
         monkeypatch.setenv("TLLAMA_RUNTIME_N_THREADS", "   ")
 
-        config = load_backend_config_from_env()
+        config = load_daemon_config(False, discover=False).backend
 
         assert config.context_length == 0
         assert config.runtime_overrides == {}
@@ -61,7 +64,7 @@ class TestAValueThatWillNotParseIsRefused:
         monkeypatch.setenv("TLLAMA_CONTEXT_LENGTH", "8k")
 
         with pytest.raises(ConfigError) as excinfo:
-            load_backend_config_from_env()
+            load_daemon_config(False, discover=False).backend
 
         # The message has to carry the variable name: an operator reading
         # it in a journal has no other way to tell which of a dozen
@@ -73,27 +76,27 @@ class TestAValueThatWillNotParseIsRefused:
         monkeypatch.setenv("TLLAMA_JANITOR_INTERVAL", "often")
 
         with pytest.raises(ConfigError, match="TLLAMA_JANITOR_INTERVAL"):
-            load_backend_config_from_env()
+            load_daemon_config(False, discover=False).backend
 
     def test_a_boolean_variable_rejects_a_word_it_does_not_know(self, monkeypatch):
         # "maybe" used to be silently false, which is the same outcome as
         # "off" and reads as if the setting had been honoured.
-        monkeypatch.setenv("TLLAMA_DEBUG", "maybe")
+        monkeypatch.setenv("TLLAMA_APP_RELOAD", "maybe")
 
-        with pytest.raises(ConfigError, match="TLLAMA_DEBUG"):
-            load_app_config_from_env()
+        with pytest.raises(ConfigError, match="TLLAMA_APP_RELOAD"):
+            app_config()
 
     @pytest.mark.parametrize("value", ["1", "true", "TRUE", "yes", "on"])
     def test_the_accepted_true_spellings_still_work(self, monkeypatch, value):
-        monkeypatch.setenv("TLLAMA_DEBUG", value)
+        monkeypatch.setenv("TLLAMA_APP_RELOAD", value)
 
-        assert load_app_config_from_env().debug is True
+        assert app_config().reload is True
 
     @pytest.mark.parametrize("value", ["0", "false", "no", "OFF"])
     def test_the_accepted_false_spellings_still_work(self, monkeypatch, value):
-        monkeypatch.setenv("TLLAMA_DEBUG", value)
+        monkeypatch.setenv("TLLAMA_APP_RELOAD", value)
 
-        assert load_app_config_from_env().debug is False
+        assert app_config().reload is False
 
     def test_a_host_with_an_unparseable_port_is_refused(self, monkeypatch):
         # This one was the most misleading of the lot: the port failed to
@@ -102,12 +105,12 @@ class TestAValueThatWillNotParseIsRefused:
         monkeypatch.setenv("TLLAMA_HOST", "0.0.0.0:http")
 
         with pytest.raises(ConfigError, match="TLLAMA_HOST"):
-            load_app_config_from_env()
+            app_config()
 
     def test_a_host_without_a_port_still_takes_the_default_port(self, monkeypatch):
         monkeypatch.setenv("TLLAMA_HOST", "0.0.0.0")
 
-        config = load_app_config_from_env()
+        config = app_config()
 
         assert config.host == "0.0.0.0"
         assert config.port == 54800
@@ -143,7 +146,7 @@ class TestHostForms:
     ):
         monkeypatch.setenv("TLLAMA_HOST", value)
 
-        config = load_app_config_from_env()
+        config = app_config()
 
         assert (config.host, config.port) == (host, port)
 
@@ -161,7 +164,7 @@ class TestHostForms:
         """
         monkeypatch.setenv("TLLAMA_HOST", value)
 
-        config = load_app_config_from_env()
+        config = app_config()
 
         socket.getaddrinfo(config.host, config.port, type=socket.SOCK_STREAM)
 
@@ -172,14 +175,14 @@ class TestHostForms:
         monkeypatch.setenv("TLLAMA_HOST", "ftp://0.0.0.0:12345")
 
         with pytest.raises(ConfigError, match="ftp://"):
-            load_app_config_from_env()
+            app_config()
 
     @pytest.mark.parametrize("value", ["[::1", "[::]x"])
     def test_a_malformed_bracketed_address_is_refused(self, monkeypatch, value):
         monkeypatch.setenv("TLLAMA_HOST", value)
 
         with pytest.raises(ConfigError, match="TLLAMA_HOST"):
-            load_app_config_from_env()
+            app_config()
 
 
 class TestAPortOutsideWhatASocketTakes:
@@ -196,7 +199,7 @@ class TestAPortOutsideWhatASocketTakes:
         monkeypatch.setenv("TLLAMA_HOST", value)
 
         with pytest.raises(ConfigError) as excinfo:
-            load_app_config_from_env()
+            app_config()
 
         assert "TLLAMA_HOST" in str(excinfo.value)
         assert "65535" in str(excinfo.value)
@@ -212,4 +215,4 @@ class TestAPortOutsideWhatASocketTakes:
         # 1 and 65535 are both usable.
         monkeypatch.setenv("TLLAMA_HOST", value)
 
-        assert load_app_config_from_env().port == expected_port
+        assert app_config().port == expected_port

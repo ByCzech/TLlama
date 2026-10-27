@@ -1,0 +1,41 @@
+[
+  {
+    "host": "mi50",
+    "archive": "tllama-070-Tgi9cm.tar.xz",
+    "archive_sha256": "532d78c75b3091a4d142fc08f04c5333a639108403abaed538e35fb2c14ff46e",
+    "member": "./devices/devices.stdout",
+    "fixture": "mi50-devices.txt",
+    "version_stderr": "version: 0.7.0-dev (build 11850, commit 0e9433bfd3)\nbuilt with GNU 14.2.0 for Linux x86_64\n",
+    "selectors": [
+      "BLAS",
+      "ROCm0",
+      "Vulkan0"
+    ]
+  },
+  {
+    "host": "mi100",
+    "archive": "tllama-070-OIB4Mv.tar.xz",
+    "archive_sha256": "743884bba70d06b653056186a8093dc788565400c2aef0990ac39342a378f0a3",
+    "member": "./devices/devices.stdout",
+    "fixture": "mi100-devices.txt",
+    "version_stderr": "version: 0.7.0-dev (build 11850, commit 0e9433bfd3)\nbuilt with GNU 14.2.0 for Linux x86_64\n",
+    "selectors": [
+      "BLAS",
+      "ROCm0",
+      "ROCm1",
+      "Vulkan0"
+    ]
+  },
+  {
+    "host": "p100",
+    "archive": "tllama-070-C3JqGJ.tar.xz",
+    "archive_sha256": "9a3ad971fef35d66aeb8a8799406fd5493cf9766e7a297b7f177f9b868c01634",
+    "member": "./devices/devices.stdout",
+    "fixture": "p100-devices.txt",
+    "version_stderr": "version: 0.7.0-dev (build 11850, commit 0e9433bfd3)\nbuilt with GNU 14.2.0 for Linux x86_64\n",
+    "selectors": [
+      "BLAS",
+      "CUDA0"
+    ]
+  }
+]

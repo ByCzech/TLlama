@@ -12,7 +12,7 @@ from pathlib import Path
 
 from tllama.worker import NativeWorker, WorkerError, WorkerExited
 from tllama.worker_config import WorkerLaunchSpec
-from tllama.config import load_backend_config_from_env
+from tllama.daemon_config import load_daemon_config
 
 
 def report(stage, **values):
@@ -20,7 +20,7 @@ def report(stage, **values):
 
 
 async def exercise(args):
-    config = load_backend_config_from_env()
+    config = load_daemon_config(False, discover=False).backend
     environment = {}
     for entry in args.env:
         name, separator, value = entry.partition("=")

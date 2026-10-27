@@ -24,7 +24,7 @@ def _log_memory_sizes(memory):
     return device, device
 
 
-def _native_memory_sizes(memory):
+def _legacy_native_memory_sizes(memory):
     """Return display sizes and their basis, without changing buffer totals.
 
     This is an Ollama compatibility summary of storage/placement, not an
@@ -72,18 +72,121 @@ def _native_memory_sizes(memory):
         return None, None, 'inconsistent_placement'
     # Match Ollama's full-offload summary, not an allocation ratio. The full
     # inventory (including CPU projector compute and shared buffers) is kept
-    # verbatim; excluded_host_bytes explains the compatibility-only difference.
+    # verbatim; policy_excluded_bytes explains the compatibility-only difference.
     return device, device, 'full_accelerator_weights'
+
+
+def _weight_memory_summary(memory):
+    """Replace pure weight-buffer capacities with their unique used ranges.
+
+    Weight CPU/GPU bytes follow checked assignment. Other buffers keep their
+    existing memory-kind accounting. A shared weight/nonweight leaf cannot be
+    decomposed from capacity minus payload: that remainder can contain holes.
+    """
+    result = {'size': None, 'size_vram': None, 'basis': 'native_weight_storage',
+              'metric': 'weight_payload_and_nonweight_buffers', 'precision': 'exact_bytes',
+              'reason': None, 'weight_capacity_reduction_bytes': None,
+              'policy_excluded_bytes': None, 'excluded_input_weight_bytes': None,
+              'excluded_nonweight_host_bytes': None}
+
+    def unavailable(reason):
+        result['reason'] = reason
+        return result
+
+    if memory['status'] != 'known' or memory['allocated_bytes'] is None:
+        return unavailable('incomplete_inventory')
+    storage = memory['weight_storage']
+    if storage['status'] != 'known':
+        return unavailable('incomplete_weight_storage')
+    models = {owner['id'] for owner in memory['owners'] if owner['kind'] == 'model'}
+    devices = {device['id']: device['type'] for device in memory['devices']}
+    components = {'input_weights', 'output_weights', 'repeating_layers', 'mtp_layers', 'other_weights'}
+    cpu_weights = gpu_weights = 0
+    noninput_models = set()
+    cpu_noninput = False
+    payload_by_buffer = {}
+    for interval in storage['intervals']:
+        relations = interval['relationships']
+        if any(rel['component'] not in components for rel in relations):
+            return unavailable('unsupported_weight_component')
+        assignment = interval['assignment']
+        types = {devices[device] for device in assignment['device_ids']}
+        if assignment['status'] != 'known' or not types:
+            return unavailable('incomplete_weight_assignment')
+        cpu = types == {'cpu'}
+        if not cpu and not types <= {'gpu', 'igpu', 'accel'}:
+            return unavailable('unclassified_weight_assignment')
+        size = interval['size_bytes']
+        if cpu:
+            cpu_weights += size
+        else:
+            gpu_weights += size
+        noninput = {rel['owner_id'] for rel in relations if rel['component'] != 'input_weights'}
+        noninput_models.update(noninput)
+        cpu_noninput |= cpu and bool(noninput)
+        key = interval['buffer_id']
+        payload_by_buffer[key] = payload_by_buffer.get(key, 0) + size
+    full = bool(models) and noninput_models == models and not cpu_noninput
+    host_other = device_other = reduction = 0
+    for buffer in memory['buffers']:
+        owners = buffer['owners']
+        is_weight = [rel['owner_id'] in models and rel['component'] == 'model_weights' for rel in owners]
+        if any(is_weight):
+            if not all(is_weight):
+                return unavailable('shared_weight_nonweight_buffer')
+            reduction += buffer['size_bytes'] - payload_by_buffer.get(buffer['id'], 0)
+        elif buffer['memory_kind'] in {'host', 'host_pinned'}:
+            host_other += buffer['size_bytes']
+        elif buffer['memory_kind'] == 'device':
+            device_other += buffer['size_bytes']
+        else:
+            return unavailable('unknown_nonweight_memory_kind')
+    excluded_input = cpu_weights if full else 0
+    excluded_other = host_other if full else 0
+    device = gpu_weights + device_other
+    total = cpu_weights + gpu_weights + host_other + device_other
+    empty = not memory['buffers'] and memory['allocated_bytes'] == 0
+    result.update(size=total - excluded_input - excluded_other, size_vram=device,
+                  reason='empty_inventory' if empty else
+                         'full_accelerator_weights' if full else 'weight_payload_and_buffer_totals',
+                  weight_capacity_reduction_bytes=reduction,
+                  policy_excluded_bytes=excluded_input + excluded_other,
+                  excluded_input_weight_bytes=excluded_input, excluded_nonweight_host_bytes=excluded_other)
+    return result
+
+
+def ollama_memory_summary(memory):
+    """Return sizes with explicit metric, precision and reconciliation terms.
+
+    Only an absent weight extension selects legacy capacity accounting. An
+    incomplete or malformed present extension never falls back to mmap spans.
+    """
+    basis = None
+    if memory['source'] == 'native_memory_api':
+        if 'weight_storage' in memory:
+            return _weight_memory_summary(memory)
+        size, device, reason = _legacy_native_memory_sizes(memory)
+        basis = 'native_weight_placement'
+    elif memory['source'] == 'native_load_log':
+        total, device = _log_memory_sizes(memory)
+        size, device = (total, device) if total is not None and device is not None else (None, None)
+        reason = memory['reason']
+        basis = ('verified_log_offload' if size is not None and size != memory['allocated_bytes']
+                 else 'load_buffer_totals')
+    else:
+        size = device = None
+        reason = memory['reason']
+    allocated = memory['allocated_bytes']
+    return {'size': size, 'size_vram': device, 'basis': basis, 'reason': reason,
+            'metric': memory['scope'], 'precision': memory['precision'],
+            'weight_capacity_reduction_bytes': 0,
+            'policy_excluded_bytes': allocated - size if allocated is not None and size is not None else None}
 
 
 def ollama_memory_sizes(memory):
     """Select the display policy for one complete, unmixed measurement source."""
-    if memory['source'] == 'native_memory_api':
-        return _native_memory_sizes(memory)[:2]
-    if memory['source'] == 'native_load_log':
-        total, device = _log_memory_sizes(memory)
-        return (total, device) if total is not None and device is not None else (None, None)
-    return None, None
+    result = ollama_memory_summary(memory)
+    return result['size'], result['size_vram']
 
 
 def public_memory(telemetry):
@@ -98,6 +201,8 @@ def public_memory(telemetry):
         memory = deepcopy(measurement['report'])
         if telemetry['source'] == 'native_memory_api':
             memory.update(measurement['totals'])
+            if 'weight_storage_totals' in measurement:
+                memory['weight_storage_totals'] = deepcopy(measurement['weight_storage_totals'])
             memory.update(source='native_memory_api', reason=None if memory['status'] == 'known'
                           else 'incomplete_native_inventory')
     memory.update(units='bytes', physical_residency_bytes=None,
@@ -117,21 +222,9 @@ def ollama_processes(generations):
     models = []
     for entry in generations:
         metadata, memory = entry['metadata'], public_memory(entry['memory'])
-        if memory['source'] == 'native_memory_api':
-            size, size_vram, reason = _native_memory_sizes(memory)
-            basis = 'native_weight_placement'
-        else:
-            size, size_vram = ollama_memory_sizes(memory)
-            reason = memory['reason']
-            basis = None
-            if memory['source'] == 'native_load_log':
-                basis = ('verified_log_offload' if size is not None and size != memory['allocated_bytes']
-                         else 'load_buffer_totals')
-        total = memory['allocated_bytes']
-        memory['ollama_compatibility'] = {
-            'size':size, 'size_vram':size_vram, 'basis':basis, 'reason':reason,
-            'excluded_host_bytes':total - size if total is not None and size is not None else None,
-        }
+        compatibility = ollama_memory_summary(memory)
+        size, size_vram = compatibility['size'], compatibility['size_vram']
+        memory['ollama_compatibility'] = compatibility
         family = metadata.get('arch', 'unknown')
         parameter_size = metadata.get('parameter_size')
         if not parameter_size:

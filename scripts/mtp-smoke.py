@@ -13,7 +13,7 @@ import signal
 import time
 
 from tllama.backend import ModelManager
-from tllama.config import load_backend_config_from_env
+from tllama.daemon_config import load_daemon_config
 from tllama.worker import NativeWorker, WorkerError, WorkerStartupError, WorkerStartupTimeout
 from tllama.worker_config import WorkerLaunchSpec
 
@@ -93,7 +93,7 @@ def require(condition, message):
 
 @dataclass(frozen=True)
 class ProbeLaunchSpec(WorkerLaunchSpec):
-    """Diagnostic-only CLI extension, deliberately outside production config."""
+    """Independent MTP CLI reference for production configuration checks."""
     speculation: str = 'none'
     draft_tokens: int = 3
 
@@ -200,7 +200,7 @@ async def memory(worker, emit, phase):
 
 
 async def exercise(args, emit):
-    config = load_backend_config_from_env()
+    config = load_daemon_config(False, discover=False).backend
     if args.models_dir:
         config = replace(config, models_dir=str(args.models_dir.expanduser().resolve()))
     profiles, observations, all_ok = {}, [], True
@@ -320,7 +320,7 @@ async def exercise(args, emit):
 
 async def exercise_negative(args, emit):
     """Control -> missing-head startup rejection -> fresh working control."""
-    config = load_backend_config_from_env()
+    config = load_daemon_config(False, discover=False).backend
     if args.models_dir:
         config = replace(config, models_dir=str(args.models_dir.expanduser().resolve()))
     observations, controls = [], []

@@ -3,12 +3,11 @@
 import asyncio
 from hashlib import sha256
 import os
-from pathlib import Path
 import re
-import tempfile
 
 from tllama.residency import _settle_owned
 from tllama.helpers.metadata_cache import build_model_file_fingerprint, load_digest_cache, save_digest_cache
+from tllama.helpers.repository_files import repository_tempfile
 
 
 def blob_path(manager, digest):
@@ -44,8 +43,7 @@ async def receive_blob(manager, digest, request):
         except ValueError:
             raise ValueError('Invalid upload Content-Length.') from None
     target.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary = tempfile.mkstemp(prefix='.upload-', dir=target.parent)
-    temporary = Path(temporary)
+    descriptor, temporary = repository_tempfile(prefix='.upload-', directory=target.parent)
     digest_state = sha256()
     prefix = bytearray()
     size = 0

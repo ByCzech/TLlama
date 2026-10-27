@@ -12,7 +12,6 @@ import pytest
 from tllama.helpers.common import (
     build_sampling_kwargs,
     format_ollama_parameters,
-    sampling_parameter_names,
 )
 from tllama.helpers.model_toml import TomlModelError, parse_model_toml
 
@@ -81,13 +80,11 @@ class TestParsing:
 
 class TestAcceptedAsAName:
     def test_it_is_a_name_a_toml_may_use(self):
-        assert "logit_bias" in sampling_parameter_names()
+        assert parse_model_toml(_toml('logit_bias = { "7" = -1.0 }')).sampling["logit_bias"] == {7: -1.0}
 
     def test_grammar_is_still_refused(self):
         """Same gap in llama-cpp-python, deliberately not closed: invalid
         GBNF kills the process instead of raising."""
-        assert "grammar" not in sampling_parameter_names()
-
         with pytest.raises(TomlModelError):
             parse_model_toml(_toml('grammar = \'root ::= "a"\''), source="m.toml")
 

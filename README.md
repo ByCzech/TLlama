@@ -5,8 +5,51 @@ Ollama-compatible and OpenAI-compatible APIs and runs inference in private
 `tllama-server` subprocesses based on llama.cpp. It uses FastAPI and Pydantic;
 it does not require a Python inference binding.
 
-The project is under active development. Supported API contracts, model modes
-and explicit limitations are documented below.
+TLlama combines an Ollama-style model service with direct control over the
+native runtime. One daemon can keep model-specific device placement, cache
+precision, context, sampling and speculative decoding settings, alongside
+generation, vision, embedding and Decision models.
+
+## At a glance
+
+- **Independent K and V cache precision per model:** combine, for example,
+  `type_k = "q8_0"` and `type_v = "q4_0"`, with global defaults and explicit
+  model overrides. This goes beyond Ollama's single global K/V type.
+- **Choose the device, including its backend:** assign one model to `ROCm0`,
+  another to `Vulkan0` or `CUDA0`, and another to CPU. Explicit comma-separated
+  selectors also reach the native multi-device path, including mixed backends
+  where the model and installed runtime support them.
+- **Extended AMD support:** the development runtime includes native legacy
+  Vega targets `gfx900`, `gfx906` and `gfx90c`, plus architecture-specific
+  `gfx1250` fixes for Instinct MI455X. The hardware guide separates these
+  extensions from completed inference qualification. Legacy HIP usually needs
+  mmap disabled, or a Vulkan device instead; see the
+  [workaround](docs/hardware.md#legacy-hip-mmap-workaround).
+- **Experimental Instella-MoE:** the patched native runtime adds the converter,
+  loader and model graph for `InstellaMoEForCausalLM`, initially
+  Instella-MoE-16B-A3B-Think, beyond the reviewed official llama.cpp/Ollama sources.
+- **A choice of native backends:** CPU and OpenBLAS, Vulkan, ROCm/HIP, CUDA
+  12.4/12.9/13.3 and Intel SYCL have Debian runtime packaging. Other native
+  backends depend on a suitable build; Windows/macOS builds and installers
+  are planned.
+- **More than chat:** compatible Ollama/OpenAI generation and tools, image
+  input, semantic embeddings, text Decision models, FIM and opt-in embedded
+  MTP use the same model lifecycle. Each has its own documented support scope.
+- **Explainable memory reports:** native buffer inventory, deduplicated weight
+  payload, CPU/GPU assignment and allocation locality remain separate. Unknown
+  data stays unknown; `ps` does not guess placement from the GGUF file size.
+- **Inspectable, reusable model definitions:** human-editable TOML profiles can
+  share GGUF weights while keeping different templates, system prompts and
+  runtime settings. Persistent metadata/digest caches support moved repositories.
+- **Managed native processes:** immutable worker generations, protected active
+  requests, idle TTL, cancellation and awaited cleanup keep model changes and
+  failures local to their owned worker. No Python inference binding is required.
+
+Start with the [documentation index](TOC.md), the detailed
+[features and comparison](docs/features.md), [hardware support](docs/hardware.md)
+and [packages and platform roadmap](docs/distribution.md).
+The project is under active development toward 1.0.0. These pages distinguish
+implemented features, tested configurations and planned distribution work.
 
 ## Install and start
 
@@ -37,6 +80,35 @@ Bare `tllama` shows client help. `tllamad` starts the foreground server.
 From a checkout, use `python -m tllama` and `python -m tllama.daemon`.
 The default listener is `127.0.0.1:54800`.
 
+## Inference from Python
+
+Install the optional client library with `python -m pip install ollama`, start
+`tllamad` and replace `MODEL` with a registered name from `tllama list`:
+
+```python
+import ollama as tllama
+
+client = tllama.Client(host="http://127.0.0.1:54800", timeout=300.0)
+response = client.chat(
+    model="MODEL",
+    messages=[{"role": "user", "content": "Explain GGUF in one sentence."}],
+    stream=False,
+)
+print(response.message.content)
+```
+
+The alias names the compatible client; inference runs in TLlama. No separate
+Ollama daemon is needed. The explicit host selects TLlama's port.
+
+See [client examples](docs/client-examples.md) for:
+
+- **Python `ollama`:** basic chat, streaming, conversation history and async calls.
+- **Python `openai`:** Chat Completions, async streaming and embeddings.
+- **Python `requests`, `httpx` and `httpx2`:** direct JSON requests, streaming,
+  timeouts and error handling.
+- **curl:** model listing, chat, generation and both streaming wire formats.
+- **JavaScript:** the `ollama` and `openai` libraries, plus dependency-free `fetch`.
+
 ## Configure the daemon
 
 ```sh
@@ -52,8 +124,9 @@ precedence. A global device setting is a default for models.
 File selection, all flags, environment names, source reporting and reload
 behavior are described in [daemon.md](docs/daemon.md). The server configuration
 is separate from per-model TOML. See [systemd.md](docs/systemd.md) for installing
-the supplied [tllamad.service](systemd/tllamad.service) manually. Debian
-application packaging follows separately.
+the supplied [tllamad.service](systemd/tllamad.service) manually. The native
+runtime already has modular Debian packaging; application packaging and planned
+Linux/Windows/macOS distribution are tracked in [distribution.md](docs/distribution.md).
 
 ## Client commands and REPL
 
@@ -120,12 +193,13 @@ definitions. See [model-repositories.md](docs/model-repositories.md) and
 | Image input | [Native vision](docs/native-vision.md), [public API](docs/native-public-api.md) |
 | Embeddings | `/api/embed`, `/api/embeddings`, `/v1/embeddings`; [embedding API](docs/embedding-api.md) |
 | Decision models | `/v1/systemone`; [Decision API](docs/decision-api.md) |
+| Fill-in-the-middle | `/api/generate` with nonempty `suffix`; [FIM](docs/native-fim.md) |
 | Embedded MTP | Opt-in model runtime settings; [MTP](docs/native-mtp.md) |
 
 Embedding and Decision models have their own admission/capability contracts;
 a generation endpoint does not automatically work on every GGUF architecture.
 Image requests require the configured projector and live runtime support.
-Audio APIs, full Ollama parity, Responses API state and REPL conversation
+Audio APIs, `/v1/responses`, `/v1/completions`, full Ollama parity and REPL conversation
 persistence remain separate work. Native TOML create is not an Ollama
 Modelfile parser or a full implementation of Ollama's structured create body.
 
@@ -165,7 +239,8 @@ pytest -q
 
 See [development.md](docs/development.md) for focused checks and hardware smoke
 scripts, and [native-config.md](docs/native-config.md) for the supported runtime
-vocabulary. TLlama-owned settings are explicit contracts; new upstream options
+vocabulary. The [documentation review](docs/release-review-100.md) records the pre-1.0.0
+checks and remaining release decisions. TLlama-owned settings are explicit contracts; new upstream options
 are not automatically public API features.
 
 ## License

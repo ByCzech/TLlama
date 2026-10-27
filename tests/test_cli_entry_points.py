@@ -1,17 +1,4 @@
-"""The command has to actually start.
-
-An entry point is the one piece of code that unit tests reach around: the
-functions it calls can all be correct while the module that exposes them
-fails before any of them runs. That is exactly what happened -- main()
-was defined below the `if __name__ == "__main__"` block that calls it, so
-`python -m tllama.main` raised NameError while the installed console
-script, which imports the module first and looks the name up afterwards,
-worked and hid it.
-
-So these run the real thing in a subprocess. rebuildrepo against an empty
-directory is the cheapest subcommand that exercises the whole path and
-exits on its own.
-"""
+"""Canonical client and daemon entry points must work from a checkout."""
 
 import os
 import subprocess
@@ -40,16 +27,15 @@ def run_module(module, *args, models_dir, extra_env=None):
     )
 
 
-@pytest.mark.parametrize("module", ["tllama.daemon", "tllama.main"])
+@pytest.mark.parametrize("module", ["tllama.daemon"])
 def test_the_command_runs_from_a_checkout(module, tmp_path):
-    """Both server spellings a person reaches for during development. All of
-    them have to work; one of them silently did not."""
+    """Repository maintenance works through the daemon entry point."""
     result = run_module(module, "rebuildrepo", "--dryrun", models_dir=tmp_path)
 
     assert result.returncode == 0, result.stderr
 
 
-@pytest.mark.parametrize("module", ["tllama.daemon", "tllama.main"])
+@pytest.mark.parametrize("module", ["tllama.daemon"])
 def test_nothing_is_raised_before_the_command_is_reached(module, tmp_path):
     """A NameError at import time is invisible to every test that imports
     the module normally, so it is asserted on directly."""

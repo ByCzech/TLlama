@@ -1,5 +1,9 @@
 # Development
 
+The [documentation index](../TOC.md) links current contracts, and the
+[feature source audit](feature-source-audit.md) records the source/version
+boundaries behind public feature and hardware comparisons.
+
 TLlama's Python application manages private native `tllama-server` workers.
 The native runtime is developed and packaged separately; a Python
 `llama-cpp-python` build is not required.
@@ -117,7 +121,8 @@ Keep configuration, request validation, native serialization and response
 ownership contracts explicit. Log through module loggers; let entry points
 configure handlers. Do not execute client/model tool calls.
 
-The current integration order is daemon configuration, systemd, documentation,
-then merge the verified refactor into the main branch. Debian application
+Daemon configuration and systemd integration are implemented. Before release,
+apply the [documentation review](release-review-100.md) corrections, resolve
+the recorded release decisions, then merge/tag the verified refactor. Debian application
 packaging is planned afterward in a separate branch. Personal planning/handoff
 Markdown lives outside the Git repository.

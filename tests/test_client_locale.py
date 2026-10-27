@@ -16,15 +16,11 @@ from test_client_cli import cli_server, isolated_proxy_environment
 
 
 @pytest.fixture(autouse=True)
-def restore_locale_and_timezone():
-    categories = {category: locale.setlocale(category) for category in (locale.LC_NUMERIC, locale.LC_TIME)}
+def restore_timezone():
     old_tz = os.environ.get('TZ')
-    locale.setlocale(locale.LC_TIME, 'C')
     try:
         yield
     finally:
-        for category, value in categories.items():
-            locale.setlocale(category, value)
         if old_tz is None:
             os.environ.pop('TZ', None)
         else:

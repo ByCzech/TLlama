@@ -83,18 +83,8 @@ def test_the_check_can_tell_a_read_field_from_an_unread_one():
 
 
 def test_every_environment_variable_config_reads_is_documented():
-    """The other direction: read by the code, described nowhere.
-
-    This one is a documentation gap rather than a broken setting, and it
-    is just as invisible from inside either half. TLLAMA_DEBUG had lost
-    its heading in docs/configuration.md, leaving the sentence describing
-    it attached to the section above and the name written nowhere at all,
-    so it worked and could not be found.
-
-    config.py is the only file that reads the environment, which is what
-    makes the question answerable from one place.
-    """
-    source = (PACKAGE / "config.py").read_text(encoding="utf-8")
+    """Every public daemon environment spelling is documented."""
+    source = (PACKAGE / "daemon_config.py").read_text(encoding="utf-8")
     documented = " ".join(
         path.read_text(encoding="utf-8")
         for path in sorted((REPOSITORY_ROOT / "docs").glob("*.md"))
@@ -103,12 +93,12 @@ def test_every_environment_variable_config_reads_is_documented():
     undocumented = sorted(
         {
             name
-            for name in re.findall(r"TLLAMA_[A-Z0-9_]+", source)
+            for name in re.findall(r"(?<!_)TLLAMA_[A-Z0-9_]+", source)
             if name not in documented and name not in _DEFERRED_NATIVE_DOCS
         }
     )
 
     assert not undocumented, (
-        "read by config.py and described in no document: "
+        "read by daemon_config.py and described in no document: "
         + ", ".join(undocumented)
     )

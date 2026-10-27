@@ -16,7 +16,9 @@ Next listing/show after restart: still fast
 
 ## Why Metadata Cache Exists
 
-TLlama needs model metadata for several operations:
+Metadata is used for listing, admission and request preparation. `/api/ps`
+uses the already-admitted generation snapshot; polling does not rescan GGUFs.
+Consumers include:
 
 - `/api/tags`
 - `/api/show`
@@ -54,7 +56,7 @@ Example:
 
 Each model gets one JSON cache file.
 
-The cache file name is derived from the absolute model path.
+The cache file name is derived from the resolved model path relative to the repository root, using `/` separators. The stored fingerprint uses the same relative path, so different mount points share one entry.
 
 Example:
 
@@ -70,7 +72,7 @@ The hash-like file name is not intended to be human-readable. The JSON content c
 
 The cache stores normalized metadata used by TLlama.
 
-Example structure:
+Historical schema-1 example (current header schema is 8; digest schema is 1):
 
 ```json
 {
@@ -78,7 +80,7 @@ Example structure:
   "created_at": "2026-04-26T02:20:27.679666+00:00",
   "model": {
     "name": "unsloth/Qwen3.5-4B-GGUF/Qwen3.5-4B-Q4_K_M",
-    "path": "/var/lib/tllama/models/HuggingFace/unsloth/Qwen3.5-4B-GGUF/Qwen3.5-4B-Q4_K_M.gguf",
+    "path": "HuggingFace/unsloth/Qwen3.5-4B-GGUF/Qwen3.5-4B-Q4_K_M.gguf",
     "size": 2740937888,
     "mtime_ns": 1776855409859723725
   },
@@ -110,7 +112,7 @@ TLlama validates cache entries using a lightweight file fingerprint:
 
 ```text
 schema_version
-absolute model path
+repository-relative model path
 file size
 file mtime_ns
 ```
@@ -125,7 +127,11 @@ This means the cache is automatically invalidated when:
 - the model modification time changes,
 - the cache schema version changes.
 
-TLlama does not hash the full model file by default, because hashing large GGUF files would require reading many gigabytes of data and would defeat the purpose of the cache.
+Header extraction reads GGUF metadata without loading inference weights.
+Content SHA-256 is a separate persistent digest cache: a cold listing/show may
+compute it when no valid digest is available, which can read the entire file.
+A verified download/upload digest can seed that cache. Header schema changes
+do not invalidate valid content digests.
 
 ---
 
@@ -152,7 +158,7 @@ When `ollama show` or `/api/show` is called for a model without a valid cache, T
 Example:
 
 ```bash
-OLLAMA_HOST=127.0.0.1:54800 ollama show <model-name>
+OLLAMA_HOST=127.0.0.1:54800 ollama show MODEL
 ```
 
 ### After model pull
@@ -244,7 +250,7 @@ Cache files are plain JSON.
 Example:
 
 ```bash
-python -m json.tool /var/lib/tllama/models/.tllama/metadata-cache/<cache-file>.json | less
+python -m json.tool /var/lib/tllama/models/.tllama/metadata-cache/CACHE_FILE.json | less
 ```
 
 Useful fields to inspect:
@@ -292,7 +298,10 @@ This is unusual in normal workflows.
 
 ### Cache contains old fields after a code update
 
-Remove the cache directory:
+Header schema changes normally refresh stale entries automatically, preserving
+valid independent digest entries. If manual rebuilding is needed, removing the
+whole directory also discards digest caches and may require full-file hashing:
+
 
 ```bash
 rm -rf /var/lib/tllama/models/.tllama/metadata-cache
@@ -316,6 +325,34 @@ Reasons:
 - easy atomic writes through temporary files and replace.
 
 The cache is not a substitute for the model file. It only stores small metadata needed by TLlama.
+
+---
+
+## Shared Repositories and Mount Points
+
+Model listings are rebuilt from TOML definitions on every request. The cache
+stores header metadata and content digests; it does not register models.
+
+Cache identity is relative to the repository containing
+`.tllama/metadata-cache/`. Moving that repository or mounting it at a different
+path does not invalidate entries if file size and nanosecond mtime stay the
+same. Repository symlinks are resolved; distinct relative weight paths remain
+distinct. Files outside the repository are not cached here.
+
+Old entries keyed by absolute paths are ignored. Headers and SHA-256 digests
+are regenerated on first use, then reused at other mount points. Old cache
+files are not converted or automatically removed. To avoid leaving unused
+entries, stop the daemons and remove the cache directory before rebuilding it.
+Upgrade all daemons sharing the repository to stop old versions creating
+absolute keys.
+
+Header and digest payload schema versions are unchanged by this path-format
+change; their new filenames and relative fingerprints identify the new entries.
+
+Shared cache files still require suitable filesystem/SMB permissions. This
+change does not alter access modes, ACLs, mount caching or timestamp precision.
+Each daemon retains its own temporary in-memory metadata cache, independently
+of the persistent entries and the freshly scanned model list.
 
 ---
 

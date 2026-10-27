@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 import sys
 
-from tllama.config import load_backend_config_from_env
+from tllama.daemon_config import load_daemon_config
 from tllama.helpers.model_toml import parse_model_toml
 from tllama.native_config import build_native_sampling, resolve_worker_config
 
@@ -28,7 +28,7 @@ def main():
     parser.add_argument("--ctx", type=int, help="Preview a request num_ctx override")
     args = parser.parse_args()
     try:
-        config = load_backend_config_from_env()
+        config = load_daemon_config(False, discover=False).backend
         if args.models_dir is not None:
             config = replace(config, models_dir=str(args.models_dir.expanduser().resolve()))
         root = Path(config.models_dir).expanduser().resolve()

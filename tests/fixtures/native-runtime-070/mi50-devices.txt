@@ -1,0 +1,4 @@
+Available devices:
+  BLAS: OpenBLAS (0 MiB, 0 MiB free)
+  ROCm0: AMD Radeon Graphics (32752 MiB, 32732 MiB free)
+  Vulkan0: AMD Radeon Graphics (RADV VEGA20) (32752 MiB, 32741 MiB free)

@@ -14,7 +14,9 @@ import time
 from tllama.worker_config import WorkerLaunchSpec
 
 
-AUDITED_RUNTIME = 'b11552-3144c167ef'
+# Discovery grammar only; this does not certify inference or physical PCI links.
+AUDITED_RUNTIME = 'b11850-0e9433bfd3'
+AUDITED_RUNTIME_FINGERPRINTS = frozenset({AUDITED_RUNTIME, 'b11552-3144c167ef'})
 VISIBILITY_ENV = frozenset({'CUDA_VISIBLE_DEVICES', 'ROCR_VISIBLE_DEVICES', 'HIP_VISIBLE_DEVICES',
                           'GGML_VK_VISIBLE_DEVICES', 'ONEAPI_DEVICE_SELECTOR', 'SYCL_DEVICE_FILTER',
                           'ZE_AFFINITY_MASK', 'GGML_DISABLE_VULKAN'})

@@ -24,16 +24,23 @@ def server_logging(monkeypatch):
     monkeypatch.setattr(main.uvicorn, 'run', lambda *args, **kwargs: launches.append(kwargs))
 
     def start(debug=False):
-        # Reproduce CLI logging setup before start_server reads TLLAMA_DEBUG.
+        # Reproduce CLI logging setup before start_server reads the configured log level.
         root.setLevel(logging.INFO)
         monkeypatch.setattr(main, 'current_daemon_config', lambda: SimpleNamespace(app=SimpleNamespace(
-            debug=debug, log_level='debug' if debug else 'info', host='127.0.0.1', port=11434, reload=False)))
+            log_level='debug' if debug else 'info', host='127.0.0.1', port=11434, reload=False)))
         main.start_server()
         return launches[-1]
 
     yield start
     for logger, level in zip(loggers, levels):
         logger.setLevel(level)
+
+
+@pytest.mark.parametrize('debug', [False, True])
+def test_startup_log_level_controls_http_diagnostics_without_a_debug_field(server_logging, debug):
+    kwargs = server_logging(debug)
+    assert kwargs['log_level'] == ('debug' if debug else 'info')
+    assert logging.getLogger('httpx').isEnabledFor(logging.DEBUG) is debug
 
 
 @pytest.mark.parametrize('debug', [False, True])

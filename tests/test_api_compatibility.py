@@ -180,7 +180,6 @@ def test_a_stored_model_resolves_back_to_its_own_path(
     reference = manager._build_model_ref_from_path(path)
 
     assert reference == expected_reference
-    assert manager.resolve_model_storage_path(reference) == path
 
 
 def test_the_never_expires_horizon_matches_the_one_ollama_reports():

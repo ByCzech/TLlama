@@ -12,7 +12,7 @@ import signal
 import time
 
 from tllama.backend import ModelManager
-from tllama.config import load_backend_config_from_env
+from tllama.daemon_config import load_daemon_config
 from tllama.native_config import _plain
 from tllama.worker import NativeWorker, WorkerError, WorkerRequestError
 from tllama.worker_config import WorkerLaunchSpec
@@ -37,7 +37,7 @@ def require(condition, message):
 
 @dataclass(frozen=True)
 class ProbeLaunchSpec(WorkerLaunchSpec):
-    """Diagnostic mode only; production load configuration stays unchanged."""
+    """Independent native embedding CLI reference for production comparisons."""
 
     pooling: str = 'auto'
 
@@ -160,7 +160,7 @@ async def error_probe(worker, body, emit, observations, label):
 
 
 async def exercise_model(args, model, emit):
-    config = load_backend_config_from_env()
+    config = load_daemon_config(False, discover=False).backend
     if args.models_dir:
         config = replace(config, models_dir=str(args.models_dir.expanduser().resolve()))
     workers, observations, ok = [], [], True

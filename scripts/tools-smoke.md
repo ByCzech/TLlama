@@ -1,8 +1,10 @@
 # Tools: native reference checkpoint 0044
 
-Working smoke instructions; final user documentation remains deferred.
-This checkpoint changes diagnostics only. The public Tools adapter is not yet
-accepted; do not interpret successful native inference as public API parity.
+This is the independent native reference recipe originating in 0044. Public
+tools are integrated and qualified separately; see
+[the current tools contract](../docs/native-tools.md) and
+[runtime audit](../docs/runtime-audit-070.md). Native-only success does not
+prove public API parity. Accepted captures need not be repeated.
 
 Run from the TLlama checkout in the same Python environment as pytest. The
 script resolves registered model TOML/GGUF files, starts one private worker per

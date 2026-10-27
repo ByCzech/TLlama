@@ -7,24 +7,29 @@ from datetime import datetime, timezone
 import json
 import math
 import os
+import re
 from pathlib import Path
 import tempfile
 from uuid import uuid4
 
-from tllama.device_inventory import (AUDITED_RUNTIME, VISIBILITY_ENV, discovery_environment,
+from tllama.device_inventory import (AUDITED_RUNTIME, AUDITED_RUNTIME_FINGERPRINTS, VISIBILITY_ENV, discovery_environment,
     parse_device_list, pci_inventory, run_probe, runtime_fingerprint)
 from tllama.worker_config import DEFAULT_EXECUTABLE
+from tllama.runtime_fingerprint import evaluate_runtime_fingerprint
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--executable', type=Path, default=DEFAULT_EXECUTABLE)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--expected-fingerprint', help='Capture this exact candidate build; unaudited captures still require review')
     parser.add_argument('--env', action='append', default=[], metavar='NAME=VALUE', help='Child visibility override; repeat as needed')
     parser.add_argument('--timeout', type=float, default=30, help='Per-command deadline in seconds, plus bounded cleanup')
     parser.add_argument('--output-limit', type=int, default=4 * 1024 * 1024, help='Combined stdout/stderr byte cap per command')
     parser.add_argument('--pci-root', type=Path, default=Path('/sys/bus/pci/devices'))
     args = parser.parse_args(argv)
+    if args.expected_fingerprint is not None and re.fullmatch(r'b[0-9]+-[0-9a-f]+', args.expected_fingerprint) is None:
+        parser.error('--expected-fingerprint must use bBUILD-COMMIT format')
     if not math.isfinite(args.timeout) or not 0 < args.timeout <= 300:
         parser.error('--timeout must be finite and in (0, 300]')
     if not 1024 <= args.output_limit <= 16 * 1024 * 1024:
@@ -45,6 +50,8 @@ def main(argv=None):
               'captured_at': datetime.now(timezone.utc).isoformat(),
               'mode': 'read_only_discovery', 'executable': str(executable),
               'audited_runtime': AUDITED_RUNTIME, 'runtime_fingerprint': None,
+              'audited_runtime_fingerprints': sorted(AUDITED_RUNTIME_FINGERPRINTS),
+              'expected_runtime': args.expected_fingerprint or AUDITED_RUNTIME, 'runtime_audited': False,
               'selector_scope': 'this_executable_and_child_environment_at_capture',
               'visibility_environment': {k: environment[k] for k in sorted(VISIBILITY_ENV) if k in environment},
               'explicit_visibility_overrides': overrides, 'environment_fully_fingerprinted': False,
@@ -71,8 +78,10 @@ def main(argv=None):
                     raise ValueError(name + ': native probe failed')
                 if name == 'version':
                     report['runtime_fingerprint'] = runtime_fingerprint(probe.stdout, probe.stderr)
-                    if report['runtime_fingerprint'] != AUDITED_RUNTIME:
-                        raise ValueError('Device table parser requires the audited native runtime')
+                    report['runtime_audited'] = report['runtime_fingerprint'] in AUDITED_RUNTIME_FINGERPRINTS
+                    evaluate_runtime_fingerprint(report['runtime_fingerprint'],
+                        expected_fingerprints={report['expected_runtime']}, policy='strict',
+                        context='device inventory capture')
                 else:
                     report['native_inventory'] = parse_device_list(probe.stdout)
                     if report['native_inventory']['status'] != 'complete':
@@ -85,7 +94,8 @@ def main(argv=None):
         report['private_directory_removed'] = private is None or not Path(private).exists()
     report['pci_inventory'] = pci_inventory(args.pci_root.expanduser().resolve())
     report['protocol_ok'] = not report['issues']
-    report['review_required'] = not report['protocol_ok'] or report['pci_inventory']['status'] != 'complete'
+    report['review_required'] = (not report['protocol_ok'] or not report['runtime_audited']
+                                 or report['pci_inventory']['status'] != 'complete')
     text = json.dumps(report, ensure_ascii=False, allow_nan=False, indent=2) + '\n'
     (output / 'inventory.json').write_text(text, encoding='utf-8')
     print(text, end='')

@@ -13,7 +13,7 @@ import httpx
 import uvicorn
 
 from tllama.backend import ModelManager
-from tllama.config import load_backend_config_from_env
+from tllama.daemon_config import load_daemon_config
 from tllama.native_memory import buffer_location
 from tllama.worker import WorkerError
 
@@ -34,6 +34,37 @@ def require(condition, message):
         raise WorkerError(message)
 
 
+def validate_processor_summary(model):
+    """Check the declared metric without equating weight assignment to buffers."""
+    memory, size, device = model['memory'], model['size'], model['size_vram']
+    compatibility = memory['ollama_compatibility']
+    require(size == compatibility['size'] and device == compatibility['size_vram'],
+            'Processor sizes disagree with their declared basis')
+    require((size is None) == (device is None), 'Incomplete processor split')
+    if memory['host_bytes'] is not None and memory['device_bytes'] is not None:
+        require(memory['host_bytes'] + memory['device_bytes'] == memory['allocated_bytes'],
+                'Allocation split disagrees')
+    if size is None:
+        return
+    require(0 <= device <= size <= memory['allocated_bytes'],
+            '/api/ps processor summary exceeds its allocation report')
+    reduction, excluded = (compatibility[key] for key in
+                           ('weight_capacity_reduction_bytes', 'policy_excluded_bytes'))
+    require(reduction is not None and excluded is not None and reduction >= 0 and excluded >= 0
+            and memory['allocated_bytes'] - size == reduction + excluded,
+            'Metric change and display exclusions do not reconcile with inventory')
+    if compatibility['metric'] == 'weight_payload_and_nonweight_buffers':
+        require(compatibility['basis'] == 'native_weight_storage'
+                and compatibility['precision'] == 'exact_bytes'
+                and memory['weight_storage']['status'] == 'known', 'Unexpected weight storage basis')
+        require(excluded == compatibility['excluded_input_weight_bytes']
+                            + compatibility['excluded_nonweight_host_bytes'],
+                'Weight and nonweight exclusions disagree')
+    else:
+        require(device == memory['device_bytes'] and reduction == 0,
+                'Legacy capacity summary differs from device buffer totals')
+
+
 def public_mtp_stats(payload):
     stats = payload.get('tllama', {}).get('speculative', {})
     drafted, accepted = stats.get('draft_tokens'), stats.get('accepted_tokens')
@@ -43,10 +74,18 @@ def public_mtp_stats(payload):
     return stats
 
 
+async def request_after_cancel(post, chat, timeout):
+    report('after-stream-cancel-start', request_timeout=timeout)
+    try:
+        return await asyncio.wait_for(post('/api/chat', chat), timeout=timeout)
+    except TimeoutError as exc:
+        raise WorkerError(f'Request after stream cancellation exceeded --request-timeout ({timeout:g} s)') from exc
+
+
 async def exercise(args):
     from tllama import main
     from tllama.routers import ollama, openai
-    config = load_backend_config_from_env()
+    config = load_daemon_config(False, discover=False).backend
     if args.models_dir:
         config = replace(config, models_dir=str(args.models_dir.expanduser().resolve()))
     def pinned_runtime(values):
@@ -130,18 +169,7 @@ async def exercise(args):
                         '/api/ps reported a different generation')
                 require(model['state'] == state and (leases is None or model['leases'] == leases), '/api/ps state/leases disagree')
                 memory = model['memory']
-                compatibility = memory['ollama_compatibility']
-                require(model['size'] == compatibility['size'] and model['size_vram'] == compatibility['size_vram'],
-                        'Processor sizes disagree with their declared basis')
-                require((model['size'] is None) == (model['size_vram'] is None), 'Incomplete processor split')
-                if memory['host_bytes'] is not None and memory['device_bytes'] is not None:
-                    require(memory['host_bytes'] + memory['device_bytes'] == memory['allocated_bytes'], 'Allocation split disagrees')
-                if model['size'] is not None:
-                    require(model['size_vram'] == memory['device_bytes']
-                            and model['size_vram'] <= model['size'] <= memory['allocated_bytes'],
-                            '/api/ps processor summary exceeds its allocation report')
-                    require(memory['allocated_bytes'] - model['size'] == compatibility['excluded_host_bytes'],
-                            'Excluded helpers disagree with the complete footprint')
+                validate_processor_summary(model)
                 if memory['source'] == 'native_memory_api':
                     require(memory['schema_version'] == 1 and memory['precision'] == 'exact_bytes'
                             and memory['scope'] == 'backend_buffers', 'Unexpected native memory provenance')
@@ -286,7 +314,7 @@ async def exercise(args):
                 else:
                     raise WorkerError('Cancellation stream produced no actual output')
             await wait_until(lambda: manager.native_snapshot()[0]['leases'] == 0)
-            body = (await asyncio.wait_for(post('/api/chat', chat), timeout=15)).json()
+            body = (await request_after_cancel(post, chat, args.request_timeout)).json()
             require(body['done'], 'Request after stream cancellation failed')
             report('after-stream-cancel', response=body)
             same_generation()

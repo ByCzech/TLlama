@@ -1,4 +1,4 @@
-# Native vision checkpoint (06b)
+# Native vision
 
 Image inference is restored on `/api/chat` and `/v1/chat/completions`, using the
 same native lease, transport and result/stream adapters as text. The Python
@@ -51,11 +51,13 @@ valid projector definition and does not advertise an explicitly audio-only
 projector. This describes the definition, not a successful hardware/runtime
 probe. Actual inference always checks the selected generation's live capability.
 
-The [06a memory rules](native-memory.md) remain unchanged. The installed runtime
-reports a projector tensor-size summary, not its complete allocated weight
-buffer. Thus projector generations retain null size/size_vram totals with
-explicit provenance; vision does not turn this summary into a physical-memory
-measurement. Binding removal, FIM and further media APIs remain later work.
+Memory uses the selected native inventory when available; complete projector
+allocations can contribute known totals. A load-log-only source may report just
+a projector tensor summary and must retain partial/null totals. Neither source
+measures physical residency. See [native-memory.md](native-memory.md) and
+[runtime-audit-070.md](runtime-audit-070.md) for current evidence and fallback
+limits. The Python inference binding has been removed; FIM has its separate
+[text suffix contract](native-fim.md).
 
 ## Verification
 

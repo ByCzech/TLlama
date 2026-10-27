@@ -60,8 +60,12 @@ class MemoryTelemetry:
         if self._native is None:
             return None
         elapsed = max(0, int((self._clock() - self._received) * 1000))
-        return {"report": self._native.snapshot(), "totals": asdict(self._native.totals()),
-                "observation_age_ms": elapsed}
+        result = {"report": self._native.snapshot(), "totals": asdict(self._native.totals()),
+                  "observation_age_ms": elapsed}
+        weights = self._native.weight_totals()
+        if weights is not None:
+            result["weight_storage_totals"] = asdict(weights)
+        return result
 
     def snapshot(self):
         """Copy cached observations without HTTP, leases or lifecycle changes."""

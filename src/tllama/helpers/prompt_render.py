@@ -1,13 +1,12 @@
 import jinja2
 from jinja2.sandbox import ImmutableSandboxedEnvironment
 from fastapi import HTTPException
-from typing import Literal
 
 from tllama.helpers.common import normalize_stop, strftime_now
 
 
 def render_generate_text(metadata_info: dict, request, *, bos_token: str, eos_token: str,
-                         mode: Literal["prompt", "messages"] = "prompt"):
+                         add_generation_prompt: bool = True):
     """Render a completion prompt from a model template and request data.
 
     Returns:
@@ -27,56 +26,27 @@ def render_generate_text(metadata_info: dict, request, *, bos_token: str, eos_to
             detail="Model template is not available; cannot render prompt for this model."
         )
 
-    if mode == "prompt":
-        prompt_text = getattr(request, "prompt", None) or ""
+    prompt_text = getattr(request, "prompt", None) or ""
 
-        request_system = getattr(request, "system", None)
-        if request_system is not None:
-            system_text = request_system
+    request_system = getattr(request, "system", None)
+    if request_system is not None:
+        system_text = request_system
+        has_system_content = True
+    else:
+        default_system_text = metadata_info.get("default_system_prompt")
+        if default_system_text is not None:
+            system_text = default_system_text
             has_system_content = True
         else:
-            default_system_text = metadata_info.get("default_system_prompt")
-            if default_system_text is not None:
-                system_text = default_system_text
-                has_system_content = True
-            else:
-                system_text = ""
-                has_system_content = False
+            system_text = ""
+            has_system_content = False
 
-        messages = []
-        if has_system_content:
-            messages.append({"role": "system", "content": system_text})
-        messages.append({"role": "user", "content": prompt_text})
+    messages = []
+    if has_system_content:
+        messages.append({"role": "system", "content": system_text})
+    messages.append({"role": "user", "content": prompt_text})
 
-        tools_value = []
-    else:
-        messages = list(getattr(request, "messages", None) or [])
-        tools_value = list(getattr(request, "tools", None) or [])
-
-        system_text = ""
-        has_system_content = False
-        prompt_text = ""
-
-        for message in messages:
-            if (
-                message.get("role") in ("system", "developer")
-                and isinstance(message.get("content"), str)
-                and not has_system_content
-            ):
-                system_text = message["content"]
-                has_system_content = True
-
-        if not has_system_content:
-            default_system_text = metadata_info.get("default_system_prompt")
-            if default_system_text is not None:
-                messages = [{"role": "system", "content": default_system_text}] + messages
-                system_text = default_system_text
-                has_system_content = True
-
-        for message in reversed(messages):
-            if message.get("role") == "user" and isinstance(message.get("content"), str):
-                prompt_text = message["content"]
-                break
+    tools_value = []
 
     think_value = getattr(request, "think", None)
     think_is_set = think_value is not None
@@ -121,7 +91,7 @@ def render_generate_text(metadata_info: dict, request, *, bos_token: str, eos_to
         "Messages": messages,
         "bos_token": bos_token,
         "eos_token": eos_token,
-        "add_generation_prompt": True,
+        "add_generation_prompt": add_generation_prompt,
 
         "tools": tools_value,
         "available_tools": tools_value,

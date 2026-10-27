@@ -93,24 +93,6 @@ def to_image_data_url(value: str) -> str:
     return f"data:{media_type};base64,{value}"
 
 
-def build_multimodal_content(text: str, images: Iterable[str]) -> list[dict]:
-    """Ollama's split text/images message as OpenAI content parts.
-
-    The text part comes first because that is the order the message was
-    written in, and every handler that reads these parts renders them in
-    sequence.
-    """
-    parts: list[dict] = [{"type": "text", "text": text}]
-
-    for image in images:
-        parts.append({
-            "type": "image_url",
-            "image_url": {"url": to_image_data_url(image)},
-        })
-
-    return parts
-
-
 def normalize_image_content_parts(content: list) -> list:
     """Put every image part through the same check as an Ollama image.
 
@@ -159,21 +141,6 @@ def content_carries_images(content: Any) -> bool:
         isinstance(part, dict) and part.get("type") == "image_url"
         for part in content
     )
-
-
-def messages_carry_images(messages: Iterable[Any]) -> bool:
-    """Whether any message in a chat request came with images attached.
-
-    Both shapes count. A client can use Ollama's images field or send
-    OpenAI content parts to the Ollama endpoint, and an image that arrives
-    the second way is no less an image than one that arrives the first.
-    """
-    for message in messages:
-        if getattr(message, "images", None):
-            return True
-        if content_carries_images(getattr(message, "content", None)):
-            return True
-    return False
 
 
 def request_carries_images(images: Optional[Iterable[Any]]) -> bool:

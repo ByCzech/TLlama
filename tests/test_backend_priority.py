@@ -12,7 +12,8 @@ import pytest
 from tllama.automatic_worker import AutomaticWorker, acceleration_failure
 from tllama.backend import ModelManager
 from tllama.backend_policy import DEFAULT_BACKEND_PRIORITY, backend_priority, device_candidates, matches_backend
-from tllama.config import BackendConfig, load_backend_config_from_env
+from tllama.config import BackendConfig
+from tllama.daemon_config import load_daemon_config
 from tllama.helpers.model_toml import parse_model_toml
 from tllama.native_config import resolve_worker_config
 from tllama.worker import NativeWorker, WorkerError, WorkerStartupError
@@ -31,7 +32,7 @@ pytestmark = pytest.mark.usefixtures('clean_tllama_config_environment')
 def test_environment_distinguishes_absence_empty_and_order(monkeypatch, value, expected):
     if value is not None:
         monkeypatch.setenv('TLLAMA_BACKEND_PRIORITY', value)
-    config = load_backend_config_from_env()
+    config = load_daemon_config(False, discover=False).backend
     assert config.backend_priority == expected
     assert config.runtime_overrides == {}
 

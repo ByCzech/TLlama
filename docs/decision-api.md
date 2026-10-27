@@ -1,10 +1,11 @@
-# Public text Decision API — 0068
+# Public text Decision API
 
 `POST /v1/systemone` exposes the accepted text Decision contract through managed
 TLlama workers. It is a native-compatible **extension**, not a standard OpenAI
 Chat Completions or Ollama method. Use HTTP JSON; no high-level SDK method is
-claimed. The managed/public hardware comparison is the next gate. Keep the
-accepted independent Laya/Nimble/Clef native references.
+claimed. Native/managed/public comparisons passed for Laya, Nimble and Clef
+on native 0.7.0, MI50/Vulkan, F16 K/V and FA off; see
+[runtime-audit-070.md](runtime-audit-070.md). Keep the independent references.
 
 Run the [0069 native / managed / public comparison](../scripts/decision-api-smoke.md)
 to verify the managed launch and public text adapter on those existing models.
@@ -123,4 +124,5 @@ pytest -q
 Synthetic GGUF/TCP tests validate all three types against direct managed native
 responses,literal JSON,limits/errors,corruption recovery,wrong-mode admission,
 crash without replay,queued cancellation,real TCP disconnect and owned cleanup.
-They do not certify model quality or replace the upcoming hardware comparison.
+They do not certify model quality or replace the separately reviewed hardware
+comparison.

@@ -1,7 +1,7 @@
 import math
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictFloat, StrictInt, StrictStr, field_validator
-from typing import List, Optional, Any, Dict, Literal, Union
+from pydantic import BaseModel, ConfigDict, StrictBool, StrictFloat, StrictInt, StrictStr, field_validator
+from typing import List, Optional, Any, Dict, Union
 
 from tllama.helpers.common import normalize_keep_alive
 from tllama.schemas.generation import GenerationRequest

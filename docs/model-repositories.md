@@ -95,7 +95,28 @@ curl -s http://127.0.0.1:54800/api/show \
 
 TLlama can download GGUF files from Hugging Face repositories.
 
-The exact request format depends on the current `/api/pull` implementation, but the resulting model is stored in the `HuggingFace` repository area.
+Use a repository reference, with optional subdirectories and `.gguf` suffix:
+
+```bash
+tllama pull namespace/repository/path/to/model-file.gguf
+```
+
+```json
+{"model":"namespace/repository/path/to/model-file.gguf","stream":false}
+```
+
+The JSON goes to `POST /api/pull`; `name` is also accepted. Omitted `stream`
+defaults to NDJSON progress. The server appends `.gguf` to a filename without
+that extension. This is not an Ollama registry tag or a Hugging Face browser
+`blob/main`/`resolve/main` URL. Downloaded files use the `HuggingFace` area and
+successful definition preparation makes them visible as registered models.
+The server needs the optional `huggingface` extra. Pull downloads the requested
+file; do not infer client import's complete split-shard upload behavior here.
+
+The daemon account needs suitable model-store and Hugging Face cache permissions,
+including parent traversal. Service and interactive accounts can differ; inspect
+the actual error path before changing ownership/ACLs. See
+[file permissions](#file-permissions) below and [systemd.md](systemd.md).
 
 After a successful pull, TLlama creates metadata cache for the downloaded model so later `ollama list` and `ollama show` calls can be fast.
 
@@ -113,9 +134,61 @@ Qwen/Qwen2.5-3B-Instruct-GGUF/qwen2.5-3b-instruct-q8_0
 
 ---
 
+## File permissions
+
+Files are created by the **daemon account**, including requests sent from a CLI
+running as another user. New model TOMLs (`create`, `copy`, pull registration),
+uploaded GGUF blobs and their published hard links, and newly written metadata
+and digest cache files use a creation mode of `0666`. The operating system
+applies the daemon's **umask** and any parent directory default ACLs. Directories
+use `0777` subject to the same filesystem rules. On an ordinary POSIX directory
+without default ACLs:
+
+| Daemon umask | New files | New directories |
+|---|---|---|
+| `0022` | `0644` | `0755` |
+| `0002` | `0664` | `0775` |
+| `0027` | `0640` | `0750` |
+| `0077` | `0600` | `0700` |
+
+Set the mask before starting the daemon, for example for group sharing:
+
+```sh
+(umask 0002; exec tllamad --config /etc/tllama/server.toml)
+```
+
+For a service, configure `UMask=0002` as shown in
+[systemd.md](systemd.md#file-creation-mask). Changing the CLI shell's mask does
+not change an already running daemon. There is no separate TOML permission
+setting; the process mask also applies to libraries used by the daemon.
+
+Replacing an existing TOML (for example `create --force`) preserves its access
+bits instead of resetting them from the current mask. Atomic replacement creates
+a new inode: ownership/group and inherited ACLs follow the destination directory;
+custom extended ACLs and special mode bits from the old inode are not copied.
+Uploaded weights are shared through hard links, so existing blobs retain their
+permissions. Cache refreshes create new files under the current mask.
+
+GGUF downloads and Hugging Face's internal cache/lock files remain managed by
+`huggingface_hub`; TLlama does not recursively chmod them or normalize third-party
+permissions. Files copied manually into a repository likewise retain their
+existing permissions. Windows access is governed by Windows ACLs; this POSIX
+mode table is not an equivalent Windows security policy.
+
+Older TLlama versions created TOMLs, uploads and cache entries with `0600`.
+Changing the mask does not retroactively repair existing files or directories.
+An administrator must adjust the intended model-store entries, group membership
+and traversal permissions separately. For a shared store, directory setgid/default
+ACLs can supply the intended group; umask alone does not choose one.
+
+Private worker sockets, IPC credentials and runtime directories keep their
+dedicated restrictive permissions; they do not use repository file modes.
+
 ## Local Models
 
-Local models are intended for manually copied GGUF files.
+Local models hold manually copied GGUF files and client-imported weights.
+Client imports use `Local/imports/`; their registered TOML remains independent
+of the physical weight path. See [cli.md](cli.md#create-and-import-models).
 
 They are stored under:
 
@@ -308,7 +381,7 @@ OLLAMA_HOST=127.0.0.1:54800 ollama list
 Show one model:
 
 ```bash
-OLLAMA_HOST=127.0.0.1:54800 ollama show <model-name>
+OLLAMA_HOST=127.0.0.1:54800 ollama show MODEL
 ```
 
 Generate with one model:

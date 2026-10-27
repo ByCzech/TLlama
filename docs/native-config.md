@@ -1,6 +1,9 @@
 # Native configuration
 
-Runtime fingerprint: **b11552-ec2797836f**. The native configuration modules do
+Default runtime fingerprint: **b11850-0e9433bfd3**; previously supported builds
+remain accepted. See [runtime-audit-070.md](runtime-audit-070.md) for the
+independent feature audit sets and actual tested configurations.
+The native configuration modules do
 not import llama-cpp-python. Their vocabulary is TLlama-owned and pinned to the
 parser/protocol; an upstream option does not automatically become a TLlama API.
 
@@ -72,7 +75,6 @@ a shell; paths and serialized values stay individual argv elements.
 | `no_perf` | `--no-perf` / `--perf` | Internal libllama perf; server request wall-clock timings remain separate |
 | `kv_overrides` | Typed CSV `--override-kv` entries | TOML-only; bool/int64/finite float/string |
 | `lora_path`, `lora_scale` | `--lora` / `--lora-scaled` | Resolved inside model store; no new `[lora]` section |
-| `verbose` | Only true accepted; supervisor log policy stays enabled | Diagnostics |
 | `spec_type` | Omitted when unset; `--spec-type none/draft-mtp` when explicit | Load; embedded MTP is opt-in |
 | `draft_n_max` | `--spec-draft-n-max` only with MTP; default 3 when enabled | Load; see [native-mtp.md](native-mtp.md) |
 | `embedding` | `--embeddings` when true; speculation explicitly disabled | Load mode; see [native-embeddings.md](native-embeddings.md) |
@@ -91,7 +93,7 @@ pinned parser and are refused. CSV quotes/commas in other paths/metadata strings
 are escaped. KV override keys/strings must fit the native 127-byte UTF-8 fields.
 TOML round-trip content is retained; resolving does not rewrite supplied files.
 
-## Request mapping and migration errors
+## Request mapping and validation
 
 `build_native_sampling()` applies the existing TLlama precedence and translates
 `mirostat_mode` to `mirostat`, `max_tokens` to `n_predict`, nonpositive top_k to 0,
@@ -111,12 +113,6 @@ prompts are inserted only when the request does not provide its own.
 |---|---|
 | `tfs_z`, even 1.0 | No native tail-free equivalent; no silent emulation |
 | Negative temperature | Native would clamp to greedy; refuse the semantic change |
-| `chat_format`, `chat_handler` | Python handler registry is not native; use `[template]` / `[mmproj]` |
-| `draft_model`, `tokenizer` | Python objects cannot be serialized; embedded MTP uses `spec_type`, external drafts remain unintegrated |
-| `vocab_only` | Metadata reads do not need a worker |
-| `logits_all` | Public logprobs require separate integration |
-| `attention_type` | Pinned server CLI has no override; attention stays the model default |
-| `lora_base` | No equivalent in pinned parser |
 | Unknown names, unsupported KV/enum values, nonfinite values | Explicit configuration/request errors rather than a silent drop/clamp |
 
 `model_path` still comes from `[llm]`. Dedicated context/K/V environment spellings
@@ -146,9 +142,11 @@ checks in the following integration milestones.
 
 Sources: pinned `common/arg.cpp` (flags/CSV/KV types), `include/llama.h` and
 `ggml/include/ggml.h` (enums), `tools/server/server-common.cpp` and
-`tools/server/server-task.cpp` (request/response protocol). Compatibility stays
-tied to fingerprint b11552-ec2797836f.
+`tools/server/server-task.cpp` (request/response protocol). The original
+configuration checkpoint inspected b11552-ec2797836f; current compatibility
+admission follows the reviewed sets in runtime-audit-070.md.
 
 ModelManager now resolves these settings for owned worker generations; see
 [native-residency.md](native-residency.md) for leases, capacity, TTL and the
-managed hardware check. Public API translation remains the next milestone.
+managed hardware check. Public API translation is integrated; see
+[native-public-api.md](native-public-api.md).

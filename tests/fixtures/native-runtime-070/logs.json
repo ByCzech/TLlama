@@ -1,0 +1,410 @@
+[
+  {
+    "host": "mi50",
+    "profile": "full",
+    "archive": "tllama-070-mi50-full.tar.xz",
+    "archive_sha256": "4135149bf0f7f070f2d952ead0fd010ef83f26c21f3e066ddac61f010e997254",
+    "member": "tllama-070-mi50-full/worker.log",
+    "fixture": "mi50-full.log",
+    "expected": {
+      "source": "native_load_log",
+      "runtime_fingerprint": "b11850-0e9433bfd3",
+      "scope": "initial_load_allocations",
+      "precision": "rounded_mib",
+      "units": "bytes",
+      "status": "known",
+      "reason": null,
+      "buffers": {
+        "CPU_Mapped": {
+          "model": 540341699
+        },
+        "Vulkan0": {
+          "model": 21773470925,
+          "kv": 23592960,
+          "rs": 65861059,
+          "compute": 84190167
+        },
+        "Vulkan_Host": {
+          "output": 996147,
+          "compute": 21286093
+        }
+      },
+      "allocated_bytes": 22509739050,
+      "device_bytes": 21947115111,
+      "host_bytes": 562623939,
+      "physical_residency_bytes": null,
+      "layer_offload": {
+        "offloaded_layers": 42,
+        "total_layers": 42
+      },
+      "projector_weights": {},
+      "projector_weights_source": null
+    }
+  },
+  {
+    "host": "mi50",
+    "profile": "partial",
+    "archive": "tllama-070-mi50-partial_39.tar.xz",
+    "archive_sha256": "074a78766420c23c335b356b7bcebb21c560eb7adac753c63428c4f3fe30aa77",
+    "member": "tllama-070-mi50-partial_39/worker.log",
+    "fixture": "mi50-partial.log",
+    "expected": {
+      "source": "native_load_log",
+      "runtime_fingerprint": "b11850-0e9433bfd3",
+      "scope": "initial_load_allocations",
+      "precision": "rounded_mib",
+      "units": "bytes",
+      "status": "known",
+      "reason": null,
+      "buffers": {
+        "CPU_Mapped": {
+          "model": 2125274808
+        },
+        "Vulkan0": {
+          "model": 20188537815,
+          "kv": 23592960,
+          "rs": 59276001,
+          "compute": 243269632
+        },
+        "Vulkan_Host": {
+          "output": 996147,
+          "compute": 48538583
+        },
+        "CPU": {
+          "rs": 6585057,
+          "compute": 20971520
+        }
+      },
+      "allocated_bytes": 22717042523,
+      "device_bytes": 20514676408,
+      "host_bytes": 2202366115,
+      "physical_residency_bytes": null,
+      "layer_offload": {
+        "offloaded_layers": 39,
+        "total_layers": 42
+      },
+      "projector_weights": {},
+      "projector_weights_source": null
+    }
+  },
+  {
+    "host": "mi50",
+    "profile": "vision",
+    "archive": "tllama-070-mi50+mmproj-full.tar.xz",
+    "archive_sha256": "b993850557dbee64f4af38fd4dd2ec6af33ffd2744b80ef6298f7b09b0ba4c8d",
+    "member": "tllama-070-mi50+mmproj-full/worker.log",
+    "fixture": "mi50-vision.log",
+    "expected": {
+      "source": "native_load_log",
+      "runtime_fingerprint": "b11850-0e9433bfd3",
+      "scope": "initial_load_allocations",
+      "precision": "rounded_mib",
+      "units": "bytes",
+      "status": "partial",
+      "reason": "projector_allocation_unreported",
+      "buffers": {
+        "CPU_Mapped": {
+          "model": 540341699
+        },
+        "Vulkan0": {
+          "model": 21773470925,
+          "kv": 23592960,
+          "rs": 65861059,
+          "compute": 84190167,
+          "projector_compute": 260151706
+        },
+        "Vulkan_Host": {
+          "output": 996147,
+          "compute": 21286093
+        },
+        "CPU": {
+          "projector_compute": 26141000
+        }
+      },
+      "allocated_bytes": null,
+      "device_bytes": null,
+      "host_bytes": null,
+      "physical_residency_bytes": null,
+      "layer_offload": {
+        "offloaded_layers": 42,
+        "total_layers": 42
+      },
+      "projector_weights": {
+        "Vulkan0": 642923889
+      },
+      "projector_weights_source": "native_model_size_summary"
+    }
+  },
+  {
+    "host": "mi100",
+    "profile": "full",
+    "archive": "tllama-070-mi100-full.tar.xz",
+    "archive_sha256": "fc44b9efd66bab141097a4571ee18b5e2e0aacde83c5b04b15a5cea9ef686664",
+    "member": "tllama-070-mi100-full/worker.log",
+    "fixture": "mi100-full.log",
+    "expected": {
+      "source": "native_load_log",
+      "runtime_fingerprint": "b11850-0e9433bfd3",
+      "scope": "initial_load_allocations",
+      "precision": "rounded_mib",
+      "units": "bytes",
+      "status": "known",
+      "reason": null,
+      "buffers": {
+        "CPU_Mapped": {
+          "model": 540341699
+        },
+        "ROCm0": {
+          "model": 21773470925,
+          "kv": 23592960,
+          "rs": 65861059,
+          "compute": 113550295
+        },
+        "ROCm_Host": {
+          "output": 996147,
+          "compute": 21275607
+        }
+      },
+      "allocated_bytes": 22539088692,
+      "device_bytes": 21976475239,
+      "host_bytes": 562613453,
+      "physical_residency_bytes": null,
+      "layer_offload": {
+        "offloaded_layers": 42,
+        "total_layers": 42
+      },
+      "projector_weights": {},
+      "projector_weights_source": null
+    }
+  },
+  {
+    "host": "mi100",
+    "profile": "partial",
+    "archive": "tllama-070-mi100-partial_39.tar.xz",
+    "archive_sha256": "2075e59e42d4646b6939c20a4e538286550f3407b3123b69dc25fb278ff603d1",
+    "member": "tllama-070-mi100-partial_39/worker.log",
+    "fixture": "mi100-partial.log",
+    "expected": {
+      "source": "native_load_log",
+      "runtime_fingerprint": "b11850-0e9433bfd3",
+      "scope": "initial_load_allocations",
+      "precision": "rounded_mib",
+      "units": "bytes",
+      "status": "known",
+      "reason": null,
+      "buffers": {
+        "CPU_Mapped": {
+          "model": 2125274808
+        },
+        "ROCm0": {
+          "model": 20188537815,
+          "kv": 23592960,
+          "rs": 59276001,
+          "compute": 243269632
+        },
+        "ROCm_Host": {
+          "output": 996147,
+          "compute": 48517612
+        },
+        "CPU": {
+          "rs": 6585057,
+          "compute": 20971520
+        }
+      },
+      "allocated_bytes": 22717021552,
+      "device_bytes": 20514676408,
+      "host_bytes": 2202345144,
+      "physical_residency_bytes": null,
+      "layer_offload": {
+        "offloaded_layers": 39,
+        "total_layers": 42
+      },
+      "projector_weights": {},
+      "projector_weights_source": null
+    }
+  },
+  {
+    "host": "mi100",
+    "profile": "vision",
+    "archive": "tllama-070-mi100-full+mmproj.tar.xz",
+    "archive_sha256": "9087303e5486ced9fd3a2db8c0b955401aac4e2f1e116b26745959d9e2f87fd6",
+    "member": "tllama-070-mi100-full+mmproj/worker.log",
+    "fixture": "mi100-vision.log",
+    "expected": {
+      "source": "native_load_log",
+      "runtime_fingerprint": "b11850-0e9433bfd3",
+      "scope": "initial_load_allocations",
+      "precision": "rounded_mib",
+      "units": "bytes",
+      "status": "partial",
+      "reason": "projector_allocation_unreported",
+      "buffers": {
+        "CPU_Mapped": {
+          "model": 540341699
+        },
+        "ROCm0": {
+          "model": 21773470925,
+          "kv": 23592960,
+          "rs": 65861059,
+          "compute": 113550295,
+          "projector_compute": 260151706
+        },
+        "ROCm_Host": {
+          "output": 996147,
+          "compute": 21275607
+        },
+        "CPU": {
+          "projector_compute": 26141000
+        }
+      },
+      "allocated_bytes": null,
+      "device_bytes": null,
+      "host_bytes": null,
+      "physical_residency_bytes": null,
+      "layer_offload": {
+        "offloaded_layers": 42,
+        "total_layers": 42
+      },
+      "projector_weights": {
+        "ROCm0": 642923889
+      },
+      "projector_weights_source": "native_model_size_summary"
+    }
+  },
+  {
+    "host": "p100",
+    "profile": "full",
+    "archive": "tllama-070-p100-full.tar.xz",
+    "archive_sha256": "7e64faf5d0820d9e614056d8cb4872c7e605f5e68b1acd0a8039754963e59636",
+    "member": "tllama-070-p100-full/worker.log",
+    "fixture": "p100-full.log",
+    "expected": {
+      "source": "native_load_log",
+      "runtime_fingerprint": "b11850-0e9433bfd3",
+      "scope": "initial_load_allocations",
+      "precision": "rounded_mib",
+      "units": "bytes",
+      "status": "known",
+      "reason": null,
+      "buffers": {
+        "CPU_Mapped": {
+          "model": 417175962
+        },
+        "CUDA0": {
+          "model": 13314639790,
+          "kv": 23592960,
+          "rs": 65861059,
+          "compute": 113550295
+        },
+        "CUDA_Host": {
+          "output": 996147,
+          "compute": 21275607
+        }
+      },
+      "allocated_bytes": 13957091820,
+      "device_bytes": 13517644104,
+      "host_bytes": 439447716,
+      "physical_residency_bytes": null,
+      "layer_offload": {
+        "offloaded_layers": 42,
+        "total_layers": 42
+      },
+      "projector_weights": {},
+      "projector_weights_source": null
+    }
+  },
+  {
+    "host": "p100",
+    "profile": "partial",
+    "archive": "tllama-070-p100-partial.tar.xz",
+    "archive_sha256": "5f16ebd08fdb443f398a810aab90a7e65ee0c5fe9af9d589b6e86de0b5b4b7ad",
+    "member": "tllama-070-p100-partial/worker.log",
+    "fixture": "p100-partial.log",
+    "expected": {
+      "source": "native_load_log",
+      "runtime_fingerprint": "b11850-0e9433bfd3",
+      "scope": "initial_load_allocations",
+      "precision": "rounded_mib",
+      "units": "bytes",
+      "status": "known",
+      "reason": null,
+      "buffers": {
+        "CPU_Mapped": {
+          "model": 1377755464
+        },
+        "CUDA0": {
+          "model": 12354060288,
+          "kv": 23592960,
+          "rs": 59276001,
+          "compute": 174063616
+        },
+        "CUDA_Host": {
+          "output": 996147,
+          "compute": 48517612
+        },
+        "CPU": {
+          "rs": 6585057,
+          "compute": 20971520
+        }
+      },
+      "allocated_bytes": 14065818665,
+      "device_bytes": 12610992865,
+      "host_bytes": 1454825800,
+      "physical_residency_bytes": null,
+      "layer_offload": {
+        "offloaded_layers": 39,
+        "total_layers": 42
+      },
+      "projector_weights": {},
+      "projector_weights_source": null
+    }
+  },
+  {
+    "host": "p100",
+    "profile": "vision",
+    "archive": "tllama-070-p100-vision.tar.xz",
+    "archive_sha256": "6bca82aa672d7ffdbb82ccf33de568525186f36d9ea6efd112cf3988c8bc9cfc",
+    "member": "tllama-070-p100-vision/worker.log",
+    "fixture": "p100-vision.log",
+    "expected": {
+      "source": "native_load_log",
+      "runtime_fingerprint": "b11850-0e9433bfd3",
+      "scope": "initial_load_allocations",
+      "precision": "rounded_mib",
+      "units": "bytes",
+      "status": "partial",
+      "reason": "projector_allocation_unreported",
+      "buffers": {
+        "CPU_Mapped": {
+          "model": 417175962
+        },
+        "CUDA0": {
+          "model": 13314639790,
+          "kv": 23592960,
+          "rs": 65861059,
+          "compute": 113550295,
+          "projector_compute": 260151706
+        },
+        "CUDA_Host": {
+          "output": 996147,
+          "compute": 21275607
+        },
+        "CPU": {
+          "projector_compute": 26141000
+        }
+      },
+      "allocated_bytes": null,
+      "device_bytes": null,
+      "host_bytes": null,
+      "physical_residency_bytes": null,
+      "layer_offload": {
+        "offloaded_layers": 42,
+        "total_layers": 42
+      },
+      "projector_weights": {
+        "CUDA0": 642923889
+      },
+      "projector_weights_source": "native_model_size_summary"
+    }
+  }
+]

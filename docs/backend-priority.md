@@ -1,5 +1,9 @@
 # Automatic backend priorities
 
+For explicit per-model selectors and requested mixed-backend lists, see the
+[placement guide](features.md#model-placement-across-devices-and-backends).
+Automatic selection below keeps one backend family per attempt.
+
 When neither model `[runtime].device` nor `TLLAMA_RUNTIME_DEVICE` is set,
 TLlama selects native devices at model load. Daemon startup does not probe GPUs
 or load models. Failed model startup cleans its child and leaves the daemon

@@ -10,12 +10,14 @@ from typing import Mapping, Any
 
 from tllama.native_cli import runtime_cli_args, mmproj_cli_args
 from tllama.native_params import POOLING_TYPES, freeze_values, kv_type_name
-from tllama.decision_contract import DECISION_TYPES
+from tllama.decision_contract import SUPPORTED_DECISION_RUNTIME_FINGERPRINTS, DECISION_TYPES
 from tllama.backend_policy import DEFAULT_BACKEND_PRIORITY, backend_priority
 
 
-RUNTIME_FINGERPRINT = "b11552-ec2797836f"
-SUPPORTED_RUNTIME_FINGERPRINTS = frozenset({RUNTIME_FINGERPRINT, "b11552-d1570abd3d", "b11552-3144c167ef"})
+# Reviewed 0.7.0 captures and limitations: docs/runtime-audit-070.md.
+RUNTIME_FINGERPRINT = "b11850-0e9433bfd3"
+SUPPORTED_RUNTIME_FINGERPRINTS = frozenset({RUNTIME_FINGERPRINT, "b11552-ec2797836f",
+                                         "b11552-d1570abd3d", "b11552-3144c167ef"})
 DEFAULT_EXECUTABLE = Path("/usr/lib/tllama/server/tllama-server")
 _OWNED_ENV = {"GGML_BACKEND_PATH", "MTMD_BACKEND_DEVICE", "LLAMA_API_KEY"}
 
@@ -53,11 +55,28 @@ class WorkerLaunchSpec:
     version_policy: str = "warn"
     memory_source: str = "auto"
     memory_compare: bool = False
+    memory_tensor_diagnostics: int = 0
     load_timeout: float = 600.0
     request_timeout: float | None = None
     terminate_timeout: float = 5.0
     kill_timeout: float = 5.0
     log_limit_bytes: int = 4 * 1024 * 1024
+    # An explicit diagnostic pin, including a pin to the default build. This
+    # is independent of per-feature audit lists and never changes them.
+    expected_runtime_fingerprint: str | None = None
+
+    @property
+    def accepted_runtime_fingerprints(self) -> frozenset[str]:
+        """Select evidence for this mode; enforcement uses the shared policy."""
+        if self.expected_runtime_fingerprint is not None:
+            return frozenset({self.expected_runtime_fingerprint})
+        if self.decision_type is not None:
+            return SUPPORTED_DECISION_RUNTIME_FINGERPRINTS
+        # Preserve the existing custom launch-field behavior for callers that
+        # predate explicit pins. Normal production launches use the audit set.
+        if self.runtime_fingerprint != RUNTIME_FINGERPRINT:
+            return frozenset({self.runtime_fingerprint})
+        return SUPPORTED_RUNTIME_FINGERPRINTS
 
     def __post_init__(self):
         object.__setattr__(self, "backend_priority", backend_priority(self.backend_priority))
@@ -69,6 +88,8 @@ class WorkerLaunchSpec:
             raise ValueError("memory_source must be auto, native or log")
         if type(self.memory_compare) is not bool:
             raise ValueError("memory_compare must be a boolean")
+        if type(self.memory_tensor_diagnostics) is not int or not 0 <= self.memory_tensor_diagnostics <= 4096:
+            raise ValueError("memory_tensor_diagnostics must be an integer in 0..4096")
         if self.transport not in ("uds", "tcp"):
             raise ValueError("transport must be uds or tcp")
         if self.transport == "uds" and self.port != 0:
@@ -88,6 +109,10 @@ class WorkerLaunchSpec:
                 continue
             if not isinstance(value, str) or not value or "\0" in value:
                 raise ValueError(f"{name} must be a nonempty string")
+        expected = self.expected_runtime_fingerprint
+        if expected is not None and (not isinstance(expected, str) or not expected.strip()
+                                     or expected != expected.strip() or "\0" in expected):
+            raise ValueError("expected_runtime_fingerprint must be a nonblank identity")
         devices = self.device.split(",") if self.device is not None else []
         if any(not part or part.strip() != part for part in devices):
             raise ValueError("device must contain nonempty server device selectors")
@@ -207,6 +232,8 @@ class WorkerLaunchSpec:
             args.append("--no-context-shift")
         args += runtime_cli_args(self.runtime_options)
         args += mmproj_cli_args(self.mmproj_options)
+        if self.memory_tensor_diagnostics:
+            args += ["--memory-tensor-diagnostics", str(self.memory_tensor_diagnostics)]
         if self.decision_type is not None and "spec_type" not in self.runtime_options:
             args += ["--spec-type", "none"]
         if self.embedding:

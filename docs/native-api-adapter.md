@@ -1,10 +1,10 @@
-# Native text API adapter checkpoint (05a)
+# Native text API adapters
 
-This document describes the 05a adapter checkpoint. Its following
-[05b public switch](native-public-api.md) now uses the adapters in public text
-routes; request schema fields remain unchanged. The protocol remains pinned to
-b11552-ec2797836f. Public switching belongs to 05b, vision/memory to 06 and final
-binding removal to 07.
+The adapters prepare requests and translate native results for the
+[public routes](native-public-api.md). Runtime admission follows the independent
+reviewed sets in [runtime-audit-070.md](runtime-audit-070.md). Vision, tools and
+FIM are integrated through their documented contracts; no Python inference
+binding remains. Historical 05a test counts below describe that checkpoint only.
 
 ## Request preparation
 
@@ -39,10 +39,9 @@ missing/ambiguous names fail before transport. Ollama tool-call history gains
 OpenAI's function type discriminator where omitted. This is wire mapping,
 not new application tool orchestration.
 
-Media/images and deprecated functions/function_call inputs/history are explicitly
-refused instead of dropped. Neither refusal currently affects a public route.
-Deprecated function compatibility was decided for 05b; chat vision is restored
-in native-vision.md (06b).
+Deprecated functions/function_call inputs/history are refused; modern tools
+are supported. Chat images use the validated mapping in
+[native-vision.md](native-vision.md), with live worker capability checks.
 
 ## Ownership and neutral results
 
@@ -64,11 +63,40 @@ The lease must cover iteration, slot wait, early exit and cancellation, not just
 creation of an iterator. Leaving the upstream context closes its HTTP response.
 CancelledError propagates instead of becoming a public inference error.
 
-Chat content/reasoning_content are distinct native fields; literal think markers
-in content are not reparsed. Raw completion has no structured channel, so its
-caller-selected ReasoningStreamSplitter handles both full text and stream
-deltas, preserving whitespace equally. Reasoning-only length results remain
-successful limited replies, with an empty answer and separate reasoning.
+Chat content/reasoning_content are distinct native fields. Structured native
+reasoning takes precedence; its content is never reparsed. For a known explicit
+think-tag format, an unstructured leading `<think>...</think>` block is separated
+in the common adapter. This handles Instella-MoE-Think's original template,
+which renders only `message.content`, so the native differential parser cannot
+discover a separate reasoning channel. Detection uses GGUF `arch=instella-moe`
+or the selected template's explicit tag pair. The detector does not accept a
+model name: aliases never determine parsing or the `/api/show` thinking
+capability. General Qwen, Gemma and Granite architectures alone do not prove a
+thinking variant. Chat also respects selection of a named tool-use template.
+Unknown formats and markers after the answer starts remain literal. An optional
+whitespace prefix is retained in thinking; all other whitespace is unchanged.
+
+Raw completion has no structured channel, so ReasoningStreamSplitter handles
+both full text and stream deltas. Tag formats use one leading block. Implicit
+initial reasoning (including Qwen) requires an actual generation prefix ending
+in an unclosed `<think>`. For rendered generate prompts, compare the same
+template with/without `add_generation_prompt`: only the appended suffix counts,
+so a marker in user text cannot open this mode. A completed empty think block
+does not open it either. An unsupported comparison falls back to explicit-tag
+parsing; it does not fail an otherwise valid render. Request template overrides
+take precedence. Raw callers explicitly own the entire prompt/prefill. Chat
+never assumes implicit reasoning from ordinary content. Reasoning-only length results remain successful limited
+replies, with an empty answer and separate reasoning. Interrupted streams do not
+flush pending text into a fabricated successful terminal reply.
+
+`think=false` requests disabled generation through the native template controls;
+it cannot force a template which ignores those controls to obey. If the model
+still emits reasoning, the adapter separates it. CLI `--hide-thinking` controls
+display only, retaining API channels, conversation history and measured stats.
+
+Instella's load and inference were tested by the user with matching K/V cache
+quantization types; differing types failed in that tested model/runtime. This
+does not change global cache defaults or impose a family-wide config guard.
 
 ## Statistics and public formats
 
@@ -101,8 +129,8 @@ Those extra measurements are not invented.
 Ollama uses NDJSON with message.thinking or generate.thinking. OpenAI uses SSE
 with message/delta.reasoning_content and answer-only content. Reasoning is not
 merged into content or hidden merely because think=False; think controls the
-template. Modern tool fields/deltas are preserved as received, without claiming
-complete Ollama tool reassembly or SDK parity.
+template. Modern tools use the validated stream assembly and SDK contract in
+[native-tools.md](native-tools.md).
 
 Final Ollama chat lines carry the required empty assistant message. Raw generate
 keeps the empty context compatibility placeholder, not KV/conversation history.
@@ -116,9 +144,9 @@ native usage internally regardless of that public inclusion policy.
 public_error() prepares pre-header status/envelopes, preserving existing load
 error differences, broken-TOML 500 and native request errors. Stream errors use
 the existing flat Ollama/structured OpenAI envelopes. Final routing/status
-application remains for 05b.
+application is handled by the public routes.
 
-## Verification and remaining boundary
+## Historical 05a verification
 
 125 focused tests cover request snapshots, precedence, format/think/tool mapping,
 structured/raw reasoning, measured statistics, malformed protocol and terminal
@@ -126,7 +154,7 @@ order/error envelopes. Real loopback subprocess tests cover both result/stream
 paths, fragmented SSE, crash without replay, early close and cancellation with
 subsequent reuse of the same worker. No model weights are loaded.
 
-No hardware run was needed for 05a. The agreed generate/suffix, deprecated
-function and vision boundary, plus the real text API smoke, are documented
-in native-public-api.md. Process reporting is restored in native-memory.md (06a).
-Binding/application cleanup is still separate.
+No hardware run was needed for the original 05a preparation. Current supported
+operations and restrictions are in [native-public-api.md](native-public-api.md);
+subsequent hardware qualification is recorded in
+[runtime-audit-070.md](runtime-audit-070.md).

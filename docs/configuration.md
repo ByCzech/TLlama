@@ -9,6 +9,10 @@ mapping, `--check-config` and `--print-config`.
 
 This keeps a server easy to run from systemd, a container or a shell, while still letting one model be configured differently from the next without a second server.
 
+For practical independent K/V and per-model device examples, see
+[features](features.md); [hardware](hardware.md) maps backend versions and native
+targets to GPU/CPU families.
+
 ---
 
 ## Quick example
@@ -49,7 +53,9 @@ A stronger layer wins only where it says something. TLlama-owned baselines and
 native defaults are described in [native-config.md](native-config.md). Unset
 threads/device defaults retain the native automatic policy.
 
-The library default and the GGUF header are separate layers, and not adjacent ones. A library default is what happens when TLlama passes nothing — an absence. A GGUF header is a positive statement by the model's author about that model, so it beats TLlama's own baseline, which is a fallback for when nothing said anything. Both still sit under anything a person configured.
+GGUF sampling recommendations override TLlama's fallback values. Explicit
+global, model and request settings override those recommendations. Values left
+unset by TLlama retain native defaults where the launch contract permits it.
 
 ### Precedence per setting
 
@@ -83,11 +89,12 @@ $ echo $?
 
 An unset or empty variable is not an error. `TLLAMA_CONTEXT_LENGTH=` in a unit file says "I set nothing", not "I set nonsense", and means the default.
 
-Whether a value converts and whether it means anything are separate questions, and TLlama's own numeric settings are checked for both. `TLLAMA_JANITOR_INTERVAL=0` converts to a number and then asks for a wait that does not wait; `TLLAMA_MAX_LOADED_MODELS=0` converts and then behaves as `1`. Each section below states the accepted range.
+Whether a value converts and whether it means anything are separate questions, and TLlama's own numeric settings are checked for both. `TLLAMA_JANITOR_INTERVAL=0` converts to a number and then asks for a wait that does not wait; `TLLAMA_MAX_LOADED_MODELS=0` converts but is below the accepted minimum of `1`. Each section below states the accepted range.
 
 Sampling values are typed and must be finite. Disable modes such as `top_k <= 0` and `top_p >= 1` remain accepted. Negative `temperature` is refused: the native runtime would turn it into greedy sampling instead of reproducing the former binding chain.
 
-The exception is `mirostat_mode`, which is a choice rather than a range: `0`, `1` or `2`. Any other number is not clamped and does not fail — it falls through to the ordinary sampler chain, so mirostat ends up off without a word. Both layers refuse it.
+`mirostat_mode` is an enum: only `0`, `1` and `2` are accepted. Other values
+are refused by TLlama instead of falling through to another native sampler.
 
 A model's `.toml` works the same way: a key in `[runtime]` or `[sampling]` that TLlama will not act on is refused when the file is read, and that model is not listed and cannot be loaded until the file is corrected. `tllamad rebuildrepo --dryrun` reports which file and which key, and writes nothing.
 
@@ -155,12 +162,10 @@ Credentials are never allowed: TLlama has no cookie or session for a browser to 
 
 A request carrying an `Origin` header must send `Content-Type: application/json`; anything else is refused with `415`. Everywhere else TLlama accepts a JSON body whatever the content type says, because `curl -d` with no header sends `application/x-www-form-urlencoded` and the Ollama documentation shows exactly that. Those lenient content types are also the ones that let a browser skip the preflight entirely, so accepting them from a page would put the request beyond the reach of the origin list. `curl` never sends `Origin` and is unaffected; `fetch()` sends it always and should be declaring JSON in any case.
 
-### `TLLAMA_DEBUG` and `TLLAMA_LOG_LEVEL`
+### `TLLAMA_LOG_LEVEL`
 
 `TLLAMA_LOG_LEVEL` selects critical/error/warning/info/debug/trace. The default
-is info. `TLLAMA_DEBUG=true` remains a compatibility alias for debug;
-`TLLAMA_LOG_LEVEL` wins within the environment layer. CLI `--log-level` overrides
-both. Trace enables Uvicorn trace and TLlama debug output.
+is info. CLI `--log-level` overrides the environment. Trace enables Uvicorn trace and TLlama debug output.
 
 Routine outbound HTTP request and transport logs are suppressed below debug.
 Native worker memory polling remains enabled; quieter logging does not change
@@ -251,11 +256,16 @@ retain the first occurrence. CPU helper libraries such as BLAS/BLIS are not
 independent placement choices. See [backend-priority.md](backend-priority.md)
 for matching, failure handling and native fitting limits.
 
-### `TLLAMA_FLASH_ATTENTION`
+### `TLLAMA_RUNTIME_FLASH_ATTN`
 
-An alias for `TLLAMA_RUNTIME_FLASH_ATTN`, kept because it is the spelling Ollama uses. An explicit `TLLAMA_RUNTIME_FLASH_ATTN` overrides it.
+Sets the global `runtime.flash_attn` default. A model definition can override it.
 
-Whether it helps depends on the backend, the model, the quantization and the context length. Two consequences are worth knowing: without flash attention `llama.cpp` ignores a quantized KV cache, so the cache-type variables below have no effect; and a vision model's projector can need dramatically more compute buffer without it.
+Compatibility depends on the backend, model, cache type and context. The
+audited native runtime requires flash attention for a quantized **V** cache;
+with FA explicitly off, that configuration fails loading rather than ignoring
+the cache setting. K-only quantization has a separate native path and must not
+be treated as the same requirement. FA also affects projector compute buffers.
+A parsed setting does not prove that the selected model/backend supports it.
 
 ---
 
@@ -263,7 +273,8 @@ Whether it helps depends on the backend, the model, the quantization and the con
 
 ### `TLLAMA_KV_CACHE_TYPE`, `TLLAMA_K_CACHE_TYPE`, `TLLAMA_V_CACHE_TYPE`
 
-Quantization of the key/value cache. All unset by default, leaving the choice to `llama.cpp`.
+Quantization of the key/value cache. The global environment values are unset
+by default; TLlama's resolved worker baseline is explicitly `f16` on both sides.
 
 `TLLAMA_KV_CACHE_TYPE` sets both sides; the per-side variables override it for their own side. That is the relationship `type_kv`, `type_k` and `type_v` have in a `.toml` `[runtime]`, resolved by the same code, so a name means the same thing in both places.
 
@@ -289,7 +300,10 @@ export TLLAMA_SAMPLING_TEMPERATURE=0.6
 export TLLAMA_SAMPLING_TOP_K=20
 ```
 
-**Everything here is unset by default, and that matters.** A global sampling value overrules what a model's own definition recommends, for every model at once. Shipping numbers in this layer would silence those recommendations on a server nobody configured, so an unset variable stays genuinely unset and TLlama's baseline applies as before.
+Global sampling values are unset by default. Explicit global values override
+GGUF recommendations, while model `[sampling]` and request controls override
+the global values. If none is configured, GGUF recommendations and then the
+TLlama baseline supply the fallback.
 
 Names and types come from TLlama's own sampling contract, also used for TOML and request validation. They do not change when a Python binding adds parameters. `logit_bias` and `stop` remain TOML-only because their structured values cannot be expressed through this environment interface.
 
@@ -332,7 +346,7 @@ jinja = """
 """
 ```
 
-The six sections above are the whole vocabulary. A name outside them is refused when the file is read, and so is a key inside a section that nothing acts on. That includes a section named in the plans but not yet implemented, `[lora]` among them: a file asking for an adapter and getting none would run and answer, which is a wrong answer rather than a missing feature.
+The six sections above and optional `[fim]` are the supported sections. A name outside them is refused when the file is read, and so is a key inside a section that nothing acts on. That includes a section named in the plans but not yet implemented, `[lora]` among them: a file asking for an adapter and getting none would run and answer, which is a wrong answer rather than a missing feature.
 
 A misspelt section name is the mistake this catches that the per-section checks could not. `[smapling]` is valid TOML and reads as a section of its own, so every value under it used to be loaded and dropped in one go, leaving a file that looked obeyed. Shape counts as well: `[[runtime]]` is one bracket from `[runtime]` and means something else entirely, and a key written above the first section belongs to no section at all.
 
@@ -416,6 +430,15 @@ TLlama's sandboxed renderer where applicable. It is the section's only key.
 
 ---
 
+### `[fim]`
+
+`order` selects `auto` (default), `psm`, `training_spm`, `native_spm` or
+`disabled`. It applies only to nonempty generate `suffix`; model chat defaults
+are bypassed for that operation. See [native-fim.md](native-fim.md) for recipes,
+validation, native stops and the separate model-quality qualification.
+
+---
+
 ## Example configurations
 
 ### Minimal
@@ -438,7 +461,8 @@ export TLLAMA_MAX_LOADED_MODELS=1
 tllamad
 ```
 
-Flash attention first: without it the cache type is ignored.
+This example quantizes both sides, so its V cache requires flash attention.
+Check model/backend support and output quality for the chosen precision.
 
 ### Two GPUs, split by proportion
 
@@ -458,7 +482,10 @@ export TLLAMA_RUNTIME_MAIN_GPU=0
 tllamad
 ```
 
-`main_gpu` indexes the device list *after* `llama.cpp` merges devices reporting the same PCI id, so one card visible under both CUDA and Vulkan counts once.
+`main_gpu` indexes the native configured device list; it is not a persistent
+physical GPU ID. Select the backend/device explicitly with `device` when that
+is the intent. Do not assume indices or discovery rows match across APIs; see
+[device-inventory.md](device-inventory.md).
 
 ### CPU-heavy machine
 
@@ -515,7 +542,9 @@ That names the file and the key, and writes nothing. A common case is a setting 
 
 Check the layer above it. A model's `[runtime]` overrides `TLLAMA_RUNTIME_*`, and a request's `options` override `[sampling]`.
 
-For a KV cache type, check flash attention: `llama.cpp` ignores a quantized cache without it, silently.
+For a quantized V cache, enable supported flash attention or use `f16` V.
+FA explicitly off with quantized V is a native load error. Inspect resolved
+configuration with `tllamad --print-config` and retain the worker diagnostics.
 
 ### A browser cannot reach the server
 
@@ -542,6 +571,34 @@ The persistent metadata cache is not built yet.
 ```bash
 find "$TLLAMA_MODELS/.tllama/metadata-cache" -type f -name '*.json' | head
 ```
+
+---
+
+### Legacy AMD HIP loading is slow or stalls
+
+On HIP targets `gfx900`, `gfx906` and `gfx90c`, mmap usually needs to be disabled
+with `use_mmap = false` in the model's `[runtime]` table. Alternatively, select
+a usable Vulkan device on the host. A probable issue in amdgpu's KFD driver
+path is suspected; this is a workaround, not a confirmed driver fix. See the
+[hardware guide](hardware.md#legacy-hip-mmap-workaround) for profile examples
+and the distinction from the original sparse mmap accounting case.
+
+### Pull fails with permission denied
+
+Check the actual failing path and the daemon account, including parent-directory
+traversal, model-store writes and the Hugging Face cache. Under systemd, inspect
+`systemctl cat tllamad.service` and its journal; the supplied service uses the
+`tllama` account, not the interactive shell user. Run configuration inspection
+as that account. Fix ownership/ACLs for the intended directories once identified;
+a successful interactive pull does not verify service permissions.
+
+### Runtime fingerprint warning
+
+`engine.version_policy = "warn"` logs an unaudited identity and continues;
+`"strict"` refuses it. This policy is shared by generation, embeddings and
+Decision. Malformed native protocol remains an error under either policy.
+Diagnostic scripts may require an exact build independently of ordinary service
+admission. See [runtime-audit-070.md](runtime-audit-070.md).
 
 ---
 

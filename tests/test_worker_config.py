@@ -18,6 +18,23 @@ def options(launch):
     return launch.command(Path("/private/key"))
 
 
+@pytest.mark.parametrize('limit', [0, 1, 4096])
+def test_tensor_diagnostics_are_explicit_and_disabled_by_default(limit):
+    args = options(spec(memory_tensor_diagnostics=limit))
+    assert ('--memory-tensor-diagnostics' in args) == bool(limit)
+    if limit:
+        assert args[args.index('--memory-tensor-diagnostics') + 1] == str(limit)
+    inherited = {'LLAMA_ARG_MEMORY_TENSOR_DIAGNOSTICS': '4096'}
+    assert spec().child_environment(inherited) == {}
+    assert '--memory-tensor-diagnostics' not in options(spec())
+
+
+@pytest.mark.parametrize('limit', [-1, 4097, True, False, 1.0, '1', None])
+def test_invalid_tensor_diagnostic_limit_is_rejected(limit):
+    with pytest.raises(ValueError, match='memory_tensor_diagnostics'):
+        spec(memory_tensor_diagnostics=limit)
+
+
 def test_cpu_disables_all_offload_including_the_projector():
     args = options(spec(mmproj=Path("/models/mmproj.gguf")))
     assert args[args.index("--device") + 1] == "none"

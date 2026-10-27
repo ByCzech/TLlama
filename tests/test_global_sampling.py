@@ -1,14 +1,9 @@
-"""TLLAMA_SAMPLING_*: sampling set server-wide.
-
-Two things are being tested. That the variables are collected, named and
-converted against the real completion signatures rather than a list; and
-that the layer sits where it is supposed to in the priority chain, which
-is only visible by comparing it against the layers on either side.
-"""
+"""Typed global sampling uses the native vocabulary and precedence rules."""
 
 import pytest
 
-from tllama.config import ConfigError, load_backend_config_from_env
+from tllama.config import ConfigError
+from tllama.daemon_config import load_daemon_config
 from tllama.helpers.common import build_sampling_kwargs
 from tllama.helpers.sampling_params import (
     coerce_sampling_overrides,
@@ -22,21 +17,21 @@ class TestCollection:
     def test_a_variable_is_collected_lowercased(self, monkeypatch):
         monkeypatch.setenv("TLLAMA_SAMPLING_TEMPERATURE", "0.3")
 
-        config = load_backend_config_from_env()
+        config = load_daemon_config(False, discover=False).backend
 
-        assert config.sampling_overrides == {"temperature": "0.3"}
+        assert config.sampling_overrides == {"temperature": 0.3}
 
     def test_nothing_set_collects_nothing(self, monkeypatch):
         for name in list(__import__("os").environ):
             if name.startswith("TLLAMA_SAMPLING_"):
                 monkeypatch.delenv(name)
 
-        assert load_backend_config_from_env().sampling_overrides == {}
+        assert load_daemon_config(False, discover=False).backend.sampling_overrides == {}
 
     def test_an_empty_value_is_not_a_setting(self, monkeypatch):
         monkeypatch.setenv("TLLAMA_SAMPLING_TOP_K", "   ")
 
-        assert load_backend_config_from_env().sampling_overrides == {}
+        assert load_daemon_config(False, discover=False).backend.sampling_overrides == {}
 
 
 class TestNamesAndTypes:
@@ -153,7 +148,7 @@ class TestReachesTheEndpoints:
 
         from tllama.backend import ModelManager
 
-        manager = ModelManager(load_backend_config_from_env())
+        manager = ModelManager(load_daemon_config(False, discover=False).backend)
 
         from dataclasses import replace
         from pathlib import Path
@@ -169,4 +164,4 @@ class TestReachesTheEndpoints:
         from tllama.backend import ModelManager
 
         with pytest.raises(ConfigError):
-            ModelManager(load_backend_config_from_env())
+            ModelManager(load_daemon_config(False, discover=False).backend)

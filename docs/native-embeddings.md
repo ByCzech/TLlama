@@ -1,4 +1,4 @@
-# Native embedding workers — 0063 / public images 0064
+# Native embedding workers
 
 0063 permits an explicitly configured embedding worker to retain its registered
 projector and projector options. The accepted Qwen3-VL native reference0062
@@ -39,17 +39,14 @@ to exercise production resolution, `WorkerLaunchSpec` and `NativeWorker` without
 editing the registered TOML. Its0064 `--public` mode adds real public TCP and
 SDK comparisons against the independent native controls.
 
-## Original worker foundation — 0057
+## Text worker foundation
 
-Public adapters were added in 0058; see [embedding-api.md](embedding-api.md)
-for the current public contract and remaining hardware gate. The sections
-below describe the 0057 worker checkpoint.
-
-This checkpoint integrates explicit text embedding workers with ModelManager.
-The accepted independent reference used MiniLM Q8_0 and Qwen3-Embedding 0.6B
-Q8_0 on native b11552-3144c167ef. Public `/api/embed`, legacy `/api/embeddings`
-and `/v1/embeddings` adapters are the following checkpoint. No native rebuild
-or additional model download is required for this change.
+Explicit embedding workers are integrated with ModelManager and the public
+`/api/embed`, legacy `/api/embeddings` and `/v1/embeddings` adapters. See
+[embedding-api.md](embedding-api.md) for the public contract. Native 0.7.0
+MiniLM/Qwen public and SDK comparisons passed on MI50/Vulkan with F16 K/V,
+FA off and context 256; [runtime-audit-070.md](runtime-audit-070.md) records scope.
+The earlier independent reference used b11552-3144c167ef.
 
 ## Model configuration
 
@@ -76,8 +73,8 @@ flash_attn = false
 Device selection retains its normal precedence. No TOML is rewritten and no
 mode is inferred from a model name, architecture or generic native embedding
 flag. Existing definitions stay in generation mode until explicitly configured.
-Preparing the definitions is optional at this stage; public embedding calls
-are not implemented yet.
+Public embedding calls require this configuration and compatible pooled
+semantic output metadata; a generic embedding flag alone is insufficient.
 
 | `pooling_type` | Launch behavior |
 | --- | --- |
@@ -159,5 +156,6 @@ Owned TCP subprocess tests cover mode/pooling validation, precedence, immutable
 replacement, rejected operation admission, direct transport guards, input/alias
 preservation, HTTP error recovery, cancellation/slot reuse, capability reporting
 and preload/unload cleanup. Synthetic vectors do not certify model quality or
-early native cancellation. Keep the independent 0054 hardware reference intact;
-the next hardware checkpoint will exercise the public adapters and SDKs.
+early native cancellation. Keep independent hardware evidence separate from
+synthetic protocol tests; current qualification is in
+[runtime-audit-070.md](runtime-audit-070.md).

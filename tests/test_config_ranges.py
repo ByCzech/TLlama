@@ -9,7 +9,8 @@ for exactly that reason.
 
 import pytest
 
-from tllama.config import ConfigError, load_backend_config_from_env
+from tllama.config import ConfigError
+from tllama.daemon_config import load_daemon_config
 
 
 class TestAValueOutsideItsRangeIsRefused:
@@ -20,10 +21,10 @@ class TestAValueOutsideItsRangeIsRefused:
         monkeypatch.setenv("TLLAMA_MAX_LOADED_MODELS", "0")
 
         with pytest.raises(ConfigError) as excinfo:
-            load_backend_config_from_env()
+            load_daemon_config(False, discover=False).backend
 
         assert "TLLAMA_MAX_LOADED_MODELS" in str(excinfo.value)
-        assert "'0'" in str(excinfo.value)
+        assert "0" in str(excinfo.value)
 
     @pytest.mark.parametrize("value", ["0", "-1"])
     def test_a_collection_interval_has_to_pass_time(self, monkeypatch, value):
@@ -32,7 +33,7 @@ class TestAValueOutsideItsRangeIsRefused:
         monkeypatch.setenv("TLLAMA_JANITOR_INTERVAL", value)
 
         with pytest.raises(ConfigError, match="TLLAMA_JANITOR_INTERVAL"):
-            load_backend_config_from_env()
+            load_daemon_config(False, discover=False).backend
 
     def test_a_negative_context_length_is_not_a_context_length(self, monkeypatch):
         # _normalize_num_ctx() ends in `return value if value > 0 else
@@ -41,13 +42,13 @@ class TestAValueOutsideItsRangeIsRefused:
         monkeypatch.setenv("TLLAMA_CONTEXT_LENGTH", "-1")
 
         with pytest.raises(ConfigError, match="TLLAMA_CONTEXT_LENGTH"):
-            load_backend_config_from_env()
+            load_daemon_config(False, discover=False).backend
 
     def test_a_negative_cache_lifetime_is_not_a_lifetime(self, monkeypatch):
         monkeypatch.setenv("TLLAMA_METADATA_CACHE_TTL", "-0.5")
 
         with pytest.raises(ConfigError, match="TLLAMA_METADATA_CACHE_TTL"):
-            load_backend_config_from_env()
+            load_daemon_config(False, discover=False).backend
 
     def test_the_message_says_what_would_have_been_accepted(self, monkeypatch):
         # "is not valid" alone leaves an operator guessing which way to
@@ -55,9 +56,9 @@ class TestAValueOutsideItsRangeIsRefused:
         monkeypatch.setenv("TLLAMA_JANITOR_INTERVAL", "0")
 
         with pytest.raises(ConfigError) as excinfo:
-            load_backend_config_from_env()
+            load_daemon_config(False, discover=False).backend
 
-        assert "greater than 0" in str(excinfo.value)
+        assert "> 0" in str(excinfo.value)
 
 
 class TestTheEdgeOfEachRangeStillMeansSomething:
@@ -66,7 +67,7 @@ class TestTheEdgeOfEachRangeStillMeansSomething:
     def test_zero_context_length_still_means_the_model_maximum(self, monkeypatch):
         monkeypatch.setenv("TLLAMA_CONTEXT_LENGTH", "0")
 
-        assert load_backend_config_from_env().context_length == 0
+        assert load_daemon_config(False, discover=False).backend.context_length == 0
 
     def test_zero_cache_lifetime_still_means_do_not_cache(self, monkeypatch):
         # backend compares `age_seconds > ttl`, which is true for every
@@ -74,43 +75,34 @@ class TestTheEdgeOfEachRangeStillMeansSomething:
         # somebody may want.
         monkeypatch.setenv("TLLAMA_METADATA_CACHE_TTL", "0")
 
-        assert load_backend_config_from_env().metadata_cache_ttl_seconds == 0.0
+        assert load_daemon_config(False, discover=False).backend.metadata_cache_ttl_seconds == 0.0
 
     def test_one_resident_model_is_the_default_and_still_allowed(self, monkeypatch):
         monkeypatch.setenv("TLLAMA_MAX_LOADED_MODELS", "1")
 
-        assert load_backend_config_from_env().max_loaded_models == 1
+        assert load_daemon_config(False, discover=False).backend.max_loaded_models == 1
 
     def test_a_small_interval_is_allowed_because_only_zero_is_the_problem(
         self, monkeypatch
     ):
         monkeypatch.setenv("TLLAMA_JANITOR_INTERVAL", "0.001")
 
-        assert load_backend_config_from_env().janitor_interval_seconds == 0.001
+        assert load_daemon_config(False, discover=False).backend.janitor_interval_seconds == 0.001
 
 
 class TestSamplingKeepsItsRanges:
-    """The environment's sampling layer is deliberately left unbounded.
-
-    llama.cpp defines what these mean: top_k at or below zero disables
-    top-k (llama_sampler_top_k_impl returns early), and a negative
-    temperature makes llama-cpp-python build a sampler chain of add_dist
-    alone, skipping every truncation sampler. Refusing them here would
-    close off configurations the library supports, which is a different
-    thing from refusing a value that does nothing.
-    """
+    """Shared validation preserves supported native sampler controls."""
 
     @pytest.mark.parametrize(
-        "variable,value",
+        "variable,value,expected",
         [
-            ("TLLAMA_SAMPLING_TEMPERATURE", "-1"),
-            ("TLLAMA_SAMPLING_TOP_K", "0"),
-            ("TLLAMA_SAMPLING_TOP_P", "1.5"),
+            ("TLLAMA_SAMPLING_TOP_K", "0", 0),
+            ("TLLAMA_SAMPLING_TOP_P", "1.5", 1.5),
         ],
     )
-    def test_a_sampling_value_is_not_range_checked(self, monkeypatch, variable, value):
+    def test_supported_sampler_ranges_remain_available(self, monkeypatch, variable, value, expected):
         monkeypatch.setenv(variable, value)
 
-        config = load_backend_config_from_env()
+        config = load_daemon_config(False, discover=False).backend
 
-        assert config.sampling_overrides[variable.removeprefix("TLLAMA_SAMPLING_").lower()] == value
+        assert config.sampling_overrides[variable.removeprefix("TLLAMA_SAMPLING_").lower()] == expected

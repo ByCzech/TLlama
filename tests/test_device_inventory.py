@@ -9,12 +9,23 @@ import time
 
 import pytest
 
-from tllama.device_inventory import discovery_environment, parse_device_list, pci_inventory, run_probe, runtime_fingerprint
+from tllama.device_inventory import AUDITED_RUNTIME, discovery_environment, parse_device_list, pci_inventory, run_probe, runtime_fingerprint
 
 
 SCRIPT = Path(__file__).parents[1] / 'scripts/device-inventory.py'
 TABLE = b'Available devices:\n  BLAS: OpenBLAS (0 MiB, 0 MiB free)\n  ROCm0: Same card (16384 MiB, 15000 MiB free)\n  Vulkan0: Same card (16384 MiB, 14900 MiB free)\n  Vulkan1: Same card (16384 MiB, 14000 MiB free)\n'
 VERSION = b'version: 0.6.0 (build 11552, commit 3144c167ef)\nbuilt with GNU 14 for Linux x86_64\n'
+CAPTURES = Path(__file__).with_name('fixtures') / 'native-runtime-070'
+
+
+@pytest.mark.parametrize('case', json.loads((CAPTURES / 'devices.json').read_text()),
+                         ids=lambda case: case['host'])
+def test_reviewed_070_device_tables_preserve_selectors_without_physical_links(case):
+    assert runtime_fingerprint(b'', case['version_stderr'].encode()) == AUDITED_RUNTIME
+    table = parse_device_list((CAPTURES / case['fixture']).read_bytes())
+    assert table['status'] == 'complete' and not table['issues']
+    assert [row['selector'] for row in table['devices']] == case['selectors']
+    assert all(row['physical_identity'] is None and not row['kernel_verified'] for row in table['devices'])
 
 
 def pci(root, bdf='0000:03:00.0', *, cls='0x030200', device='0x15dd'):
@@ -119,7 +130,7 @@ def test_version_parser_uses_explicit_build_and_commit_not_diagnostic_noise():
     assert runtime_fingerprint(VERSION, VERSION) is None
 
 
-def stub(path, mode='normal'):
+def stub(path, mode='normal', version=VERSION):
     source = f'''#!{sys.executable}
 import os,sys,time,signal,json
 from pathlib import Path
@@ -141,7 +152,7 @@ if mode=='pipe-child':
         time.sleep(30)
     sys.exit(0)
 if '--version' in sys.argv:
-    os.write(2,{VERSION!r} if mode!='wrong-build' else b'version: 0.6.0 (build 1, commit abc)\\n')
+    os.write(2,{version!r} if mode!='wrong-build' else b'version: 0.6.0 (build 1, commit abc)\\n')
 else:
     if mode=='exit':sys.exit(19)
     os.write(1,{TABLE!r} if mode!='drift' else b'Changed table\\n')
@@ -198,7 +209,8 @@ def test_cli_captures_without_models_listener_or_registered_file_writes(tmp_path
     capture = tmp_path / 'calls'
     output = tmp_path / 'results'
     command = [sys.executable, str(SCRIPT), '--executable', str(exe), '--pci-root', str(root),
-        '--output', str(output), '--env', 'CUDA_VISIBLE_DEVICES=2']
+        '--output', str(output), '--expected-fingerprint', 'b11552-3144c167ef',
+        '--env', 'CUDA_VISIBLE_DEVICES=2']
     inherited = {**os.environ, 'CAPTURE': str(capture), 'LLAMA_ARG_MODEL': 'must-not-load', 'LLAMA_API_KEY': 'secret',
         'PYTHONPATH': str(SCRIPT.parents[1] / 'src')}
     run = subprocess.run(command, env=inherited, capture_output=True, text=True, timeout=8)
@@ -219,7 +231,65 @@ def test_cli_captures_without_models_listener_or_registered_file_writes(tmp_path
     assert 'secret' not in run.stdout
 
 
+@pytest.mark.parametrize('mode,expected,ok', [('normal', None, False),
+    ('normal', 'b11851-deadbeef', True), ('normal', 'b11850-deadbeef', False),
+    ('drift', 'b11851-deadbeef', False)])
+def test_candidate_capture_requires_exact_opt_in_and_never_claims_audit(tmp_path, mode, expected, ok):
+    version = b'version: 0.7.0 (build 11851, commit deadbeef)\nbuilt for Linux\n'
+    exe = stub(tmp_path/'native', mode, version=version)
+    root = tmp_path/'pci'
+    pci(root)
+    output = tmp_path/'capture'
+    command = [sys.executable,str(SCRIPT),'--executable',str(exe),'--pci-root',str(root),
+               '--output',str(output)]
+    if expected is not None:
+        command += ['--expected-fingerprint',expected]
+    calls = tmp_path/'calls'
+    run = subprocess.run(command, capture_output=True, text=True, timeout=8,
+        env={**os.environ,'CAPTURE':str(calls),'PYTHONPATH':str(SCRIPT.parents[1]/'src')})
+    report = json.loads(run.stdout)
+    assert run.returncode == int(not ok), run.stderr
+    assert report['protocol_ok'] is ok
+    assert report['runtime_fingerprint'] == 'b11851-deadbeef'
+    assert report['audited_runtime'] == AUDITED_RUNTIME
+    assert report['expected_runtime'] == (expected or report['audited_runtime'])
+    assert report['runtime_audited'] is False and report['review_required'] is True
+    assert report['models_loaded'] is report['listener_started'] is False
+    assert (output/'version.stderr').read_bytes() == version
+    assert not report['placement_ready']
+    probes = [json.loads(line)['argv'] for line in calls.read_text().splitlines()]
+    assert len(probes) == (2 if expected == 'b11851-deadbeef' else 1)
+    if len(probes) == 2:
+        assert (output/'devices.stdout').read_bytes() == (TABLE if mode == 'normal' else b'Changed table\n')
+
+
+@pytest.mark.parametrize('mode,expected,ok', [('normal', None, True),
+    ('normal', 'b11850-0e9433bfd3', True), ('normal', 'b11552-3144c167ef', False),
+    ('drift', None, False)])
+def test_reviewed_discovery_remains_exact_and_rejects_table_drift(tmp_path, mode, expected, ok):
+    version = b'version: 0.7.0 (build 11850, commit 0e9433bfd3)\nbuilt for Linux\n'
+    exe = stub(tmp_path / 'native', mode, version=version)
+    pci(tmp_path / 'pci')
+    command = [sys.executable, str(SCRIPT), '--executable', str(exe), '--pci-root', str(tmp_path / 'pci'),
+               '--output', str(tmp_path / 'result')]
+    if expected:
+        command += ['--expected-fingerprint', expected]
+    calls = tmp_path / 'calls'
+    run = subprocess.run(command, capture_output=True, text=True, timeout=8,
+        env={**os.environ, 'CAPTURE': str(calls), 'PYTHONPATH': str(SCRIPT.parents[1] / 'src')})
+    report = json.loads(run.stdout)
+    assert run.returncode == int(not ok), run.stderr
+    assert report['protocol_ok'] is ok and report['review_required'] is (not ok)
+    assert report['runtime_audited'] is True
+    assert report['audited_runtime'] == report['runtime_fingerprint'] == 'b11850-0e9433bfd3'
+    assert report['audited_runtime_fingerprints'] == ['b11552-3144c167ef', 'b11850-0e9433bfd3']
+    assert report['expected_runtime'] == (expected or AUDITED_RUNTIME)
+    assert report['private_directory_removed'] and not report['placement_ready']
+    assert len(calls.read_text().splitlines()) == (1 if expected == 'b11552-3144c167ef' else 2)
+
+
 @pytest.mark.parametrize('arguments', [['--timeout', 'nan'], ['--output-limit', '0'],
+    ['--expected-fingerprint', ''], ['--expected-fingerprint', 'new-runtime'],
     ['--env', 'LLAMA_ARG_MODEL=x'], ['--env', 'CUDA_VISIBLE_DEVICES=1', '--env', 'CUDA_VISIBLE_DEVICES=2']])
 def test_invalid_cli_does_not_create_output_or_spawn(tmp_path, arguments):
     output = tmp_path / 'result'
@@ -238,7 +308,8 @@ def test_unavailable_pci_evidence_does_not_invent_associations_or_hide_native_ca
         (entry / 'vendor').write_text('malformed')
     exe = stub(tmp_path / 'native')
     run = subprocess.run([sys.executable, str(SCRIPT), '--executable', str(exe), '--pci-root', str(root),
-        '--output', str(tmp_path / 'result')], capture_output=True, text=True, timeout=5,
+        '--output', str(tmp_path / 'result'), '--expected-fingerprint', 'b11552-3144c167ef'],
+        capture_output=True, text=True, timeout=5,
         env={**os.environ, 'CAPTURE': str(tmp_path / 'calls'), 'PYTHONPATH': str(SCRIPT.parents[1] / 'src')})
     report = json.loads(run.stdout)
     assert run.returncode == 0 and report['protocol_ok'] and report['review_required']

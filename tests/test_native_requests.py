@@ -191,6 +191,15 @@ def test_prepared_payload_is_a_deep_snapshot_and_each_body_is_fresh(resolved):
         prepared.payload["temperature"] = 9
 
 
+@pytest.mark.parametrize('use_tools,expected', [(False, 'none'), (True, 'think_prefix')])
+def test_reasoning_uses_selected_native_tool_template(resolved, use_tools, expected):
+    metadata = {'template': '{{ messages }}', 'tool_template': '<think>{{ r }}</think>{{ c }}'}
+    tools = [{'function': {'name': 'f'}}] if use_tools else None
+    prepared = prepare_chat([], {}, resolved=resolved, metadata_info=metadata, tools=tools)
+    assert prepared.reasoning_format == expected
+    assert prepared.body()['reasoning_format'] == 'deepseek'
+
+
 @pytest.mark.parametrize("payload", [{"x": float("nan")}, {"x": object()}])
 def test_non_json_or_nonfinite_request_data_is_refused(payload):
     with pytest.raises(ValueError, match="finite JSON"):

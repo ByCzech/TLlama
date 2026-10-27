@@ -1,3 +1,4 @@
+import locale
 import os
 import tempfile
 
@@ -10,6 +11,27 @@ import pytest
 
 from tllama.backend import ModelManager
 from tllama.config import BackendConfig
+
+
+@pytest.fixture(autouse=True)
+def isolated_formatting_locale(monkeypatch):
+    """Use stable human-output expectations and restore CLI locale changes.
+
+    main() reads the environment even when called in-process. Locale-specific
+    tests can override these defaults explicitly, without requiring OS locales.
+    """
+    categories = {locale.LC_NUMERIC: 'LC_NUMERIC', locale.LC_TIME: 'LC_TIME'}
+    previous = {category: locale.setlocale(category) for category in categories}
+    # LC_ALL would otherwise override both per-category environment settings.
+    monkeypatch.delenv('LC_ALL', raising=False)
+    for category, variable in categories.items():
+        monkeypatch.setenv(variable, 'C')
+        locale.setlocale(category, 'C')
+    try:
+        yield
+    finally:
+        for category, value in previous.items():
+            locale.setlocale(category, value)
 
 
 @pytest.fixture

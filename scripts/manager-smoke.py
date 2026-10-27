@@ -9,7 +9,7 @@ import logging
 from pathlib import Path
 
 from tllama.backend import ModelManager
-from tllama.config import load_backend_config_from_env
+from tllama.daemon_config import load_daemon_config
 from tllama.native_config import build_native_sampling
 from tllama.worker import WorkerError
 
@@ -19,7 +19,7 @@ def report(stage, **values):
 
 
 async def exercise(args):
-    config = load_backend_config_from_env()
+    config = load_daemon_config(False, discover=False).backend
     if args.models_dir is not None:
         config = replace(config, models_dir=str(args.models_dir.expanduser().resolve()))
     manager = ModelManager(config, native_launch_options={

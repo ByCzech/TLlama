@@ -1,7 +1,9 @@
 # Decision native / managed / public comparison — 0069
 
-Apply 0069 after the accepted 0068. Run from the checkout with the same installed
-native binary, model store and device as the accepted 0065/0066 references.
+This diagnostic is integrated. Native 0.7.0 MI50 Laya/Nimble/Clef comparisons
+have passed; see [the runtime audit](../docs/runtime-audit-070.md). Commands
+below are repeatable recipes, not pending acceptance runs. Run a new experiment
+from the checkout with the intended native binary, model store and device.
 The default selection is the three existing registered models, in order:
 
 | Model | Native type | Context / batch / ubatch |
@@ -53,8 +55,10 @@ post-resolution mutation. Its answer and exact usage must match the independent
 combined control. All later private/public calls reuse that worker. The effective
 native command must equal the independent recipe after excluding only dynamic
 listener location (UDS path or loopback port) and owned API-key-file location.
-Both require audited native fingerprint
-`b11552-3144c167ef` and live `output_modalities=["decisions"]`. Ready rows retain
+Both strictly require the exact selected fingerprint (default
+`b11850-0e9433bfd3`, or explicit `--expected-fingerprint`) and live
+`output_modalities=["decisions"]`. Another ordinarily audited build does not
+satisfy that exact diagnostic pin. Ready rows retain
 argv, props, metadata, runtime, PID and generation for independent review against
 the accepted native archives as well as the fresh reference.
 

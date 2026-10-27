@@ -1,0 +1,2 @@
+examples/server.toml etc/tllama
+systemd/tllamad.service usr/lib/systemd/system

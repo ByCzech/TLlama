@@ -18,7 +18,7 @@ from uuid import uuid4
 from tllama.errors import ollama_stream_error_line, openai_stream_error_frame, openai_error_type
 from tllama.helpers.common import get_iso_time
 from tllama.helpers.model_toml import TomlModelError
-from tllama.helpers.reasoning_split import ReasoningStreamSplitter
+from tllama.helpers.reasoning_split import ChatReasoningNormalizer, ReasoningStreamSplitter
 from tllama.native_config import _plain
 from tllama.native_requests import NativeRequest
 from tllama.native_tools import ToolCalls, full_calls, ollama_calls
@@ -178,11 +178,15 @@ def read_result(payload, request: NativeRequest):
         message = _object(choice.get("message"), "message")
         content = _text(message.get("content"), "content")
         reasoning = _text(message.get("reasoning_content"), "reasoning_content")
+        normalizer = ChatReasoningNormalizer(request.reasoning_format)
+        pieces = normalizer.push(content, reasoning) + normalizer.finish()
+        content = "".join(text for kind, text in pieces if kind == "response")
+        reasoning = "".join(text for kind, text in pieces if kind == "thinking")
         finish = _finish(choice.get("finish_reason"))
         return NativeResult(content, reasoning, full_calls(message.get("tool_calls"), finish),
                             finish, stats, True)
     content = _text(payload.get("content"), "completion content")
-    splitter = ReasoningStreamSplitter(request.reasoning_format, think_value=request.think)
+    splitter = ReasoningStreamSplitter(request.reasoning_format)
     pieces = splitter.push(content) + splitter.finish()
     reasoning = "".join(piece for kind, piece in pieces if kind == "thinking")
     content = "".join(piece for kind, piece in pieces if kind == "response")
@@ -192,7 +196,8 @@ def read_result(payload, request: NativeRequest):
 async def _read_events(events, request):
     stats, finish = RequestStats(), None
     tools = ToolCalls()
-    splitter = ReasoningStreamSplitter(request.reasoning_format, think_value=request.think)
+    splitter = ReasoningStreamSplitter(request.reasoning_format)
+    normalizer = ChatReasoningNormalizer(request.reasoning_format)
     async for payload in events:
         stats = stats.merge(RequestStats.read(payload))
         if request.kind == "chat":
@@ -207,6 +212,9 @@ async def _read_events(events, request):
             calls = tools.push(delta.get("tool_calls"))
             if choice.get("finish_reason") is not None:
                 finish = _finish(choice["finish_reason"])
+            pieces = normalizer.push(content, reasoning)
+            content = "".join(text for kind, text in pieces if kind == "response")
+            reasoning = "".join(text for kind, text in pieces if kind == "thinking")
             if content or reasoning or calls:
                 yield NativeResult(content, reasoning, calls)
         else:
@@ -220,10 +228,9 @@ async def _read_events(events, request):
     # The transport must validate [DONE]/raw stop before a public success.
     if finish is None:
         raise WorkerProtocolError("Native stream ended without a finish reason")
-    if request.kind == "completion":
-        for kind, piece in splitter.finish():
-            yield NativeResult(content=piece if kind == "response" else "",
-                               reasoning=piece if kind == "thinking" else "")
+    for kind, piece in (splitter if request.kind == "completion" else normalizer).finish():
+        yield NativeResult(content=piece if kind == "response" else "",
+                           reasoning=piece if kind == "thinking" else "")
     calls = tools.finish(finish) if request.kind == "chat" else ()
     yield NativeResult(tool_calls=calls, finish_reason=finish, stats=stats, terminal=True)
 

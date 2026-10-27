@@ -38,6 +38,7 @@ No changes are applied to the registered definitions or another server.
 The temporary definition has the existing `[llm].model` and `[runtime]`, with:
 
 ```toml
+[runtime]
 embedding = true
 pooling_type = -1
 n_ctx = 256

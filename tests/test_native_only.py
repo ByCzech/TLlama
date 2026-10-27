@@ -55,7 +55,7 @@ assert 'llama_cpp' not in sys.modules
     assert result.returncode == 0, result.stderr
 
 
-@pytest.mark.parametrize('module', ['tllama.daemon', 'tllama.main'])
+@pytest.mark.parametrize('module', ['tllama.daemon'])
 def test_repository_command_runs_with_binding_imports_blocked(tmp_path, module):
     result = run_without_binding(f'''
 import runpy

@@ -6,7 +6,9 @@ from collections.abc import Mapping
 
 
 DECISION_TYPES = frozenset({'laya', 'nimble', 'clef'})
-DECISION_RUNTIME = 'b11552-3144c167ef'
+# Text Decision reviewed independently on MI50/Vulkan0; see runtime-audit-070.md.
+DECISION_RUNTIME = 'b11850-0e9433bfd3'
+SUPPORTED_DECISION_RUNTIME_FINGERPRINTS = frozenset({DECISION_RUNTIME, 'b11552-3144c167ef'})
 MAX_QUESTIONS = 32
 MAX_REQUEST_BYTES = 2 * 1024 * 1024
 

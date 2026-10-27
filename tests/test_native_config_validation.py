@@ -43,7 +43,7 @@ def test_removed_runtime_option_is_reported_in_toml_and_environment(name, value)
 @pytest.mark.parametrize("line", ['n_ctx=true', 'n_batch=0', 'n_threads="eight"',
                                 'device="none,Vulkan0"', 'rope_scaling_type=3', 'numa=4',
                                 'tensor_split=[0.0, 0.0]', 'type_k="q4_k"',
-                                'verbose=false', 'rope_freq_scale=nan'])
+                                'verbose=false', 'verbose=true', 'rope_freq_scale=nan'])
 def test_runtime_values_cannot_silently_change_meaning(line):
     with pytest.raises(TomlModelError, match="Local/m.toml"):
         parse_model_toml(LLM + "[runtime]\n" + line, source="Local/m.toml")

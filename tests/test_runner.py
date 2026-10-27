@@ -5,7 +5,8 @@ from dataclasses import replace
 import pytest
 
 from tllama.backend import HF_LOOKUP_FOUND, HfFileLookup
-from tllama.config import ConfigError, load_backend_config_from_env
+from tllama.config import ConfigError
+from tllama.daemon_config import load_daemon_config
 
 
 PATHS = ["/api/chat", "/api/generate", "/api/show", "/api/pull"]
@@ -186,18 +187,18 @@ def test_runner_metadata_covers_tags_and_empty_residency(client, policy, monkeyp
 @pytest.mark.parametrize("value,expected", [("true", True), ("false", False)])
 def test_ignore_mode_is_a_server_configuration(value, expected, monkeypatch):
     monkeypatch.setenv("TLLAMA_IGNORE_UNSUPPORTED_RUNNER", value)
-    assert load_backend_config_from_env().ignore_unsupported_runner is expected
+    assert load_daemon_config(False, discover=False).backend.ignore_unsupported_runner is expected
 
 
 def test_ignore_mode_defaults_to_strict(monkeypatch):
     monkeypatch.delenv("TLLAMA_IGNORE_UNSUPPORTED_RUNNER", raising=False)
-    assert load_backend_config_from_env().ignore_unsupported_runner is False
+    assert load_daemon_config(False, discover=False).backend.ignore_unsupported_runner is False
 
 
 def test_invalid_ignore_mode_fails_configuration(monkeypatch):
     monkeypatch.setenv("TLLAMA_IGNORE_UNSUPPORTED_RUNNER", "maybe")
     with pytest.raises(ConfigError, match="TLLAMA_IGNORE_UNSUPPORTED_RUNNER"):
-        load_backend_config_from_env()
+        load_daemon_config(False, discover=False).backend
 
 
 def test_openai_schema_does_not_gain_runner():

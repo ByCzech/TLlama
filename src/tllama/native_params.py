@@ -1,4 +1,4 @@
-"""TLlama configuration vocabulary; embedded MTP verified at b11552-3144c167ef.
+"""TLlama configuration vocabulary; embedded MTP audited in runtime-audit-070.md.
 
 These are TLlama contracts, not a reflection of a Python binding or every
 option the native CLI happens to expose. Update with the compatibility matrix.
@@ -24,23 +24,12 @@ RUNTIME_TYPES = {
     "swa_full": "bool", "no_perf": "bool", "last_n_tokens_size": "int",
     "lora_path": "str", "lora_scale": "float", "numa": "Union[bool,int]",
     "type_k": "Union[str,int]", "type_v": "Union[str,int]", "type_kv": "Union[str,int]",
-    "spm_infill": "bool", "verbose": "bool",
+    "spm_infill": "bool",
     "spec_type": "str", "draft_n_max": "int",
     "embedding": "bool", "pooling_type": "int", "context_shift": "bool",
 }
 
 MTP_DRAFT_N_MAX_DEFAULT = 3
-
-REMOVED_RUNTIME = {
-    "chat_format": "Python chat handlers have no native name mapping; use [template].jinja",
-    "chat_handler": "Python objects are not native configuration; use [mmproj] or [template] in the .toml",
-    "draft_model": "Python objects are not native configuration; use spec_type for embedded MTP; external drafts are not integrated",
-    "tokenizer": "Python tokenizer objects are not native configuration",
-    "vocab_only": "metadata reads do not need an inference worker",
-    "logits_all": "public logprobs require their own API integration",
-    "attention_type": "the pinned server CLI has no attention override; use the model default",
-    "lora_base": "the pinned native parser has no lora_base equivalent",
-}
 
 SAMPLING_TYPES = {
     "temperature": "float", "top_p": "float", "top_k": "int", "min_p": "float",
@@ -132,8 +121,6 @@ def _type_problem(name: str, value: Any, annotation: str) -> str | None:
 def runtime_problem(name: str, value: Any) -> str | None:
     if name == "model_path":
         return "'model_path' cannot be set here: the model path comes from [llm]"
-    if name in REMOVED_RUNTIME:
-        return f"'{name}' is not supported by the native configuration: {REMOVED_RUNTIME[name]}"
     annotation = RUNTIME_TYPES.get(name)
     if annotation is None:
         return f"'{name}' is not a runtime parameter TLlama applies"
@@ -171,8 +158,6 @@ def runtime_problem(name: str, value: Any) -> str | None:
         return "'tensor_split' needs nonnegative proportions with a positive total"
     if name == "last_n_tokens_size" and value < -1:
         return "'last_n_tokens_size' must be -1 or nonnegative"
-    if name == "verbose" and value is False:
-        return "'verbose' cannot disable native load diagnostics needed for reporting"
     if name == "lora_path" and not value:
         return "'lora_path' must not be empty"
     if name == "kv_overrides":

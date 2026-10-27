@@ -22,7 +22,7 @@ def environment(tmp_path):
     return env
 
 
-@pytest.mark.parametrize('module', ['tllama.daemon', 'tllama.main'])
+@pytest.mark.parametrize('module', ['tllama.daemon'])
 def test_inspection_avoids_application_imports_and_storage(module, tmp_path):
     file = tmp_path / 'server.toml'
     store = tmp_path / 'absent'

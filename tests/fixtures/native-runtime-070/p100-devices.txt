@@ -1,0 +1,3 @@
+Available devices:
+  BLAS: OpenBLAS (0 MiB, 0 MiB free)
+  CUDA0: Tesla P100-PCIE-16GB (16269 MiB, 16011 MiB free)

@@ -1,0 +1,5 @@
+Available devices:
+  BLAS: OpenBLAS (0 MiB, 0 MiB free)
+  ROCm0: AMD Instinct MI100 (32752 MiB, 13390 MiB free)
+  ROCm1: AMD Radeon Graphics (15949 MiB, 15939 MiB free)
+  Vulkan0: AMD Radeon Graphics (RADV RENOIR) (16013 MiB, 15984 MiB free)

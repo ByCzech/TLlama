@@ -19,8 +19,6 @@ from tllama.native_requests import normalize_chat_input
 from tllama.helpers.vision import (
     InvalidImageError,
     NO_REMOTE_IMAGES,
-    build_multimodal_content,
-    messages_carry_images,
     to_image_data_url,
 )
 
@@ -120,26 +118,6 @@ class TestWhatIsRefused:
             to_image_data_url(f"data:image/png;base64,{PNG},extra")
 
 
-class TestTheContentParts:
-    def test_the_text_comes_first(self):
-        parts = build_multimodal_content("co to je", [PNG])
-
-        assert parts[0] == {"type": "text", "text": "co to je"}
-
-    def test_the_image_is_an_openai_image_url_part(self):
-        parts = build_multimodal_content("co to je", [PNG])
-
-        assert parts[1] == {
-            "type": "image_url",
-            "image_url": {"url": f"data:image/png;base64,{PNG}"},
-        }
-
-    def test_every_image_gets_its_own_part(self):
-        parts = build_multimodal_content("dva", [PNG, JPEG])
-
-        assert [p["type"] for p in parts] == ["text", "image_url", "image_url"]
-
-
 class TestTheMessageAsTheHandlerSeesIt:
     def test_images_become_content_parts(self):
         [message] = normalize_chat_input(
@@ -179,20 +157,3 @@ class TestTheMessageAsTheHandlerSeesIt:
         [message] = normalize_chat_input([FakeMessage(content=content)])
 
         assert message["content"] == "ab"
-
-
-class TestBothShapesCountAsAnImage:
-    def test_the_images_field_counts(self):
-        assert messages_carry_images([FakeMessage(content="x", images=[PNG])])
-
-    def test_an_image_url_part_counts_too(self):
-        # Otherwise a client using the OpenAI shape against /api/chat
-        # walks straight past the guard and into a text-only model.
-        content = [
-            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{PNG}"}},
-        ]
-
-        assert messages_carry_images([FakeMessage(content=content)])
-
-    def test_plain_text_does_not(self):
-        assert not messages_carry_images([FakeMessage(content="ahoj")])

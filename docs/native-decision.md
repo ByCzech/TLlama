@@ -1,10 +1,11 @@
-# Managed text Decision workers — 0067
+# Managed text Decision workers
 
 The independent native references for the exact registered Laya Q8_0,
 Bespoke-Nimble-9B-v3 Q4_K_M and Clef-Flash Q4_K_M passed0065/0066. This
-checkpoint integrates their text Decision contracts with ModelManager and
-NativeWorker.0068 adds the [public text Decision API](decision-api.md);
-the managed/public hardware comparison follows separately. Existing generation
+integration uses ModelManager and NativeWorker with the
+[public text Decision API](decision-api.md). The 0.7.0 native/managed/public
+comparison passed for all three models on MI50/Vulkan; see
+[runtime-audit-070.md](runtime-audit-070.md) for its bounded configuration. Existing generation
 routes reject Decision mode before load/eviction. `/api/show` advertises only
 `decision` for an integrated text Decision header,without generation capabilities.
 
@@ -14,8 +15,10 @@ The GGUF's `<arch>.decision.type` selects the frozen worker `decision_type`.
 There is no new TOML mode flag or file/model-name heuristic. Current integrated
 pairs are modern-bert/laya, qwen35/nimble and clef/clef. Native must also report
 the private alias and `architecture.output_modalities: ["decisions"]` at startup.
-With `TLLAMA_RUNTIME_VERSION_POLICY=strict`, Decision requires the audited
-runtime **b11552-3144c167ef**. The default `warn` policy permits other builds
+With `TLLAMA_RUNTIME_VERSION_POLICY=strict`, Decision accepts the independently
+audited runtimes **b11850-0e9433bfd3** and **b11552-3144c167ef**. The 0.7.0
+default and its MI50/Vulkan scope are recorded in [runtime-audit-070.md](runtime-audit-070.md).
+The default `warn` policy permits other builds
 with a warning, while retaining the live alias/output-modality checks and all
 typed request/response, probability, score, confidence and usage validation.
 A build fingerprint records tested provenance, not an API capability version.
@@ -108,8 +111,10 @@ are not an application calibration/accuracy benchmark.
 
 Cancellation closes the owned HTTP response and releases the transport slot;
 an admitted lease still protects its worker during unload. Native early compute
-stop and a cancellation latency bound are not established. Memory remains
-native backend-buffer capacity, with unknown/partial fields preserved.
+stop and a cancellation latency bound are not established. Detailed memory
+retains backend buffers and independent payload/assignment/locality evidence;
+compatibility sizes follow [native-memory.md](native-memory.md), with unknown
+or partial fields preserved.
 
 ## Verification
 

@@ -7,7 +7,6 @@ from starlette.requests import ClientDisconnect
 from fastapi.responses import StreamingResponse, JSONResponse
 from tllama.schemas.ollama import OllamaChatRequest, OllamaGenerateRequest
 from tllama.backend import model_manager, HF_LOOKUP_MISSING, PullProgress
-from tllama.helpers.model_toml import TomlModelError
 from tllama.version import get_version as get_tllama_version
 from tllama.helpers.runner import RUNNER, validate_runner
 from tllama.helpers.common import format_ollama_parameters
@@ -134,7 +133,7 @@ async def show_model_info(request: dict):
     capabilities = ["completion"]
     if template_accepts_tools(metadata_info.get("tool_template", metadata_info.get("template"))):
         capabilities.append("tools")
-    if detect_reasoning_format(model_name, metadata_info) != "none":
+    if detect_reasoning_format(metadata_info) != "none":
         capabilities.append("thinking")
     if metadata_info.get('vision_configured', metadata_info.get('has_projector')) is True:
         capabilities.append('vision')

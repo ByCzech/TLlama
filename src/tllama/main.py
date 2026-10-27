@@ -1,8 +1,3 @@
-# Parse daemon arguments before importing the ASGI application or ModelManager.
-if __name__ == '__main__':
-    from tllama.daemon import main as daemon_main
-    raise SystemExit(daemon_main())
-
 import logging
 
 import uvicorn
@@ -147,7 +142,7 @@ def configure_logging(config):
     # The CLI may have already installed handlers at INFO before loading config.
     logging.getLogger().setLevel(python_level)
     for name in ("httpx", "httpx2", "httpcore", "httpcore2"):
-        logging.getLogger(name).setLevel(logging.DEBUG if config.debug else max(python_level, logging.WARNING))
+        logging.getLogger(name).setLevel(logging.DEBUG if level in {'debug', 'trace'} else max(python_level, logging.WARNING))
 
 
 def create_app():
@@ -180,9 +175,3 @@ def start_server():
     uvicorn.run("tllama.main:create_app", **kwargs)
 
     return
-
-
-def main(argv=None) -> int:
-    """Retain `python -m tllama.main` as an explicit server spelling."""
-    from tllama.daemon import main as daemon_main
-    return daemon_main(argv)

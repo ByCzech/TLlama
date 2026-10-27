@@ -1,0 +1,12 @@
+# Keep explicit versioned dependencies in control, including local backports.
+anyio python3-anyio
+fastapi python3-fastapi
+filetype python3-filetype
+gguf python3-gguf
+httpx python3-httpx
+huggingface_hub python3-huggingface-hub
+jinja2 python3-jinja2
+prompt_toolkit python3-prompt-toolkit
+pydantic python3-pydantic
+tomlkit python3-tomlkit
+uvicorn python3-uvicorn

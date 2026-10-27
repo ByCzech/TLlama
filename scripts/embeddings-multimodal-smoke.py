@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Audit native image embeddings before integrating multimodal public APIs."""
+"""Compare independent, managed and public image embedding paths."""
 
 import argparse
 import asyncio
@@ -19,7 +19,7 @@ import zlib
 import tomlkit
 
 from tllama.backend import ModelManager
-from tllama.config import load_backend_config_from_env
+from tllama.daemon_config import load_daemon_config
 from tllama.embedding_contract import embedding_contract
 from tllama.native_config import _plain
 from tllama.worker import NativeWorker, WorkerError, WorkerRequestError
@@ -37,7 +37,7 @@ def require(condition, message):
 
 @dataclass(frozen=True)
 class ProbeLaunchSpec(WorkerLaunchSpec):
-    """Diagnostic-only projector launch; production embedding guards stay intact."""
+    """Independent native CLI reference for the managed embedding launch."""
 
     def command(self, api_key_file, template_file=None, socket_file=None):
         return super().command(api_key_file, template_file, socket_file) + ('--embeddings', '--pooling', 'last')
@@ -180,7 +180,7 @@ async def exercise(args, emit):
          public_api='requested' if args.public else 'not_exercised', mode='native_multimodal_embeddings', pooling='last',
          prompt_policy='literal_content_no_implicit_template_or_instruction',
          native_cancellation='early_compute_stop_not_proven')
-    config = load_backend_config_from_env()
+    config = load_daemon_config(False, discover=False).backend
     if args.models_dir:
         config = replace(config, models_dir=str(args.models_dir.expanduser().resolve()))
     workers, notes, ok = [], [], True
