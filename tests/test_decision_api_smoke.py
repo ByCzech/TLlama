@@ -65,10 +65,10 @@ def test_independent_managed_public_comparison_and_owned_lifecycle(tmp_path, pay
     run_comparison(tmp_path, payload, kind, mode, ok, review)
 
 
-def run_comparison(tmp_path, payload, kind, mode, ok, review, count=1):
+def run_comparison(tmp_path, payload, kind, mode, ok, review, count=1, *, build='b11552-3144c167ef', expected=None):
     root = tmp_path / 'stub'
     root.mkdir()
-    (root / 'memory-report').write_text(json.dumps(dict(payload, runtime_fingerprint='b11552-3144c167ef')))
+    (root / 'memory-report').write_text(json.dumps(dict(payload, runtime_fingerprint=build)))
     models = tmp_path / 'models' / 'Local'
     models.mkdir(parents=True)
     header(models / 'a.gguf', kind=kind)
@@ -82,18 +82,27 @@ def run_comparison(tmp_path, payload, kind, mode, ok, review, count=1):
     executable.chmod(0o700)
     output = tmp_path / 'results'
     command = [sys.executable, str(SCRIPT), '--model', 'a', '--models-dir', str(models.parent),
-               '--executable', str(executable), '--output', str(output)]
+               '--executable', str(executable), '--output', str(output), '--transport', 'tcp',
+               '--load-timeout', '5', '--request-timeout', '5']
+    if expected is not None:
+        command += ['--expected-fingerprint', expected, '--device', 'none']
     if count == 2:
         command += ['--model', 'b']
     env = {**os.environ, 'PYTHONPATH': str(SCRIPT.parents[1] / 'src'), 'STUB_ROOT': str(root),
-           'STUB_DECISION': mode, 'STUB_DECISION_KIND': kind, 'STUB_BUILD': 'b11552-3144c167ef',
+           'STUB_DECISION': mode, 'STUB_DECISION_KIND': kind, 'STUB_BUILD': build,
            'STUB_PUBLIC_CTX': '1024' if kind == 'laya' else '2048',
            'TLLAMA_RUNTIME_DRAFT_N_MAX': '3', 'TLLAMA_RUNTIME_SPEC_TYPE': 'draft-mtp'}
+    if expected is not None:
+        env['TLLAMA_RUNTIME_VERSION_POLICY'] = 'strict'
     run = subprocess.run(command, env=env, capture_output=True, text=True, timeout=35)
     assert run.returncode == (0 if ok else 1), run.stdout + run.stderr
     rows = [json.loads(line) for line in (output / 'raw.jsonl').read_text().splitlines()]
     assert rows[-1]['protocol_ok'] is ok and rows[-1]['review_required'] is review, run.stdout
     assert run.stdout == (output / 'summary.jsonl').read_text()
+    version = rows[0]
+    assert version['expected_fingerprint'] == (expected or smoke.AUDITED_FINGERPRINT)
+    assert version['candidate_opt_in'] is (expected is not None)
+    assert version['production_allowlist_changed'] is False
     closed = [r for r in rows if r['stage'] == 'worker-closed']
     assert closed and all(r['clean'] and r['directory_removed'] for r in closed)
     assert all(r['residency'] == [] for r in rows if r['stage'] == 'phase-finished')
@@ -188,3 +197,22 @@ def test_unintegrated_metadata_starts_no_worker(tmp_path, kind):
     assert run.returncode == 1
     rows = [json.loads(line) for line in (output / 'raw.jsonl').read_text().splitlines()]
     assert rows[-1]['review_required'] and not any(r['stage'] in {'ready', 'worker-closed'} for r in rows)
+
+
+@pytest.mark.parametrize('kind', ['laya', 'nimble', 'clef'])
+def test_candidate_exact_build_independent_managed_public(tmp_path, payload, kind):
+    run_comparison(tmp_path, payload, kind, 'normal', True, False,
+                   build='b11850-0e9433bfd3', expected='b11850-0e9433bfd3')
+
+
+@pytest.mark.parametrize('expected', [None, 'b11850-0e9433bfd3'])
+def test_unselected_or_mismatched_build_never_runs_decision(tmp_path, payload, expected):
+    run_comparison(tmp_path, payload, 'laya', 'normal', False, True,
+                   build='b99999-unselected', expected=expected)
+    rows = [json.loads(line) for line in (tmp_path / 'results/raw.jsonl').read_text().splitlines()]
+    assert not any(r['stage'] in {'ready', 'request', 'native-response', 'managed-response'} for r in rows)
+
+
+@pytest.mark.parametrize('option', ['--expected-fingerprint', '--device'])
+def test_blank_candidate_options_start_nothing(tmp_path, option):
+    test_invalid_cli_starts_nothing(tmp_path, option, ' ')

@@ -207,6 +207,7 @@ def test_candidate_pin_does_not_admit_decision_or_change_global_policy(tmp_path)
         resolved=replace(definition.resolved, launch=replace(launch, decision_type=None))), args)
     assert accepted.resolved.launch.runtime_fingerprint == BUILD
     assert accepted.resolved.launch.version_policy == 'strict'
+    assert accepted.resolved.launch.expected_runtime_fingerprint == BUILD
     assert RUNTIME_FINGERPRINT != BUILD and BUILD not in SUPPORTED_RUNTIME_FINGERPRINTS
 
 

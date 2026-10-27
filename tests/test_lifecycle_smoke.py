@@ -41,6 +41,7 @@ def test_launch_is_strict_exact_build_without_production_sleep_or_policy_changes
     launch = spec.command(key, socket_file=socket)
     sleeping = replace(spec, sleep_idle_seconds=5).command(key, socket_file=socket)
     assert spec.version_policy == 'strict' and spec.runtime_fingerprint == BUILD
+    assert spec.expected_runtime_fingerprint == BUILD
     assert spec.memory_source == 'native' and spec.memory_compare
     assert launch[launch.index('--sleep-idle-seconds') + 1] == '-1'
     assert sleeping[sleeping.index('--sleep-idle-seconds') + 1] == '5'

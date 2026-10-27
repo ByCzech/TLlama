@@ -10,7 +10,7 @@ from typing import Mapping, Any
 
 from tllama.native_cli import runtime_cli_args, mmproj_cli_args
 from tllama.native_params import POOLING_TYPES, freeze_values, kv_type_name
-from tllama.decision_contract import DECISION_TYPES
+from tllama.decision_contract import DECISION_RUNTIME, DECISION_TYPES
 from tllama.backend_policy import DEFAULT_BACKEND_PRIORITY, backend_priority
 
 
@@ -59,6 +59,22 @@ class WorkerLaunchSpec:
     terminate_timeout: float = 5.0
     kill_timeout: float = 5.0
     log_limit_bytes: int = 4 * 1024 * 1024
+    # An explicit diagnostic pin, including a pin to the default build. This
+    # is independent of per-feature audit lists and never changes them.
+    expected_runtime_fingerprint: str | None = None
+
+    @property
+    def accepted_runtime_fingerprints(self) -> frozenset[str]:
+        """Select evidence for this mode; enforcement uses the shared policy."""
+        if self.expected_runtime_fingerprint is not None:
+            return frozenset({self.expected_runtime_fingerprint})
+        if self.decision_type is not None:
+            return frozenset({DECISION_RUNTIME})
+        # Preserve the existing custom launch-field behavior for callers that
+        # predate explicit pins. Normal production launches use the audit set.
+        if self.runtime_fingerprint != RUNTIME_FINGERPRINT:
+            return frozenset({self.runtime_fingerprint})
+        return SUPPORTED_RUNTIME_FINGERPRINTS
 
     def __post_init__(self):
         object.__setattr__(self, "backend_priority", backend_priority(self.backend_priority))
@@ -91,6 +107,10 @@ class WorkerLaunchSpec:
                 continue
             if not isinstance(value, str) or not value or "\0" in value:
                 raise ValueError(f"{name} must be a nonempty string")
+        expected = self.expected_runtime_fingerprint
+        if expected is not None and (not isinstance(expected, str) or not expected.strip()
+                                     or expected != expected.strip() or "\0" in expected):
+            raise ValueError("expected_runtime_fingerprint must be a nonblank identity")
         devices = self.device.split(",") if self.device is not None else []
         if any(not part or part.strip() != part for part in devices):
             raise ValueError("device must contain nonempty server device selectors")

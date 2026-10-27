@@ -56,7 +56,7 @@ def launch_spec(args):
     return DiagnosticLaunchSpec(
         model=args.model.expanduser().resolve(), device=args.device,
         executable=args.executable.expanduser().resolve() if args.executable else config.runtime_executable,
-        runtime_fingerprint=args.expected_fingerprint, version_policy="strict",
+        runtime_fingerprint=args.expected_fingerprint, expected_runtime_fingerprint=args.expected_fingerprint, version_policy="strict",
         transport=args.transport, n_ctx=args.ctx, n_gpu_layers=0 if args.device == "none" else -1,
         type_k=args.type_k, type_v=args.type_v, flash_attn=args.flash_attn == "on",
         memory_source="native", memory_compare=True,

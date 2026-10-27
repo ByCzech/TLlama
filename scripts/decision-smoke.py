@@ -16,6 +16,7 @@ import time
 import gguf
 
 from tllama.backend import ModelManager
+from tllama.decision_contract import DECISION_RUNTIME
 from tllama.daemon_config import load_daemon_config
 from tllama.helpers.gguf_metadata import _field_to_python_value
 from tllama.helpers.model_toml import resolve_repo_relative_path
@@ -241,7 +242,8 @@ async def exercise(args, emit):
     workers, notes, inventory_rows, originals = [], [], {}, {}
     ok = True
     def factory(spec):
-        launch = probe_launch(spec, args)
+        launch = replace(probe_launch(spec, args), version_policy="strict",
+                         runtime_fingerprint=DECISION_RUNTIME, expected_runtime_fingerprint=DECISION_RUNTIME)
         emit('diagnostic-overrides', configured_context=spec.n_ctx, effective_context=launch.n_ctx,
              configured_projector=str(spec.mmproj) if spec.mmproj else None, effective_projector=None,
              configured_runtime=_plain(spec.runtime_options), effective_runtime=_plain(launch.runtime_options),
@@ -280,7 +282,6 @@ async def exercise(args, emit):
                 worker, pid, generation = lease.worker, lease.worker.pid, lease.generation
                 require(worker.spec.model.stat().st_size == selected['size_bytes']
                         and worker.spec.model.stat().st_mtime_ns == selected['mtime_ns'], 'Reference GGUF changed after inventory')
-                require(worker.runtime_fingerprint == 'b11552-3144c167ef', 'Reference requires the audited native build b11552-3144c167ef')
                 models = await worker.models()
                 require(isinstance(models, dict) and isinstance(models.get('data'), list) and len(models['data']) == 1
                         and models['data'][0].get('architecture', {}).get('output_modalities') == ['decisions'],

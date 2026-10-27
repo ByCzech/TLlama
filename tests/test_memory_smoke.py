@@ -314,7 +314,7 @@ def test_saved_evidence_inference_and_cleanup(tmp_path, payload, profile, status
     assert repeat.returncode == 1 and (root / "launch").read_text() == before
 
 
-def test_explicit_diagnostic_fingerprint_mismatch_stops_before_inference(tmp_path):
+def test_explicit_diagnostic_fingerprint_mismatch_stops_before_inference(tmp_path, monkeypatch, capsys):
     root = tmp_path/'stub'
     root.mkdir()
     executable = tmp_path/'native-stub'
@@ -323,14 +323,32 @@ def test_explicit_diagnostic_fingerprint_mismatch_stops_before_inference(tmp_pat
     model = tmp_path/'model.gguf'
     model.touch()
     output = tmp_path/'output'
-    run = subprocess.run([sys.executable,str(SCRIPT),'--profile','cpu','--model',str(model),
+    monkeypatch.setenv('STUB_ROOT', str(root))
+    monkeypatch.setenv('STUB_BUILD', 'different-build')
+    monkeypatch.setenv('TLLAMA_RUNTIME_VERSION_POLICY', 'warn')
+    worker_class = smoke.NativeWorker
+    monkeypatch.setattr(smoke, 'NativeWorker', lambda spec: worker_class(replace(spec, transport='tcp')))
+    code = smoke.main(['--profile','cpu','--model',str(model),
         '--executable',str(executable),'--output',str(output),
-        '--expected-fingerprint','b11552-3144c167ef'], capture_output=True,text=True,timeout=20,
-        env={**os.environ,'PYTHONPATH':str(SCRIPT.parents[1]/'src'),'STUB_ROOT':str(root),
-             'STUB_BUILD':'different-build','TLLAMA_RUNTIME_VERSION_POLICY':'warn'})
-    assert run.returncode == 1, run.stdout + run.stderr
+        '--expected-fingerprint','b11552-3144c167ef', '--load-timeout','5','--request-timeout','5'])
+    assert code == 1, capsys.readouterr()
     raw = [json.loads(line) for line in (output/'raw.jsonl').read_text().splitlines()]
-    assert raw[-1]['stage'] == 'error' and 'Expected runtime' in raw[-1]['error']
+    assert raw[-1]['stage'] == 'error' and 'Unsupported runtime fingerprint' in raw[-1]['error']
     assert any(r['stage'] == 'closed' and r['directory_removed'] for r in raw)
     requests = [json.loads(line) for line in (root/'requests').read_text().splitlines()]
     assert not any(r['path'] in {'/completion','/v1/chat/completions'} for r in requests)
+
+
+@pytest.mark.parametrize('expected', [None, 'b11552-ec2797836f', 'candidate'])
+def test_capture_pin_uses_shared_startup_policy(tmp_path, monkeypatch, expected):
+    from argparse import Namespace
+    monkeypatch.setenv('TLLAMA_RUNTIME_VERSION_POLICY', 'warn')
+    args = Namespace(profile='cpu', model=tmp_path/'model.gguf', mmproj=None, ctx=2048,
+        gpu_layers=1, expected_fingerprint=expected, executable=None, device='none',
+        type_k=None, type_v=None, flash_attn='on', memory_tensor_diagnostics=0,
+        load_timeout=5, request_timeout=5)
+    launch = smoke.launch_spec(args)
+    assert launch.version_policy == ('strict' if expected is not None else 'warn')
+    assert launch.expected_runtime_fingerprint == expected
+    if expected is not None:
+        assert launch.accepted_runtime_fingerprints == {expected}

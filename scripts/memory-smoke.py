@@ -37,8 +37,9 @@ def launch_spec(args):
     return WorkerLaunchSpec(
         model=args.model.expanduser().resolve(),
         executable=args.executable.expanduser().resolve() if args.executable else config.runtime_executable,
-        version_policy=config.runtime_version_policy,
+        version_policy="strict" if args.expected_fingerprint is not None else config.runtime_version_policy,
         runtime_fingerprint=args.expected_fingerprint or RUNTIME_FINGERPRINT,
+        expected_runtime_fingerprint=args.expected_fingerprint,
         device="none" if cpu else args.device,
         n_gpu_layers=0 if cpu else args.gpu_layers if args.profile == "partial" else -1,
         n_ctx=args.ctx, mmproj=args.mmproj.expanduser().resolve() if vision else None,
@@ -264,8 +265,6 @@ async def exercise(args, spec, emit):
         emit("ready", pid=worker.pid, fingerprint=worker.runtime_fingerprint, argv=worker.command,
              context=worker.props["default_generation_settings"]["n_ctx"],
              modalities=worker.props.get("modalities"))
-        if args.expected_fingerprint is not None and worker.runtime_fingerprint != args.expected_fingerprint:
-            raise WorkerError(f"Expected runtime {args.expected_fingerprint}, got {worker.runtime_fingerprint}")
         await capture("memory-ready")
         response = await worker.chat({"messages": [{"role": "user", "content": "Say hello briefly."}],
                                      "reasoning_effort": "none", "max_tokens": 32, "temperature": 0})

@@ -17,12 +17,13 @@ from typing import AsyncIterator, Mapping, Any
 
 import httpx
 
-from tllama.worker_config import RUNTIME_FINGERPRINT, SUPPORTED_RUNTIME_FINGERPRINTS, WorkerLaunchSpec
+from tllama.worker_config import WorkerLaunchSpec
+from tllama.runtime_fingerprint import evaluate_runtime_fingerprint, RuntimeFingerprintMismatch
 from tllama.worker_ipc import WorkerCredentials, runtime_directory
 from tllama.native_memory import NativeMemory
 from tllama.native_memory_api import MemoryReportError, NativeMemoryReport, UnsupportedMemorySchema
 from tllama.native_telemetry import MemoryTelemetry
-from tllama.decision_contract import DECISION_RUNTIME, prepare_decision_request, validate_decision_response
+from tllama.decision_contract import prepare_decision_request, validate_decision_response
 
 
 logger = logging.getLogger(__name__)
@@ -239,14 +240,12 @@ class NativeWorker:
             observed = props.get("build_info")
             self.runtime_fingerprint = observed if isinstance(observed, str) and observed else None
             self.memory.identify_runtime(self.runtime_fingerprint)
-            supported = ({DECISION_RUNTIME} if self.spec.decision_type is not None
-                         else {self.spec.runtime_fingerprint} if self.spec.runtime_fingerprint != RUNTIME_FINGERPRINT
-                         else SUPPORTED_RUNTIME_FINGERPRINTS)
-            if self.runtime_fingerprint not in supported:
-                if self.spec.version_policy == "strict":
-                    raise WorkerProtocolError(f"Unsupported runtime fingerprint: {self.runtime_fingerprint!r}")
-                logger.warning("Unverified native runtime fingerprint %r; continuing with version policy warn",
-                               self.runtime_fingerprint)
+            try:
+                evaluate_runtime_fingerprint(self.runtime_fingerprint,
+                    expected_fingerprints=self.spec.accepted_runtime_fingerprints,
+                    policy=self.spec.version_policy, context=self.spec.mode)
+            except RuntimeFingerprintMismatch as exc:
+                raise WorkerProtocolError(str(exc)) from exc
             if (props.get("model_alias") != self.spec.alias
                     or type(props.get("total_slots")) is not int or props["total_slots"] != 1):
                 raise WorkerProtocolError("Native alias/slot configuration differs from the launch")

@@ -33,6 +33,7 @@ reference = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = reference
 spec.loader.exec_module(reference)
 require = reference.require
+AUDITED_FINGERPRINT = 'b11552-3144c167ef'
 PATH = '/v1/systemone'
 MODELS = (reference.MODEL, reference.MODELS[1], reference.MODELS[2])
 
@@ -221,6 +222,9 @@ async def phase(args, config, model, definition, item, controls, emit, notes, *,
     workers, results, ok, command = [], {}, True, None
     kind = item['decision_type']
     def factory(launch):
+        expected_build = args.expected_fingerprint or AUDITED_FINGERPRINT
+        launch = replace(launch, version_policy='strict', runtime_fingerprint=expected_build,
+                         expected_runtime_fingerprint=expected_build, transport=args.transport)
         worker = reference.ProbeWorker(reference.probe_launch(launch, args)) if native else NativeWorker(launch)
         workers.append(worker)
         return worker
@@ -267,7 +271,6 @@ async def phase(args, config, model, definition, item, controls, emit, notes, *,
                         lambda stage, **values: emit('cold-start-comparison', **values), notes, 'native-vs-public:cold-load')
             async with manager.acquire_native_model(model, keep_alive=-1, operation='decision') as lease:
                 worker, pid, generation = lease.worker, lease.worker.pid, lease.generation
-                require(worker.runtime_fingerprint == 'b11552-3144c167ef', 'Audited native b11552-3144c167ef required')
                 models = await reference.ProbeWorker.models(worker)
                 require(isinstance(models, dict) and len(models.get('data', [])) == 1
                         and models['data'][0].get('architecture', {}).get('output_modalities') == ['decisions'],
@@ -393,6 +396,9 @@ async def exercise_model(args, model, emit):
         emit('diagnostic-definition', path=str(definition), toml=text, context=ctx,
              omitted_sections=['mmproj', 'template', 'sampling', 'system', 'fim'])
         overrides = {k: v for k, v in config.runtime_overrides.items() if k not in {'draft_n_max', 'spm_infill'}}
+        if args.device is not None:
+            overrides.update(device=args.device, n_gpu_layers=0 if args.device == 'none' else -1,
+                             offload_kqv=args.device != 'none', op_offload=args.device != 'none')
         config = replace(config, keep_alive=-1, max_loaded_models=1, memory_source='native', memory_compare=False,
                          runtime_overrides=overrides)
         controls = cases(item['decision_type'], item)
@@ -430,8 +436,12 @@ def replace_args(args, **values):
 
 
 async def exercise(args, emit):
-    emit('diagnostic-version', version=1, checkpoint='0069', models=args.model, public_api='tcp',
-         mode='text_decision', sdk_method='not_standard', native_early_compute_stop='unknown')
+    emit('diagnostic-version', version=2 if args.expected_fingerprint else 1,
+         checkpoint='0126' if args.expected_fingerprint else '0069', models=args.model, public_api='tcp',
+         mode='text_decision', sdk_method='not_standard', native_early_compute_stop='unknown',
+         expected_fingerprint=args.expected_fingerprint or AUDITED_FINGERPRINT,
+         candidate_opt_in=args.expected_fingerprint is not None, device=args.device,
+         native_transport=args.transport, production_allowlist_changed=False, fingerprint_policy='strict')
     ok, observations = True, []
     for index, model in enumerate(args.model):
         output = args.output / f'model-{index}'
@@ -454,6 +464,9 @@ def main(argv=None):
     parser.add_argument('--model', action='append', help='Existing registered reference; repeat for sequential runs')
     parser.add_argument('--models-dir', type=Path)
     parser.add_argument('--executable', type=Path)
+    parser.add_argument('--expected-fingerprint', help='Explicit diagnostic candidate; production Decision allowlist stays unchanged')
+    parser.add_argument('--device', help='Explicit diagnostic placement, e.g. Vulkan0 or none')
+    parser.add_argument('--transport', choices=('uds', 'tcp'), default='uds')
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--ctx', type=int, help='Default: Laya 1024, Nimble/Clef 2048')
     parser.add_argument('--load-timeout', type=float, default=600)
@@ -463,6 +476,10 @@ def main(argv=None):
     parser.add_argument('--rtol', type=float, default=1e-3)
     args = parser.parse_args(argv)
     args.model = args.model or list(MODELS)
+    for name in ('expected_fingerprint', 'device'):
+        value = getattr(args, name)
+        if value is not None and (not value.strip() or value != value.strip()):
+            parser.error('--' + name.replace('_', '-') + ' must be nonblank without surrounding whitespace')
     if any(not model.strip() for model in args.model) or len(set(args.model)) != len(args.model):
         parser.error('--model must be nonblank and unique')
     if args.ctx is not None and not 512 <= args.ctx <= 4096:

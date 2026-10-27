@@ -100,7 +100,7 @@ def pin_definition(definition, args):
         raise WorkerError('Decision requires separate qualification')
     if resolved.launch.mmproj is not None:
         raise WorkerError('Use a text-only model definition without a projector for this qualification')
-    launch = replace(resolved.launch, runtime_fingerprint=args.expected_fingerprint,
+    launch = replace(resolved.launch, runtime_fingerprint=args.expected_fingerprint, expected_runtime_fingerprint=args.expected_fingerprint,
                      version_policy='strict', transport=args.transport,
                      memory_source='native', memory_compare=True, memory_tensor_diagnostics=4096)
     return replace(definition, resolved=replace(resolved, launch=launch))

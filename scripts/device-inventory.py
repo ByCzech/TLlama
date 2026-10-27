@@ -15,6 +15,7 @@ from uuid import uuid4
 from tllama.device_inventory import (AUDITED_RUNTIME, VISIBILITY_ENV, discovery_environment,
     parse_device_list, pci_inventory, run_probe, runtime_fingerprint)
 from tllama.worker_config import DEFAULT_EXECUTABLE
+from tllama.runtime_fingerprint import evaluate_runtime_fingerprint
 
 
 def main(argv=None):
@@ -77,8 +78,9 @@ def main(argv=None):
                 if name == 'version':
                     report['runtime_fingerprint'] = runtime_fingerprint(probe.stdout, probe.stderr)
                     report['runtime_audited'] = report['runtime_fingerprint'] == AUDITED_RUNTIME
-                    if report['runtime_fingerprint'] != report['expected_runtime']:
-                        raise ValueError('Native runtime differs from the expected capture fingerprint')
+                    evaluate_runtime_fingerprint(report['runtime_fingerprint'],
+                        expected_fingerprints={report['expected_runtime']}, policy='strict',
+                        context='device inventory capture')
                 else:
                     report['native_inventory'] = parse_device_list(probe.stdout)
                     if report['native_inventory']['status'] != 'complete':
