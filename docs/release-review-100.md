@@ -56,6 +56,38 @@ inspection commands, **29** daemon mapping rows, **23** public route/method pair
 and **67** referenced script/test paths. All 13 TOML examples/fragments passed
 the model parser and owned key/value checks; 6 were complete model definitions.
 
+## Client examples supplement — 0130
+
+The client documentation now adds:
+
+- A README inference example using `import ollama as tllama`, an explicit TLlama
+  host and a linked list of the recipes in the new guide.
+- [Client examples](client-examples.md) for Python `ollama`, `openai`, `requests`,
+  stable `httpx` and `httpx2`, followed by curl and JavaScript.
+- Simple calls and advanced examples for streaming, caller-owned history,
+  asynchronous execution, embeddings, timeouts and error/terminal handling.
+- JavaScript `ollama`/`openai` SDK examples and dependency-free `fetch`, including
+  an incremental UTF-8/NDJSON reader and browser origin guidance. Current OpenAI
+  JavaScript releases require Node.js 22 or later.
+- Index/usage cross-links and official client reference links. These do not
+  expand TLlama's supported routes or its hardware qualification scope.
+
+All Python snippets parsed, JavaScript modules passed `node --check`, and shell
+examples passed `bash -n`. The full documentation passed local link/anchor,
+JSON and TOML syntax checks. Client execution used a local HTTP fixture with
+prepared JSON, NDJSON and SSE responses, not model inference: **54 checks,
+57 HTTP requests**, including HTTP errors, in-stream errors, missing terminals,
+errors after an OpenAI finish choice, and fragmented UTF-8/NDJSON input.
+Both HTTPX variants ran the sync and async recipes; the curl commands ran too.
+
+Fixture versions: Python `ollama` 0.6.3, `openai` 3.40.0, `requests` 2.34.2,
+`httpx` 0.28.1 and `httpx2` 2.16.0; JavaScript `ollama` 0.6.4 and `openai` 7.45.1
+on Node.js 24.22.1. These checks validate client construction, request shapes,
+response parsing and example error paths. They are separate from the existing
+accepted inference/SDK captures and do not certify every SDK version or browser.
+This supplement changes Markdown only; no new GPU capture, pytest run or native
+rebuild is required.
+
 ## Remaining release decisions
 
 The 0129 supplement contains the following documentation changes:

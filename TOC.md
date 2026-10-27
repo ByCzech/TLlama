@@ -13,6 +13,8 @@ original build identities and evidence.
 - [Packages and platform roadmap](docs/distribution.md): Debian runtime packages,
   application installation and planned Linux/Windows/macOS builds/installers.
 - [Usage and client integration](docs/usage.md).
+- [Client examples: Python, curl and JavaScript](docs/client-examples.md): basic
+  and advanced SDK/HTTP calls, streaming, async, history and errors.
 - [Systemd installation and service permissions](docs/systemd.md).
 
 ## Configuration and model management

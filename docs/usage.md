@@ -4,6 +4,8 @@ Start `tllamad`, then select a registered model from `tllama list`.
 The default Ollama-compatible base URL is `http://127.0.0.1:54800`;
 OpenAI-compatible clients use `http://127.0.0.1:54800/v1`.
 The [route inventory](api-compatibility.md) defines the supported contracts.
+For copyable basic and advanced recipes, see [client examples](client-examples.md):
+Python `ollama`, `openai`, `requests`, `httpx`/`httpx2`, curl and JavaScript.
 
 ## TLlama client
 
@@ -78,9 +80,9 @@ SDKs are optional clients, not TLlama inference dependencies. Native diagnostic
 scripts that exercise SDK paths need them in the interpreter running the script.
 
 ```python
-import ollama
+import ollama as tllama
 
-client = ollama.Client(host="http://127.0.0.1:54800")
+client = tllama.Client(host="http://127.0.0.1:54800", timeout=300.0)
 response = client.chat(
     model="MODEL",
     messages=[{"role": "user", "content": "Explain GGUF in one sentence."}],

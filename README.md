@@ -78,6 +78,35 @@ Bare `tllama` shows client help. `tllamad` starts the foreground server.
 From a checkout, use `python -m tllama` and `python -m tllama.daemon`.
 The default listener is `127.0.0.1:54800`.
 
+## Inference from Python
+
+Install the optional client library with `python -m pip install ollama`, start
+`tllamad` and replace `MODEL` with a registered name from `tllama list`:
+
+```python
+import ollama as tllama
+
+client = tllama.Client(host="http://127.0.0.1:54800", timeout=300.0)
+response = client.chat(
+    model="MODEL",
+    messages=[{"role": "user", "content": "Explain GGUF in one sentence."}],
+    stream=False,
+)
+print(response.message.content)
+```
+
+The alias names the compatible client; inference runs in TLlama. No separate
+Ollama daemon is needed. The explicit host selects TLlama's port.
+
+See [client examples](docs/client-examples.md) for:
+
+- **Python `ollama`:** basic chat, streaming, conversation history and async calls.
+- **Python `openai`:** Chat Completions, async streaming and embeddings.
+- **Python `requests`, `httpx` and `httpx2`:** direct JSON requests, streaming,
+  timeouts and error handling.
+- **curl:** model listing, chat, generation and both streaming wire formats.
+- **JavaScript:** the `ollama` and `openai` libraries, plus dependency-free `fetch`.
+
 ## Configure the daemon
 
 ```sh
