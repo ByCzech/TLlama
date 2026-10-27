@@ -1,3 +1,9 @@
+tllama (1.0.0-1) unstable; urgency=medium
+
+  * Release TLlama 1.0.0.
+
+ -- NemaChybu team APT archive <maintainers@nemachybu.cz>  Tue, 27 Oct 2026 18:51:32 +0100
+
 tllama (1.0.0~rc1-1) unstable; urgency=medium
 
   * Initial Debian packaging of the TLlama client and daemon.
