@@ -12,7 +12,7 @@ from pathlib import Path
 import tempfile
 from uuid import uuid4
 
-from tllama.device_inventory import (AUDITED_RUNTIME, VISIBILITY_ENV, discovery_environment,
+from tllama.device_inventory import (AUDITED_RUNTIME, AUDITED_RUNTIME_FINGERPRINTS, VISIBILITY_ENV, discovery_environment,
     parse_device_list, pci_inventory, run_probe, runtime_fingerprint)
 from tllama.worker_config import DEFAULT_EXECUTABLE
 from tllama.runtime_fingerprint import evaluate_runtime_fingerprint
@@ -50,6 +50,7 @@ def main(argv=None):
               'captured_at': datetime.now(timezone.utc).isoformat(),
               'mode': 'read_only_discovery', 'executable': str(executable),
               'audited_runtime': AUDITED_RUNTIME, 'runtime_fingerprint': None,
+              'audited_runtime_fingerprints': sorted(AUDITED_RUNTIME_FINGERPRINTS),
               'expected_runtime': args.expected_fingerprint or AUDITED_RUNTIME, 'runtime_audited': False,
               'selector_scope': 'this_executable_and_child_environment_at_capture',
               'visibility_environment': {k: environment[k] for k in sorted(VISIBILITY_ENV) if k in environment},
@@ -77,7 +78,7 @@ def main(argv=None):
                     raise ValueError(name + ': native probe failed')
                 if name == 'version':
                     report['runtime_fingerprint'] = runtime_fingerprint(probe.stdout, probe.stderr)
-                    report['runtime_audited'] = report['runtime_fingerprint'] == AUDITED_RUNTIME
+                    report['runtime_audited'] = report['runtime_fingerprint'] in AUDITED_RUNTIME_FINGERPRINTS
                     evaluate_runtime_fingerprint(report['runtime_fingerprint'],
                         expected_fingerprints={report['expected_runtime']}, policy='strict',
                         context='device inventory capture')

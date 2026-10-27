@@ -10,12 +10,14 @@ from typing import Mapping, Any
 
 from tllama.native_cli import runtime_cli_args, mmproj_cli_args
 from tllama.native_params import POOLING_TYPES, freeze_values, kv_type_name
-from tllama.decision_contract import DECISION_RUNTIME, DECISION_TYPES
+from tllama.decision_contract import SUPPORTED_DECISION_RUNTIME_FINGERPRINTS, DECISION_TYPES
 from tllama.backend_policy import DEFAULT_BACKEND_PRIORITY, backend_priority
 
 
-RUNTIME_FINGERPRINT = "b11552-ec2797836f"
-SUPPORTED_RUNTIME_FINGERPRINTS = frozenset({RUNTIME_FINGERPRINT, "b11552-d1570abd3d", "b11552-3144c167ef"})
+# Reviewed 0.7.0 captures and limitations: docs/runtime-audit-070.md.
+RUNTIME_FINGERPRINT = "b11850-0e9433bfd3"
+SUPPORTED_RUNTIME_FINGERPRINTS = frozenset({RUNTIME_FINGERPRINT, "b11552-ec2797836f",
+                                         "b11552-d1570abd3d", "b11552-3144c167ef"})
 DEFAULT_EXECUTABLE = Path("/usr/lib/tllama/server/tllama-server")
 _OWNED_ENV = {"GGML_BACKEND_PATH", "MTMD_BACKEND_DEVICE", "LLAMA_API_KEY"}
 
@@ -69,7 +71,7 @@ class WorkerLaunchSpec:
         if self.expected_runtime_fingerprint is not None:
             return frozenset({self.expected_runtime_fingerprint})
         if self.decision_type is not None:
-            return frozenset({DECISION_RUNTIME})
+            return SUPPORTED_DECISION_RUNTIME_FINGERPRINTS
         # Preserve the existing custom launch-field behavior for callers that
         # predate explicit pins. Normal production launches use the audit set.
         if self.runtime_fingerprint != RUNTIME_FINGERPRINT:

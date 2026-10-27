@@ -64,9 +64,11 @@ This does not isolate SDK plugins. Installed plugin loading and system
 alternatives retain their current packaging behavior; do not switch alternatives
 per request or interpret `GGML_BACKEND_PATH` as an SDK selection override.
 
-The default native fingerprint is `b11552-ec2797836f`; additional audited builds
+The default native fingerprint is `b11850-0e9433bfd3`; additional audited builds
 are listed in `worker_config.SUPPORTED_RUNTIME_FINGERPRINTS`. New builds require
 confirming protocol/CLI compatibility under the configured version policy.
+Current feature and hardware audit boundaries are in
+[runtime-audit-070.md](runtime-audit-070.md); Decision has its own audit set.
 An executable alone is not proof of usable kernels on every discovered device.
 
 ## Lifecycle and transport

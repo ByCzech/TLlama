@@ -28,7 +28,7 @@ from test_native_fim import write_vocab
 
 SCRIPT = Path(__file__).parents[1] / 'scripts' / 'functional-qualification-smoke.py'
 smoke = runpy.run_path(str(SCRIPT))
-BUILD = 'b11850-0e9433bfd3'
+BUILD = 'b99999-deadbeef'
 
 
 def arguments(tmp_path, profile='tools', *extra):

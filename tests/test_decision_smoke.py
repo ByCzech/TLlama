@@ -120,8 +120,8 @@ def run_reference(tmp_path, payload, mode, ok, review, *, kind='laya'):
                '--models-dir', str(models.parent), '--executable', str(executable), '--output', str(output)]
     environment = {**os.environ, 'PYTHONPATH': str(SCRIPT.parents[1] / 'src'), 'STUB_ROOT': str(root),
         'STUB_DECISION': mode, 'STUB_DECISION_KIND': kind,
-        'STUB_BUILD': 'b11552-3144c167ef', 'STUB_PUBLIC_CTX': '1024'}
-    memory = dict(payload, runtime_fingerprint='b11552-3144c167ef')
+        'STUB_BUILD': smoke.DECISION_RUNTIME, 'STUB_PUBLIC_CTX': '1024'}
+    memory = dict(payload, runtime_fingerprint=smoke.DECISION_RUNTIME)
     (root / 'memory-report').write_text(json.dumps(memory))
     run = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=25)
     assert run.returncode == (0 if ok else 1), run.stdout + run.stderr

@@ -1,5 +1,11 @@
 # Shared runtime fingerprint policy and Decision qualification — 0126 revised
 
+The following describes the 0126 preparation checkpoint. The subsequent real
+MI50 Laya/Nimble/Clef capture passed; 0127 promotes the reviewed identity and
+retains the older audited build. See [runtime-audit-070.md](runtime-audit-070.md)
+for current audit sets, measured scope and remaining release work. Explicit
+diagnostic pins still override these audit sets and require an exact match.
+
 This revision replaces the original, unapplied 0126. Apply it directly after
 0124; 0125 is a capture runner, not a patch. Do not apply both versions of 0126.
 

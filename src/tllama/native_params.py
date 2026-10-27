@@ -1,4 +1,4 @@
-"""TLlama configuration vocabulary; embedded MTP verified at b11552-3144c167ef.
+"""TLlama configuration vocabulary; embedded MTP audited in runtime-audit-070.md.
 
 These are TLlama contracts, not a reflection of a Python binding or every
 option the native CLI happens to expose. Update with the compatibility matrix.

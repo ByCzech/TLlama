@@ -14,8 +14,10 @@ The GGUF's `<arch>.decision.type` selects the frozen worker `decision_type`.
 There is no new TOML mode flag or file/model-name heuristic. Current integrated
 pairs are modern-bert/laya, qwen35/nimble and clef/clef. Native must also report
 the private alias and `architecture.output_modalities: ["decisions"]` at startup.
-With `TLLAMA_RUNTIME_VERSION_POLICY=strict`, Decision requires the audited
-runtime **b11552-3144c167ef**. The default `warn` policy permits other builds
+With `TLLAMA_RUNTIME_VERSION_POLICY=strict`, Decision accepts the independently
+audited runtimes **b11850-0e9433bfd3** and **b11552-3144c167ef**. The 0.7.0
+default and its MI50/Vulkan scope are recorded in [runtime-audit-070.md](runtime-audit-070.md).
+The default `warn` policy permits other builds
 with a warning, while retaining the live alias/output-modality checks and all
 typed request/response, probability, score, confidence and usage validation.
 A build fingerprint records tested provenance, not an API capability version.

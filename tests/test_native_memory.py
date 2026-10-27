@@ -1,8 +1,28 @@
 """Pinned load allocations, uncertainty, and bounded native memory observations."""
 
+import json
+from pathlib import Path
+
 import pytest
 
 from tllama.native_memory import NativeMemory
+
+
+CAPTURES = Path(__file__).with_name('fixtures') / 'native-runtime-070'
+CAPTURE_LOGS = json.loads((CAPTURES / 'logs.json').read_text())
+
+
+@pytest.mark.parametrize('case', CAPTURE_LOGS, ids=lambda case: case['host'] + '-' + case['profile'])
+def test_reviewed_070_load_logs_keep_exact_inventory_and_coverage(case):
+    parser = NativeMemory('b11850-0e9433bfd3', projector=case['profile'] == 'vision')
+    for line in (CAPTURES / case['fixture']).read_text().splitlines():
+        parser.observe(line)
+    result = parser.snapshot()
+    assert result.pop('runtime_verified') is True
+    assert result == case['expected']
+    # Verification of the grammar never invents the missing projector buffer.
+    assert (result['allocated_bytes'] is None) == (case['profile'] == 'vision')
+    assert result['physical_residency_bytes'] is None
 
 
 MIB = 1024**2

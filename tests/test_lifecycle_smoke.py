@@ -26,7 +26,7 @@ module_spec = importlib.util.spec_from_file_location('lifecycle_smoke', SCRIPT)
 smoke = importlib.util.module_from_spec(module_spec)
 sys.modules[module_spec.name] = smoke
 module_spec.loader.exec_module(smoke)
-BUILD = 'b11850-0e9433bfd3'
+BUILD = 'b99999-deadbeef'
 
 
 def args(tmp_path, *extra):

@@ -1,0 +1,11 @@
+load_tensors: offloaded 39/42 layers to GPU
+load_tensors:   CPU_Mapped model buffer size =  2026.82 MiB
+load_tensors:        ROCm0 model buffer size = 19253.29 MiB
+llama_context:  ROCm_Host  output buffer size =     0.95 MiB
+llama_kv_cache:      ROCm0 KV buffer size =    22.50 MiB
+llama_memory_recurrent:        CPU RS buffer size =     6.28 MiB
+llama_memory_recurrent:      ROCm0 RS buffer size =    56.53 MiB
+sched_reserve:      ROCm0 compute buffer size =   232.00 MiB
+sched_reserve:        CPU compute buffer size =    20.00 MiB
+sched_reserve:  ROCm_Host compute buffer size =    46.27 MiB
+srv  load_model_i: initializing, n_slots = 1, n_ctx_slot = 4096, kv_unified = 'false'

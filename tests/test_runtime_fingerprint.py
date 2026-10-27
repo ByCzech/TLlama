@@ -6,14 +6,15 @@ from pathlib import Path
 
 import pytest
 
-from tllama.decision_contract import DECISION_RUNTIME
+from tllama.decision_contract import SUPPORTED_DECISION_RUNTIME_FINGERPRINTS
 from tllama.runtime_fingerprint import evaluate_runtime_fingerprint, RuntimeFingerprintMismatch
 from tllama.worker import WorkerStartupError
 from tllama.worker_config import WorkerLaunchSpec, RUNTIME_FINGERPRINT, SUPPORTED_RUNTIME_FINGERPRINTS
 from test_native_worker import factory, records
 
 
-BUILD = 'b11850-0e9433bfd3'
+BUILD = 'b99999-deadbeef'
+LEGACY_DECISION_BUILD = 'b11552-3144c167ef'
 MODES = ['generation', 'embedding', 'laya', 'nimble', 'clef']
 
 
@@ -51,14 +52,14 @@ def test_invalid_policy_inputs_fail_without_warning(expected, policy, caplog):
 @pytest.mark.parametrize('mode', MODES)
 def test_explicit_pin_overrides_only_this_launch_in_every_mode(mode):
     original = launch(mode)
-    expected = frozenset({DECISION_RUNTIME}) if mode in MODES[2:] else SUPPORTED_RUNTIME_FINGERPRINTS
+    expected = SUPPORTED_DECISION_RUNTIME_FINGERPRINTS if mode in MODES[2:] else SUPPORTED_RUNTIME_FINGERPRINTS
     assert original.accepted_runtime_fingerprints == expected
     # Also exercise pinning to the default build: no magic-default sentinel.
     for fingerprint in (BUILD, RUNTIME_FINGERPRINT):
         pinned = replace(original, expected_runtime_fingerprint=fingerprint, version_policy='strict')
         assert pinned.accepted_runtime_fingerprints == {fingerprint}
         assert original.accepted_runtime_fingerprints == expected
-    assert BUILD not in SUPPORTED_RUNTIME_FINGERPRINTS and DECISION_RUNTIME != BUILD
+    assert BUILD not in SUPPORTED_RUNTIME_FINGERPRINTS | SUPPORTED_DECISION_RUNTIME_FINGERPRINTS
 
 
 @pytest.mark.parametrize('value', ['', ' ', ' build', 'build ', 'a\0b', 1, False])
@@ -98,7 +99,7 @@ async def test_real_worker_unknown_build_respects_the_same_policy(factory, mode,
 
 @pytest.mark.parametrize('factory', ['tcp'], indirect=True)
 @pytest.mark.parametrize('mode', MODES)
-@pytest.mark.parametrize('observed,accepted', [(BUILD, True), (DECISION_RUNTIME, False), (None, False)])
+@pytest.mark.parametrize('observed,accepted', [(BUILD, True), (LEGACY_DECISION_BUILD, False), (None, False)])
 async def test_real_worker_strict_exact_pin_precedes_all_feature_requests(factory, mode, observed, accepted):
     env = {'STUB_BUILD': observed or BUILD}
     if mode in MODES[2:]:
@@ -115,3 +116,50 @@ async def test_real_worker_strict_exact_pin_precedes_all_feature_requests(factor
         assert worker.process.returncode is not None and not worker.runtime_directory.exists()
         assert not any(r['path'] in {'/v1/systemone', '/v1/chat/completions', '/embeddings'}
                        for r in records(root, 'requests'))
+
+
+@pytest.mark.parametrize('factory', ['tcp'], indirect=True)
+@pytest.mark.parametrize('mode', MODES)
+@pytest.mark.parametrize('observed', ['b11850-0e9433bfd3', LEGACY_DECISION_BUILD])
+async def test_reviewed_and_legacy_builds_start_without_warning_under_strict(factory, mode, observed, caplog):
+    env = {'STUB_BUILD': observed}
+    if mode in MODES[2:]:
+        env.update(STUB_DECISION='normal', STUB_DECISION_KIND=mode)
+    worker, root = factory(embedding=mode == 'embedding',
+        decision_type=mode if mode in MODES[2:] else None,
+        version_policy='strict', environment=env, memory_source='log')
+    with caplog.at_level(logging.WARNING):
+        async with worker:
+            if mode in MODES[2:]:
+                result = await worker.decision({'state': 'charged twice', 'questions': {
+                    'q': {'type': 'noul', 'instructions': 'Is the customer angry?'}}})
+                assert result['answers']
+            else:
+                assert await worker.tokenize('reviewed runtime remains usable')
+    assert not any('runtime fingerprint' in r.getMessage() for r in caplog.records)
+    assert worker.process.returncode is not None and not worker.runtime_directory.exists()
+
+
+@pytest.mark.parametrize('factory', ['tcp'], indirect=True)
+@pytest.mark.parametrize('mode', MODES)
+async def test_reviewed_identity_does_not_bypass_live_protocol_checks(factory, mode):
+    env = {'STUB_BUILD': 'b11850-0e9433bfd3'}
+    if mode in MODES[2:]:
+        env.update(STUB_DECISION='no-decisions', STUB_DECISION_KIND=mode)
+    worker, root = factory('normal' if mode in MODES[2:] else 'wrong-alias',
+        embedding=mode == 'embedding', decision_type=mode if mode in MODES[2:] else None,
+        version_policy='strict', environment=env)
+    with pytest.raises(WorkerStartupError):
+        await worker.start()
+    assert worker.process.returncode is not None and not worker.runtime_directory.exists()
+    assert not any(r['path'] in {'/v1/systemone', '/v1/chat/completions', '/embeddings'}
+                   for r in records(root, 'requests'))
+
+
+@pytest.mark.parametrize('mode', MODES[2:])
+@pytest.mark.parametrize('observed', ['b11552-ec2797836f', 'b11552-d1570abd3d'])
+def test_general_runtime_evidence_does_not_admit_an_unaudited_decision_build(mode, observed):
+    assert observed in SUPPORTED_RUNTIME_FINGERPRINTS
+    with pytest.raises(RuntimeFingerprintMismatch):
+        evaluate_runtime_fingerprint(observed, expected_fingerprints=launch(mode).accepted_runtime_fingerprints,
+                                     policy='strict')

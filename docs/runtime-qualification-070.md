@@ -1,5 +1,15 @@
 # Native 0.7.0 qualification captures (0118–0121)
 
+**Current status after 0126/0127:** the captures described here have been
+reviewed, including later embeddings and Decision captures. The user's full
+suite after 0126 passed **4047 tests, 2 warnings**. Current promoted audit sets,
+hardware/feature scope and unresolved limits are in
+[runtime-audit-070.md](runtime-audit-070.md). The preparation checkpoints below
+retain their original scope; their statements about unchanged allowlists
+describe those earlier patches, not the current policy. Completed captures
+need not be repeated solely because the audit identity has been promoted.
+The full documentation review remains required before 1.0.0.
+
 Target: `b11850-0e9433bfd3`, native commit
 `0e9433bfd33d8cdb194285b70c0d421d39135df2`, Debian package
 `0.7.0~dev+b11850.1-1`. TLlama integration through 0120 passed the user's full

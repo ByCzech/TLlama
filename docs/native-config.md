@@ -1,6 +1,9 @@
 # Native configuration
 
-Runtime fingerprint: **b11552-ec2797836f**. The native configuration modules do
+Default runtime fingerprint: **b11850-0e9433bfd3**; previously supported builds
+remain accepted. See [runtime-audit-070.md](runtime-audit-070.md) for the
+independent feature audit sets and actual tested configurations.
+The native configuration modules do
 not import llama-cpp-python. Their vocabulary is TLlama-owned and pinned to the
 parser/protocol; an upstream option does not automatically become a TLlama API.
 
@@ -139,8 +142,9 @@ checks in the following integration milestones.
 
 Sources: pinned `common/arg.cpp` (flags/CSV/KV types), `include/llama.h` and
 `ggml/include/ggml.h` (enums), `tools/server/server-common.cpp` and
-`tools/server/server-task.cpp` (request/response protocol). Compatibility stays
-tied to fingerprint b11552-ec2797836f.
+`tools/server/server-task.cpp` (request/response protocol). The original
+configuration checkpoint inspected b11552-ec2797836f; current compatibility
+admission follows the reviewed sets in runtime-audit-070.md.
 
 ModelManager now resolves these settings for owned worker generations; see
 [native-residency.md](native-residency.md) for leases, capacity, TTL and the

@@ -22,6 +22,7 @@ from starlette.requests import ClientDisconnect
 
 from tllama.backend import ModelManager
 from tllama.daemon_config import load_daemon_config
+from tllama.decision_contract import DECISION_RUNTIME
 from tllama.native_config import _plain
 from tllama.worker import NativeWorker, WorkerError, WorkerRequestError
 
@@ -33,7 +34,7 @@ reference = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = reference
 spec.loader.exec_module(reference)
 require = reference.require
-AUDITED_FINGERPRINT = 'b11552-3144c167ef'
+AUDITED_FINGERPRINT = DECISION_RUNTIME
 PATH = '/v1/systemone'
 MODELS = (reference.MODEL, reference.MODELS[1], reference.MODELS[2])
 

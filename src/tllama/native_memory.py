@@ -13,7 +13,8 @@ from tllama.worker_config import RUNTIME_FINGERPRINT
 
 # Log grammar and the input/staging-buffer placement rule are verified
 # independently of the worker's broader runtime compatibility policy.
-_LOG_RUNTIME_FINGERPRINTS = frozenset({RUNTIME_FINGERPRINT, "b11552-d1570abd3d", "b11552-3144c167ef"})
+_LOG_RUNTIME_FINGERPRINTS = frozenset({"b11552-ec2797836f", "b11552-d1570abd3d",
+                                    "b11552-3144c167ef", "b11850-0e9433bfd3"})
 
 BACKEND_PREFIX = r"[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)*"
 

@@ -20,13 +20,20 @@ overhead. Mixed-backend inference is a subsequent hardware gate.
 ## What is measured
 
 The tool runs two short-lived owned processes sequentially: native `--version`,
-then `--list-devices`. It requires audited build `b11552-3144c167ef` and checks
+then `--list-devices`. By default it requires the exact audited build
+`b11850-0e9433bfd3` and checks
 that executable identity did not change during capture. A separate temporary cwd
 is removed at completion. No model argument or listener configuration is passed.
 Both pipes share a 4 MiB cap; each command has a 30-second deadline, plus bounded
 TERM/KILL cleanup. The owned process group is terminated as needed and the direct
 child is reaped on failure/cancellation; an unreaped child is an explicit failure.
 `--timeout` and `--output-limit` change these bounds. No shell is used.
+
+`--expected-fingerprint` selects another exact identity. Both the current build
+and the historical `b11552-3144c167ef` are independently audited for discovery;
+an exact-match unreviewed candidate still sets `review_required=true`.
+Malformed tables remain failures even for an audited identity. See
+[runtime-audit-070.md](runtime-audit-070.md) for reviewed captures and scope.
 
 `--executable` selects the installed binary; `--pci-root` defaults to Linux
 `/sys/bus/pci/devices`. A repeated `--env NAME=VALUE` can override documented
@@ -42,8 +49,9 @@ the report explicitly does not claim a complete environment fingerprint.
 
 `inventory.json` equals stdout. `version.stdout/.stderr` and
 `devices.stdout/.stderr` retain bounded raw evidence, including startup warnings.
-An existing output path is refused. Exit 0 means the audited native table was
-captured successfully; inspect `review_required` for incomplete PCI evidence.
+An existing output path is refused. Exit 0 means the exactly selected native
+table was captured successfully; inspect `review_required` for unaudited
+candidates or incomplete PCI evidence.
 Exit 1 reports capture/protocol failure; exit 2 is invalid CLI/output. A capture
 can succeed while all physical associations remain unknown by design.
 

@@ -65,7 +65,7 @@ def test_independent_managed_public_comparison_and_owned_lifecycle(tmp_path, pay
     run_comparison(tmp_path, payload, kind, mode, ok, review)
 
 
-def run_comparison(tmp_path, payload, kind, mode, ok, review, count=1, *, build='b11552-3144c167ef', expected=None):
+def run_comparison(tmp_path, payload, kind, mode, ok, review, count=1, *, build='b11850-0e9433bfd3', expected=None):
     root = tmp_path / 'stub'
     root.mkdir()
     (root / 'memory-report').write_text(json.dumps(dict(payload, runtime_fingerprint=build)))
@@ -202,7 +202,15 @@ def test_unintegrated_metadata_starts_no_worker(tmp_path, kind):
 @pytest.mark.parametrize('kind', ['laya', 'nimble', 'clef'])
 def test_candidate_exact_build_independent_managed_public(tmp_path, payload, kind):
     run_comparison(tmp_path, payload, kind, 'normal', True, False,
-                   build='b11850-0e9433bfd3', expected='b11850-0e9433bfd3')
+                   build='b99999-deadbeef', expected='b99999-deadbeef')
+
+
+@pytest.mark.parametrize('observed', ['b11850-0e9433bfd3', 'b11552-3144c167ef'])
+def test_exact_pin_refuses_a_different_reviewed_decision_build(tmp_path, payload, observed):
+    expected = 'b11552-3144c167ef' if observed == 'b11850-0e9433bfd3' else 'b11850-0e9433bfd3'
+    run_comparison(tmp_path, payload, 'laya', 'normal', False, True, build=observed, expected=expected)
+    rows = [json.loads(line) for line in (tmp_path / 'results/raw.jsonl').read_text().splitlines()]
+    assert not any(r['stage'] in {'ready', 'request', 'native-response', 'managed-response'} for r in rows)
 
 
 @pytest.mark.parametrize('expected', [None, 'b11850-0e9433bfd3'])
