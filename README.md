@@ -22,7 +22,9 @@ generation, vision, embedding and Decision models.
 - **Extended AMD support:** the development runtime includes native legacy
   Vega targets `gfx900`, `gfx906` and `gfx90c`, plus architecture-specific
   `gfx1250` fixes for Instinct MI455X. The hardware guide separates these
-  extensions from completed inference qualification and the open HIP mmap issue.
+  extensions from completed inference qualification. Legacy HIP usually needs
+  mmap disabled, or a Vulkan device instead; see the
+  [workaround](docs/hardware.md#legacy-hip-mmap-workaround).
 - **Experimental Instella-MoE:** the patched native runtime adds the converter,
   loader and model graph for `InstellaMoEForCausalLM`, initially
   Instella-MoE-16B-A3B-Think, beyond the reviewed official llama.cpp/Ollama sources.

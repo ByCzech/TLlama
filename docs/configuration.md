@@ -574,6 +574,15 @@ find "$TLLAMA_MODELS/.tllama/metadata-cache" -type f -name '*.json' | head
 
 ---
 
+### Legacy AMD HIP loading is slow or stalls
+
+On HIP targets `gfx900`, `gfx906` and `gfx90c`, mmap usually needs to be disabled
+with `use_mmap = false` in the model's `[runtime]` table. Alternatively, select
+a usable Vulkan device on the host. A probable issue in amdgpu's KFD driver
+path is suspected; this is a workaround, not a confirmed driver fix. See the
+[hardware guide](hardware.md#legacy-hip-mmap-workaround) for profile examples
+and the distinction from the original sparse mmap accounting case.
+
 ### Pull fails with permission denied
 
 Check the actual failing path and the daemon account, including parent-directory

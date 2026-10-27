@@ -121,17 +121,28 @@ It distinguishes project extensions, inherited native features, accepted hardwar
 recipes and planned platform delivery. Applying that supplement remains separate
 from the already-confirmed 0128 source review. Neither patch sets a release
 version or creates a tag.
-The following still need concrete disposition before 1.0.0:
 
-- The open Pull errno 13 case needs the user's actual service-account/path result.
-- Original sparse mmap accounting inflation was not reproduced by simplified
-  captures; it must not be declared fixed from their zero capacity reduction.
-- Legacy gfx900/gfx906/gfx90c HIP mmap investigation and the no-mmap workaround
-  remain separate from accepted MI50/Vulkan and MI100/HIP configurations.
-- FIM reference-model selection and subsequent independent TLlama quality
-  qualification continue separately. Protocol parity does not settle the gate.
-- Final merge/version/package/tag checks follow those decisions; no publication
-  or tag is authorized by this review record alone.
+### Maintainer decisions — 27 October 2026 (0132)
+
+The maintainer has now set the release disposition explicitly:
+
+| Item | Disposition for 1.0.0 | Follow-up |
+|---|---|---|
+| Original sparse mmap accounting inflation | Not reproduced in the reviewed tests; additional reproduction is not a release gate. It is not declared fixed. | Thorough user testing of the new version after release; investigate captured recurrence. |
+| Legacy HIP `gfx900`/`gfx906`/`gfx90c` mmap | Ship with an explicit recommendation to disable mmap, or select Vulkan when available. A probable amdgpu/KFD problem is suspected; no confirmed driver fix is claimed. | Continue driver investigation separately; retain the distinction from accepted MI50/Vulkan and MI100/HIP results. |
+| FIM quality qualification | Comprehensive testing moves after 1.0.0; current protocol evidence and quality limits remain documented. | Select reliable references, run thorough independent tests and issue a corrective release if results require it. |
+| Repository permissions / Pull errno 13 | 0131 fixes repository creation modes. The full user pytest and actual affected-account/path retest remain pending. | Verify the current daemon and correct intended existing `0600` files/directories where needed. |
+
+See [legacy HIP guidance](hardware.md#legacy-hip-mmap-workaround) and
+[FIM follow-up](native-fim.md#100-release-scope-and-follow-up) for user-facing
+instructions. These decisions supersede earlier pending-gate wording; they do
+not change the recorded capture results or claim broader hardware acceptance.
+
+After the operational checks, final merge/ref, version, release-note and tag
+consistency still need checking. Debian application packaging remains the
+separate subsequent workstream described in [development.md](development.md);
+planned installers are not an additional 1.0.0 gate introduced here. No merge,
+tag, package publication or release has been performed by this review record.
 
 The [runtime audit](runtime-audit-070.md) remains authoritative for accepted
 feature/hardware scope. Personal evidence archives and work plans stay outside

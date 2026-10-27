@@ -81,18 +81,27 @@ identity. No model paths, credentials or complete worker logs are added here.
   Content checks passed 0/12 with K/V q4_0 and 2/12 with K/V f16 (one of six
   unique tasks). Model weights remained Q4_K_M. K/V precision affected results;
   neither a model-only nor a TLlama-only root cause has been established.
-  Reference-model selection continues separately before independent TLlama FIM
-  qualification; this audit does not waive that work or decide its release gate.
+  Reference-model selection and comprehensive independent FIM quality testing
+  are scheduled after 1.0.0 by the maintainer's 27 October 2026 decision. They
+  no longer block 1.0.0; a corrective release will follow if results require it.
+  The evidence above is not promoted into a general FIM quality certification.
 - The Qwen tools escaped-key case produced an extra JSON escape layer already
   in native generated XML; TLlama preserved it. Real Ollama reproduced the
   public values. This is retained as a model/prompt/runtime limitation, without
   speculative automatic unescaping in TLlama.
 - The original P100 sparse mmap capacity inflation was not reproduced by the
   reviewed memory profiles. Their zero capacity reduction is not proof that
-  the original case is resolved.
+  the original case is resolved. The maintainer accepted further real-use
+  testing of the new version after release; no additional pre-1.0.0 capture is
+  required for this case and it is not declared fixed.
 - Legacy HIP gfx900/gfx906/gfx90c mmap investigation is separate. The no-mmap
   workaround is not an upstream driver fix or certification of the mmap path.
-  MI50/Vulkan evidence does not qualify MI50/HIP.
+  HIP on these targets usually needs mmap disabled, or Vulkan can be used
+  instead when a usable device is available. A probable amdgpu/KFD issue is
+  suspected, not conclusively confirmed. See the
+  [hardware workaround](hardware.md#legacy-hip-mmap-workaround).
+  MI50/Vulkan evidence does not qualify MI50/HIP; this documented limitation
+  is the accepted 1.0.0 disposition rather than a pending driver-fix gate.
 
 ## Remaining work before 1.0.0
 
@@ -100,16 +109,13 @@ identity. No model paths, credentials or complete worker logs are added here.
 hardware captures need not be repeated solely for the documentation review. Keep new failures and any
 changed native identity separate from the reviewed results above.
 
-**A complete documentation review is required before release.** Review README,
-installation and Debian/service paths, CLI help, server/model configuration and
-precedence, model import/pull, API/SDK contracts, feature limitations, memory
-SIZE/PROCESSOR semantics and troubleshooting against the final code. Distinguish
-historical checkpoint notes from current instructions, verify runnable examples
-and links, and record the review result before preparing the release tag.
-The focused audit documentation in 0127 did not complete that review. The
-subsequent [0128 review record](release-review-100.md) lists corrections and
-validation, with release decisions kept separate.
+The complete source documentation review was performed in 0128 and supplemented
+by 0129/0130 and the 0131 permissions guide. The
+[review record](release-review-100.md) retains the checked scope and validation;
+this audit does not require repeating completed reviews or accepted captures.
 
-Also obtain the status of the open Pull errno 13 case and record a concrete
-release disposition for sparse mmap, legacy ROCm and the separate FIM work.
-Audit promotion does not close these issues or publish/tag a release.
+The remaining operational checks are the full user pytest result after 0131
+and the actual service-account retest of Pull errno 13. Sparse mmap and FIM
+follow-up are scheduled after release; legacy HIP has the documented workaround
+above. Final merge/version/release-note/tag checks follow the operational result.
+These dispositions do not by themselves perform or announce a release.

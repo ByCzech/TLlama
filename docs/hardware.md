@@ -62,12 +62,42 @@ a numerically higher gfx90c value must not select MI100-class MFMA assumptions.
 Modern ROCm support here is a project-maintained deployment extension, not an
 AMD official-support claim for legacy products.
 
-**Current limitation:** legacy HIP mmap loading remains under investigation.
-The maintainer reports `use_mmap = false` as a working workaround; that is not
-an amdgpu/KFD fix and does not certify the mmap path. Apply it only to affected
-model profiles, retaining the rest of their settings. gfx906/gfx90c library
+### Legacy HIP mmap workaround
+
+**For HIP on `gfx900`, `gfx906` and `gfx90c`, disabling mmap is usually
+necessary.** The investigation points to a probable issue in the KFD driver
+path within amdgpu; the driver root cause has not been conclusively confirmed
+or fixed. Mapped model loading can be very slow or appear to stall. The
+maintainer has verified disabling mmap as a working workaround on affected
+hardware; this is not certification of every listed GPU or of the mmap path.
+
+Set the following in the affected model's existing `[runtime]` table, retaining
+its other settings:
+
+```toml
+[runtime]
+use_mmap = false
+```
+
+Alternatively, **use Vulkan instead of HIP** if the installed Vulkan driver
+exposes a usable compute device. Select the actual native device reported on
+that host; for example:
+
+```toml
+[runtime]
+device = "Vulkan0"
+```
+
+These are alternative profile edits, not two tables to paste into one TOML.
+Reload the model after changing its profile. The setting is per model; TLlama
+does not automatically disable mmap for every AMD device. gfx906/gfx90c library
 checks do not qualify all GGML inference, and gfx900 has no completed project
-hardware acceptance. Accepted MI50/Vulkan captures remain a separate result.
+hardware acceptance. Accepted MI50/Vulkan captures remain a separate result;
+the unaffected MI100/gfx908 HIP captures do not settle this legacy driver issue.
+
+This documented workaround is the agreed 1.0.0 disposition. Driver investigation
+continues separately and does not block that release. It is unrelated to the
+original P100 sparse mmap memory-accounting report.
 
 The public packaging main snapshot inspected during this review predates the
 legacy additions. Use the maintained development package series identified

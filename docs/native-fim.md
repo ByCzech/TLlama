@@ -70,6 +70,13 @@ alone does not establish correct code or a model-only root cause. CodeGemma
 protocol and an unsupported Llama control have separate reviewed evidence.
 See [runtime-audit-070.md](runtime-audit-070.md).
 
-Selection of reliable reference models continues separately from TLlama runtime
-qualification. Supported framing is not a general FIM quality guarantee, and
-this documentation does not decide that work's release disposition.
+### 1.0.0 release scope and follow-up
+
+The maintainer's 27 October 2026 decision schedules comprehensive FIM quality
+testing **after 1.0.0**. Reference-model selection and independent public/native
+quality comparisons continue in that follow-up; they are not a gate for 1.0.0.
+If the results identify a TLlama defect, a corrective release will follow as
+needed. Existing protocol evidence remains valid within its documented scope;
+this scheduling decision does not certify generated code or resolve the cause
+of the observed quality limitations. See the
+[release disposition](release-review-100.md#remaining-release-decisions).
