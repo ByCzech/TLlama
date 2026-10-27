@@ -183,6 +183,16 @@ class Capture:
 
 def manager_type(args, capture, module):
     class ProbeWorker(NativeWorker):
+        def __init__(self, *values, **kwargs):
+            super().__init__(*values, **kwargs)
+            self._qualification_close_lock = asyncio.Lock()
+
+        def _body(self, payload, *, chat, stream):
+            body = super()._body(payload, chat=chat, stream=stream)
+            if args.profile == 'fim' and not chat:
+                capture.emit('fim-native-request', pid=self.pid, request=body)
+            return body
+
         async def start(self):
             await super().start()
             self._qualification_started = True
@@ -191,15 +201,17 @@ def manager_type(args, capture, module):
             await capture.memory(self, 'loaded')
 
         async def close(self):
-            # Residency and the older probes may both close; observe only once.
-            if self.state == 'ready' and not getattr(self, '_qualification_closing', False):
-                self._qualification_closing = True
-                try:
-                    await capture.memory(self, 'before-close')
-                finally:
+            # A residency close must not tear down HTTP while another caller
+            # is collecting the final snapshot. Serialize the whole operation.
+            async with self._qualification_close_lock:
+                if self.state == 'ready' and not getattr(self, '_qualification_closing', False):
+                    self._qualification_closing = True
+                    try:
+                        await capture.memory(self, 'before-close')
+                    finally:
+                        await super().close()
+                else:
                     await super().close()
-            else:
-                await super().close()
 
     class QualificationManager(ModelManager):
         def __init__(self, config, **kwargs):

@@ -675,6 +675,10 @@ async def fim_request(reader, writer, path, body):
             content = (ROOT / 'fim-content').read_text()
         if mode == 'semantic-bad':
             content = 'a - b'
+        mismatch = ROOT / 'fim-public-mismatch'
+        if (mismatch.exists() and body.get('cache_prompt') is not False
+                and bool(body.get('stream')) == (mismatch.read_text().strip() == 'stream')):
+            content = 'different native completion'
         stopping_word = ''
         generated = fim_tokenize(content)
         if body.get('logit_bias'):

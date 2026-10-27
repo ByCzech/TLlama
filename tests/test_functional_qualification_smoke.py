@@ -351,3 +351,65 @@ async def test_cancel_recovery_uses_requested_deadline_and_reports_expiry(monkey
     with pytest.raises(WorkerError, match='--request-timeout'):
         await api.request_after_cancel(post, {'model': 'a'}, 0.001)
     assert calls == [600, 0.001]
+
+
+@pytest.mark.parametrize('stream', [False, True])
+def test_fim_reference_mismatch_retains_both_values_requests_and_final_memory(tmp_path, diagnosed, stream):
+    root, models, executable, env, definition = setup_files(tmp_path, diagnosed, 'fim')
+    (root / 'fim-public-mismatch').write_text('stream' if stream else 'nonstream')
+    run = subprocess.run([sys.executable, str(SCRIPT), *arguments(tmp_path, 'fim',
+        '--executable', str(executable), '--transport', 'tcp', '--load-timeout', '5', '--request-timeout', '5')],
+        env=env, capture_output=True, text=True, timeout=45)
+    result = json.loads((tmp_path / 'capture' / 'result.json').read_text())
+    rows = [json.loads(line) for line in (tmp_path / 'capture' / 'raw.jsonl').read_text().splitlines()]
+    assert run.returncode == 1 and not result['protocol_ok']
+    reference = next(row for row in rows if row['stage'] == 'reference')
+    mismatch = next(row for row in rows if row['stage'] == 'completion' and not row['reference_matches'])
+    assert reference['response']['content'] == 'a + b'
+    assert mismatch['content'] == 'different native completion' and mismatch['stream'] is stream
+    native = [row['request'] for row in rows if row['stage'] == 'fim-native-request']
+    assert native[0]['prompt'] == native[-1]['prompt'] == reference['request']['prompt']
+    assert native[0]['cache_prompt'] is False and 'cache_prompt' not in native[-1]
+    public = [row for row in rows if row['stage'] == 'public-response'][-1]
+    assert public['http_status'] == 200 and public['request']['stream'] is stream
+    assert 'different native completion' in public['response']
+    assert any(row['stage'] == 'error' and 'full direct FIM reference (add,' in row['error'] for row in rows)
+    assert all(check['ok'] for check in result['checks'] if check['stage'].startswith('before-close:'))
+    assert any(check['stage'] == 'before-close:http' for check in result['checks'])
+    assert any(row['stage'] == 'worker-cleanup' and row['ok'] for row in rows)
+    assert (models / 'a.toml').read_text() == definition
+
+
+@pytest.mark.parametrize('snapshot_error', [False, True])
+async def test_concurrent_qualification_closes_wait_for_snapshot(tmp_path, monkeypatch, snapshot_error):
+    args = smoke['parser']().parse_args(arguments(tmp_path, 'fim'))
+    started, release = asyncio.Event(), asyncio.Event()
+    calls = []
+    async def memory(worker, stage):
+        calls.append('memory-start')
+        started.set()
+        await release.wait()
+        calls.append('memory-end')
+        if snapshot_error:
+            raise WorkerError('snapshot failed')
+    async def close(worker):
+        calls.append('native-close')
+        worker._state = 'closed'
+    monkeypatch.setattr(smoke['NativeWorker'], 'close', close)
+    capture = SimpleNamespace(memory=memory)
+    Worker = smoke['manager_type'](args, capture, None).Worker
+    worker = object.__new__(Worker)
+    worker.process = None
+    worker._state = 'ready'
+    worker._qualification_close_lock = asyncio.Lock()
+    first = asyncio.create_task(worker.close())
+    await asyncio.wait_for(started.wait(), 2)
+    second = asyncio.create_task(worker.close())
+    await asyncio.sleep(0)
+    assert calls == ['memory-start']
+    release.set()
+    results = await asyncio.gather(first, second, return_exceptions=True)
+    assert calls == ['memory-start', 'memory-end', 'native-close', 'native-close']
+    assert worker.state == 'closed'
+    assert isinstance(results[0], WorkerError) if snapshot_error else results[0] is None
+    assert results[1] is None

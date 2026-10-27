@@ -534,6 +534,49 @@ catalog alias alone does not establish model identity. Passing there would be
 useful for locating a parser/template workaround, but two different generations
 by themselves cannot prove which implementation is at fault.
 
+### 5.3 Follow-up 0123: retain failed FIM comparisons
+
+The MI50 suite completed the negative Llama control and CodeGemma protocol
+checks. CodeGemma matched the full native reference in all twelve short
+stream/nonstream results, with six semantic matches; long input and recovery
+also completed. These results do not qualify every model's generated code.
+Qwen Coder stopped at `python-violet`, where the native reference and public
+generation differed. Its last raw memory read failed during cleanup, while
+the process was ultimately reaped with exit zero. Do not treat that read error
+as evidence of a GPU crash or discard the earlier comparison failure.
+
+The diagnostic now records the independent reference payload and full native
+response, each public HTTP request/response, and the actual native completion
+payloads used by both paths. It emits a failed comparison before raising, with
+the case and stream mode. This preserves prompt token IDs, stops, sampling,
+cache policy and both outputs without using production FIM code as the
+independent formatter. The existing reference explicitly disables prompt
+reuse; public requests retain their ordinary policy. An output difference
+alone does not identify its cause or justify changing that policy.
+
+Qualification worker close operations are serialized through the final memory
+observation and native shutdown. A second close caller cannot close the HTTP
+client while the first is reading memory. Failed memory checks still fail the
+qualification and native cleanup still runs. Production runtime is unchanged.
+
+After applying 0123 on top of 0122 and running pytest, repeat only the Qwen
+capture on MI50, keeping the same runtime settings:
+
+```bash
+PYTHONPATH=src python3 scripts/functional-qualification-smoke.py \
+  --profile fim --model qwen2.5-coder-7b.Q4_K_M --device Vulkan0 \
+  --expected-fingerprint b11850-0e9433bfd3 \
+  --ctx 4096 --predict 256 --load-timeout 600 --request-timeout 600 \
+  --output /tmp/tllama-070-mi50-qwen-fim-evidence
+tar -cJf /tmp/tllama-070-mi50-qwen-fim-evidence.tar.xz \
+  -C /tmp tllama-070-mi50-qwen-fim-evidence
+```
+
+Send the archive even on failure. Do not repeat CodeGemma, Llama, or the
+memory/lifecycle/MTP/text matrix. No native rebuild, daemon restart, model
+import or registered TOML change is needed. Embeddings and Decision remain
+separate pending qualifications.
+
 ## 6. Acceptance after captures
 
 Review actual worker health/props, stream/nonstream inference, tokenization,

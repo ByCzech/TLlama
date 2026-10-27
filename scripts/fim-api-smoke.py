@@ -91,6 +91,8 @@ async def exercise(args):
                                 'stream':stream, 'think':False, 'options':options, 'keep_alive':-1}
                     async def collect(data, expected_tokens=None):
                         response = await client.post('/api/generate', json=data)
+                        emit('public-response', model=name, request=data,
+                             http_status=response.status_code, response=response.text)
                         require(response.status_code == 200, f'HTTP {response.status_code}: {response.text}')
                         values = [json.loads(line) for line in response.text.splitlines()] if data['stream'] else [response.json()]
                         require(values and all('error' not in value for value in values), f'Public error: {values}')
@@ -137,18 +139,23 @@ async def exercise(args):
                             for case, probe in reference.PROBES.items():
                                 tokens, counts = await reference.prompt_tokens(worker, inventory, bos,
                                     probe['prefix'], probe['suffix'], order, native=False, batch=lease.resolved.runtime["n_batch"])
-                                direct = await worker.completion({**sampling,'prompt':tokens})
+                                payload = {**sampling, 'prompt': tokens}
+                                direct = await worker.completion(payload)
+                                emit('reference', model=name, case=case, request=payload,
+                                     response=direct, counts=counts)
                                 outputs = []
                                 for stream in (False,True):
                                     text, final = await collect(body(probe, stream), len(tokens))
                                     match = reference.semantic_check(text, case)
                                     semantic_matches += match
                                     semantic_total += 1
-                                    require(text == direct['content'], 'Public output differs from full direct FIM reference')
+                                    emit('completion', model=name, case=case, stream=stream, content=text,
+                                         semantic_match=match, reference_matches=text == direct['content'],
+                                         counts=counts, final=final)
+                                    require(text == direct['content'],
+                                            f'Public output differs from full direct FIM reference ({case}, stream={stream})')
                                     require(not any(piece in text for piece in inv['tokens']), 'A FIM boundary leaked to output')
                                     outputs.append(text)
-                                    emit('completion', model=name, case=case, stream=stream, content=text,
-                                         semantic_match=match, reference_matches=True, counts=counts, final=final)
                                 require(outputs[0] == outputs[1], 'Stream and result differ')
 
                             # This exceeds native /infill's batch-derived windows,
