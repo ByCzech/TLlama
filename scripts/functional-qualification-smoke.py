@@ -58,6 +58,8 @@ def parser():
     result.add_argument('--require-mtp', action='store_true', help='Text profile: verify native and public drafting')
     result.add_argument('--with-sdks', action='store_true', help='Embeddings: additionally run optional OpenAI/Ollama SDKs')
     result.add_argument('--no-mmap', action='store_true', help='Explicit workaround, recorded in every launch')
+    result.add_argument('--fim-no-prompt-cache', action='store_true',
+                        help='FIM diagnostic only: disable native prompt reuse for reference and public requests')
     result.add_argument('--dry-run', action='store_true', help='Resolve and print launch; no worker or output created')
     return result
 
@@ -79,6 +81,8 @@ def validate(args):
         raise ValueError('--require-mtp is only supported by the text profile')
     if args.with_sdks and args.profile != 'embeddings':
         raise ValueError('--with-sdks is only supported by the embeddings profile')
+    if args.fim_no_prompt_cache and args.profile != 'fim':
+        raise ValueError('--fim-no-prompt-cache is only supported by the fim profile')
     args.output = args.output.expanduser().resolve()
 
 
@@ -190,6 +194,11 @@ def manager_type(args, capture, module):
         def _body(self, payload, *, chat, stream):
             body = super()._body(payload, chat=chat, stream=stream)
             if args.profile == 'fim' and not chat:
+                # Diagnostic intervention at the owned worker boundary. This
+                # also covers public requests without exposing a new API option
+                # or changing production cache policy.
+                if args.fim_no_prompt_cache:
+                    body['cache_prompt'] = False
                 capture.emit('fim-native-request', pid=self.pid, request=body)
             return body
 
@@ -373,6 +382,7 @@ def main(argv=None):
                 manager = module.ModelManager(config)
                 definition = manager._resolve_native_definition_sync(args.model, args.ctx)
                 print(json.dumps({'profile': args.profile, 'expected_fingerprint': args.expected_fingerprint,
+                    'fim_no_prompt_cache': args.fim_no_prompt_cache,
                     'runtime': dict(definition.resolved.runtime),
                     'argv': definition.resolved.launch.command(Path('/diagnostic/key'))}))
             return 0
@@ -403,6 +413,7 @@ def main(argv=None):
               'review_required': not protocol_ok or bool(observations), 'observations': observations,
               'error': error, 'checks': capture.checks, 'profile': args.profile,
               'expected_fingerprint': args.expected_fingerprint, 'device': args.device,
+              'fim_no_prompt_cache': args.fim_no_prompt_cache,
               'mmap': not args.no_mmap, 'public_api': 'exercised' if protocol_ok else 'see_raw_evidence',
               'sdks': args.with_sdks, 'output': str(args.output)}
     (args.output / 'result.json').write_text(json.dumps(result, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')

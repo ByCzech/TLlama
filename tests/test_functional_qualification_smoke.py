@@ -174,7 +174,7 @@ def test_preview_is_exact_ignores_global_overrides_and_writes_no_capture_or_stor
 
 @pytest.mark.parametrize('extra', [['--expected-fingerprint', ' '], ['--ctx', '0'],
     ['--request-timeout', 'nan'], ['--load-timeout', '-1'], ['--with-sdks'],
-    ['--require-mtp']])
+    ['--require-mtp'], ['--fim-no-prompt-cache']])
 def test_invalid_inputs_never_create_capture(tmp_path, extra):
     assert smoke['main'](arguments(tmp_path, 'tools', *extra)) == 1
     assert not (tmp_path / 'capture').exists()
@@ -375,6 +375,37 @@ def test_fim_reference_mismatch_retains_both_values_requests_and_final_memory(tm
     assert 'different native completion' in public['response']
     assert any(row['stage'] == 'error' and 'full direct FIM reference (add,' in row['error'] for row in rows)
     assert all(check['ok'] for check in result['checks'] if check['stage'].startswith('before-close:'))
+    assert any(check['stage'] == 'before-close:http' for check in result['checks'])
+    assert any(row['stage'] == 'worker-cleanup' and row['ok'] for row in rows)
+    assert (models / 'a.toml').read_text() == definition
+
+
+@pytest.mark.parametrize('fault', ['nonstream', 'stream', 'semantic-bad'])
+def test_fim_cache_intervention_reaches_both_paths_and_retains_full_checks(tmp_path, diagnosed, fault):
+    root, models, executable, env, definition = setup_files(tmp_path, diagnosed, 'fim')
+    # The native fixture reproduces a cache-dependent difference. Default
+    # policy failure is covered above; this run changes only prompt reuse.
+    if fault == 'semantic-bad':
+        env['STUB_FIM'] = 'semantic-bad'
+    else:
+        (root / 'fim-public-mismatch').write_text(fault)
+    run = subprocess.run([sys.executable, str(SCRIPT), *arguments(tmp_path, 'fim',
+        '--fim-no-prompt-cache', '--executable', str(executable), '--transport', 'tcp',
+        '--load-timeout', '5', '--request-timeout', '5')],
+        env=env, capture_output=True, text=True, timeout=45)
+    result = json.loads((tmp_path / 'capture' / 'result.json').read_text())
+    rows = [json.loads(line) for line in (tmp_path / 'capture' / 'raw.jsonl').read_text().splitlines()]
+    assert result['protocol_ok'], (result, run.stderr)
+    assert result['ok'] is (fault != 'semantic-bad')
+    assert run.returncode == (1 if fault == 'semantic-bad' else 0)
+    assert bool(result['observations']) is (fault == 'semantic-bad')
+    assert result['fim_no_prompt_cache'] is True
+    native = [row['request'] for row in rows if row['stage'] == 'fim-native-request']
+    assert native and all(request['cache_prompt'] is False for request in native)
+    comparisons = [row for row in rows if row['stage'] == 'completion']
+    assert len(comparisons) == 12 and all(row['reference_matches'] for row in comparisons)
+    assert {row['stream'] for row in comparisons} == {False, True}
+    assert all(check['ok'] for check in result['checks'])
     assert any(check['stage'] == 'before-close:http' for check in result['checks'])
     assert any(row['stage'] == 'worker-cleanup' and row['ok'] for row in rows)
     assert (models / 'a.toml').read_text() == definition

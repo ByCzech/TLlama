@@ -577,6 +577,46 @@ memory/lifecycle/MTP/text matrix. No native rebuild, daemon restart, model
 import or registered TOML change is needed. Embeddings and Decision remain
 separate pending qualifications.
 
+### 5.4 Follow-up 0124: compare FIM without native prompt reuse
+
+The corrected MI50 capture contains 0123 evidence. Qwen's independent and
+public native payloads have identical prompt token IDs, sampling, preserved
+tokens and stops. The reference has `cache_prompt=false`; public requests omit
+it and use the native default. At `python-violet`, the reference evaluates all
+22 tokens and returns `:  "default"\n       " " "default"\n"\n`, whereas the
+public native worker reuses 21 tokens, evaluates one, and returns a newline.
+The worker log confirms that public native output before public serialization.
+Both memory observations and worker shutdown succeed. This isolates a concrete
+cache-policy difference, but does not by itself prove that it caused the drift.
+
+`--fim-no-prompt-cache` is an explicit diagnostic intervention for the `fim`
+qualification profile only. The owned diagnostic worker sets `cache_prompt`
+to false on every completion request, including reference, public streaming,
+long input and recovery. The flag is recorded in previews and results; wire
+evidence records the effective field. All output equality, token-count,
+semantic, memory and cleanup checks remain active. Default diagnostics and
+production API/runtime policy are unchanged.
+
+After applying 0124 after 0123, run pytest, then repeat only Qwen on MI50:
+
+```bash
+PYTHONPATH=src python3 scripts/functional-qualification-smoke.py \
+  --profile fim --fim-no-prompt-cache \
+  --model qwen2.5-coder-7b.Q4_K_M --device Vulkan0 \
+  --expected-fingerprint b11850-0e9433bfd3 \
+  --ctx 4096 --predict 256 --load-timeout 600 --request-timeout 600 \
+  --output /tmp/tllama-070-mi50-qwen-fim-no-cache-0124
+tar -cJf /tmp/tllama-070-mi50-qwen-fim-no-cache-0124.tar.xz \
+  -C /tmp tllama-070-mi50-qwen-fim-no-cache-0124
+```
+
+Send the archive even on failure. Exact output agreement would support a
+cache-dependent difference in this configuration, not yet identify a native
+defect, a backend or quantized-KV cause. Semantic failures remain review items
+even when reference/public parity passes. Do not change model TOMLs, cache
+precision, flash attention or mmap for this controlled comparison. No native
+rebuild or daemon restart is needed. Embeddings and Decision remain pending.
+
 ## 6. Acceptance after captures
 
 Review actual worker health/props, stream/nonstream inference, tokenization,
