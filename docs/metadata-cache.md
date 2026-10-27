@@ -72,17 +72,17 @@ The hash-like file name is not intended to be human-readable. The JSON content c
 
 The cache stores normalized metadata used by TLlama.
 
-Historical schema-1 example (current header schema is 8; digest schema is 1):
+Illustrative header-cache document (header schema is 8; digest schema is 1):
 
 ```json
 {
-  "schema_version": 1,
+  "cache_format_version": 2,
+  "schema_version": 8,
   "created_at": "2026-04-26T02:20:27.679666+00:00",
   "model": {
     "name": "unsloth/Qwen3.5-4B-GGUF/Qwen3.5-4B-Q4_K_M",
     "path": "HuggingFace/unsloth/Qwen3.5-4B-GGUF/Qwen3.5-4B-Q4_K_M.gguf",
-    "size": 2740937888,
-    "mtime_ns": 1776855409859723725
+    "size": 2740937888
   },
   "metadata": {
     "arch": "qwen35",
@@ -112,12 +112,20 @@ TLlama validates cache entries using a lightweight file fingerprint:
 
 ```text
 schema_version
+cache_format_version
 repository-relative model path
 file size
-file mtime_ns
+cache-file mtime_ns == model-file mtime_ns
 ```
 
 If any of these values no longer match, the cache entry is ignored and regenerated.
+
+The JSON model object contains no `mtime_ns`. After writing a cache document,
+TLlama sets the temporary cache file's modification time to the captured model
+mtime and then publishes it atomically. Readers compare the model's mtime with
+the mtime of the open cache inode, using exact integer nanoseconds without a
+tolerance. The timestamp belongs to the scanned model snapshot, even if a
+delayed write happens after the model has changed.
 
 This means the cache is automatically invalidated when:
 
@@ -132,6 +140,15 @@ Content SHA-256 is a separate persistent digest cache: a cold listing/show may
 compute it when no valid digest is available, which can read the entire file.
 A verified download/upload digest can seed that cache. Header schema changes
 do not invalidate valid content digests.
+
+### Cache format version
+
+`cache_format_version = 2` identifies the file-timestamp layout for both
+metadata and digest caches, independently of their payload schema versions.
+Records in the previous layout are ignored and regenerated on first use,
+including a one-time full-file SHA-256 calculation for each uncached model.
+New JSON records contain no model timestamp. Copying or backing up cache files
+must preserve their modification times to keep them valid.
 
 ---
 
@@ -257,10 +274,10 @@ Useful fields to inspect:
 
 ```text
 schema_version
+cache_format_version
 model.name
 model.path
 model.size
-model.mtime_ns
 metadata.arch
 metadata.parameter_size
 metadata.bits
@@ -292,7 +309,11 @@ If no files are created, check permissions on the model directory.
 
 Check the model file size and modification time.
 
-TLlama invalidates cache using `size` and `mtime_ns`. If a file is replaced while preserving both size and modification time exactly, TLlama may not detect the change.
+TLlama invalidates cache using file size and exact equality of model/cache
+modification times. If a file is replaced while preserving both size and
+modification time at the filesystem's visible precision, TLlama may not detect
+the change. Touching or copying a cache without preserving its mtime also
+invalidates it, even when the JSON bytes are unchanged.
 
 This is unusual in normal workflows.
 
@@ -335,8 +356,8 @@ stores header metadata and content digests; it does not register models.
 
 Cache identity is relative to the repository containing
 `.tllama/metadata-cache/`. Moving that repository or mounting it at a different
-path does not invalidate entries if file size and nanosecond mtime stay the
-same. Repository symlinks are resolved; distinct relative weight paths remain
+path does not invalidate entries if file size and the model/cache modification
+times still match. Repository symlinks are resolved; distinct relative weight paths remain
 distinct. Files outside the repository are not cached here.
 
 Old entries keyed by absolute paths are ignored. Headers and SHA-256 digests

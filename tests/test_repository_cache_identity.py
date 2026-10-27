@@ -99,7 +99,8 @@ def test_captured_fingerprint_survives_delayed_write(tmp_path, entry):
     save(directory, 'model', weights, payload, fingerprint=captured)
     stored = json.loads(path_for(directory, weights).read_text())['model']
     assert stored['size'] == captured['size']
-    assert stored['mtime_ns'] == captured['mtime_ns']
+    assert 'mtime_ns' not in stored
+    assert path_for(directory, weights).stat().st_mtime_ns == captured['mtime_ns']
     assert stored['path'] == 'Local/' + weights.name
     assert load(directory, weights) is None
 

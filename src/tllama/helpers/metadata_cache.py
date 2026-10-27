@@ -37,6 +37,8 @@ file. Bumping one must never invalidate the other.
 
 _METADATA_SECTION = "metadata"
 _DIGEST_SECTION = "digest"
+CACHE_FORMAT_VERSION = 2
+"""Cache file mtime carries the model mtime; no model.mtime_ns in JSON."""
 
 
 def _utc_now_iso() -> str:
@@ -86,12 +88,16 @@ def _is_valid_cache_document(
     document: Any,
     fingerprint: Dict[str, Any],
     schema_version: int,
+    cache_mtime_ns: int,
 ) -> bool:
     """Check whether a cache document matches the current model file."""
     if not isinstance(document, dict):
         return False
 
     if document.get("schema_version") != schema_version:
+        return False
+
+    if document.get("cache_format_version") != CACHE_FORMAT_VERSION:
         return False
 
     model = document.get("model")
@@ -101,7 +107,7 @@ def _is_valid_cache_document(
     return (
         model.get("path") == fingerprint["path"]
         and model.get("size") == fingerprint["size"]
-        and model.get("mtime_ns") == fingerprint["mtime_ns"]
+        and cache_mtime_ns == fingerprint["mtime_ns"]
     )
 
 
@@ -125,8 +131,11 @@ def _load_cache_document(
         cache_path = path_for(cache_dir, model_path)
         with cache_path.open("r", encoding="utf-8") as handle:
             document = json.load(handle)
+            # Read attributes of the same inode as the JSON, even if another
+            # daemon atomically replaces the cache path during this read.
+            cache_mtime_ns = os.fstat(handle.fileno()).st_mtime_ns
 
-        if not _is_valid_cache_document(document, fingerprint, schema_version):
+        if not _is_valid_cache_document(document, fingerprint, schema_version, cache_mtime_ns):
             return None
 
         payload = document.get(section)
@@ -170,11 +179,13 @@ def _save_cache_document(
         cache_dir.mkdir(parents=True, exist_ok=True)
 
         document = {
+            "cache_format_version": CACHE_FORMAT_VERSION,
             "schema_version": schema_version,
             "created_at": _utc_now_iso(),
             "model": {
                 "name": model_name,
-                **fingerprint,
+                "path": fingerprint["path"],
+                "size": fingerprint["size"],
             },
             section: payload,
         }
@@ -196,6 +207,10 @@ def _save_cache_document(
                 )
                 handle.write("\n")
 
+            # Set the captured model timestamp after the final write and before
+            # publication. Never stat the model again here: a delayed old scan
+            # must not acquire a replacement model's newer timestamp.
+            os.utime(tmp_name, ns=(fingerprint["mtime_ns"], fingerprint["mtime_ns"]))
             os.replace(tmp_name, cache_path)
         except Exception:
             try:
