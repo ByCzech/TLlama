@@ -8,13 +8,15 @@ from tllama.client import ClientError
 from tllama.cli_locale import number_text, timestamp_text
 
 
-def size_text(value):
+def size_text(value, *, decimal_units=False):
     if type(value) not in {int, float} or not math.isfinite(value) or value < 0:
         return 'unknown'
-    for unit in ('B', 'KB', 'MB', 'GB', 'TB'):
-        if value < 1000 or unit == 'TB':
+    units = ('B', 'kB', 'MB', 'GB', 'TB') if decimal_units else ('B', 'KiB', 'MiB', 'GiB', 'TiB')
+    divisor = 1000 if decimal_units else 1024
+    for unit in units:
+        if value < divisor or unit == units[-1]:
             return f'{number_text(value, 0)} B' if unit == 'B' else f'{number_text(value, 1)} {unit}'
-        value /= 1000
+        value /= divisor
 
 
 def _id(model):
@@ -28,9 +30,9 @@ def _table(headers, rows):
                      for row in [headers, *rows])
 
 
-def models_text(data):
+def models_text(data, *, decimal_units=False):
     return _table(['NAME', 'ID', 'SIZE', 'MODIFIED'], [
-        [m.get('name') or m.get('model', '-'), _id(m), size_text(m.get('size')),
+        [m.get('name') or m.get('model', '-'), _id(m), size_text(m.get('size'), decimal_units=decimal_units),
          timestamp_text(m['modified_at']) if m.get('modified_at') else '-']
         for m in data['models']])
 
@@ -48,9 +50,10 @@ def _processor(model):
     return f'{number_text(100 - gpu, 1)}% CPU / {number_text(gpu, 1)}% GPU'
 
 
-def processes_text(data):
+def processes_text(data, *, decimal_units=False):
     return _table(['NAME', 'ID', 'SIZE', 'PROCESSOR', 'CONTEXT', 'RUNNER', 'EXPIRES'], [
-        [m.get('name') or m.get('model', '-'), _id(m), size_text(m.get('size')), _processor(m),
+        [m.get('name') or m.get('model', '-'), _id(m),
+         size_text(m.get('size'), decimal_units=decimal_units), _processor(m),
          number_text(m['context_length']) if type(m.get('context_length')) is int else 'unknown',
          m.get('runner') or 'unknown', timestamp_text(m['expires_at']) if m.get('expires_at') else 'pinned']
         for m in data['models']])

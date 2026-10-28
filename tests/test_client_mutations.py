@@ -27,7 +27,7 @@ def test_pull_progress_and_request(cli_server, capsys, as_json):
         assert out.err == ''
     else:
         assert out.out == 'pulled: org/repo/file.gguf\n'
-        assert '1.5 KB / 3.0 KB' in out.err and 'success' in out.err
+        assert '1.5 KiB / 2.9 KiB' in out.err and 'success' in out.err
     assert cli_server['calls'] == [('POST', '/api/pull', {'model': 'org/repo/file.gguf', 'stream': True})]
 
 

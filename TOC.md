@@ -6,6 +6,7 @@ original build identities and evidence.
 
 ## Overview, advantages and installation
 
+- [Changelog and upgrade notes](CHANGELOG.md): release summaries derived from Git.
 - [Features and practical comparison](docs/features.md): per-model control,
   extensions, memory evidence, APIs, storage and process ownership.
 - [Hardware and backends](docs/hardware.md): AMD targets and GPU families,
@@ -22,6 +23,9 @@ original build identities and evidence.
 - [Daemon configuration](docs/daemon.md): server TOML, environment, CLI and inspection.
 - [Model configuration](docs/configuration.md): model TOML, precedence and sampling.
 - [Example server configuration](examples/server.toml).
+- [Client configuration and flags](docs/cli.md#http-client-basics): layered
+  system/user preferences, connection defaults and display controls.
+- [Example client configuration](examples/client.toml).
 - [Native configuration reference](docs/native-config.md).
 - [Backend selection and fallback](docs/backend-priority.md).
 - [Device inventory and selector evidence](docs/device-inventory.md).

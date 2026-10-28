@@ -49,7 +49,31 @@ tllama version                   # client + connected server version
 tllama --host 192.0.2.10:54800 list --json
 ```
 
-Client address selection is `--host > TLLAMA_HOST > 127.0.0.1:54800`.
+Client defaults are read from `/etc/tllama/client.toml`, then
+`$XDG_CONFIG_HOME/tllama/client.toml` (normally `~/.config/tllama/client.toml`).
+Later explicit values override earlier values individually; an omitted setting
+inherits its previous value, even within the same table. Missing automatic files
+are ignored. Invalid or unreadable files are errors.
+
+`--config PATH` instead reads only that file over built-in defaults, excluding
+both automatic files. A missing explicit file is an error. Files are read only
+by the CLI; constructing the Python HTTP client does not discover configuration.
+Help and `--version` do not read configuration or contact a server.
+
+```toml
+[client]
+host = "http://127.0.0.1:54800"
+# timeout = 120 # Optional positive finite HTTP inactivity limit in seconds.
+
+[display]
+decimal_units = false
+hide_thinking = false
+verbose = false
+```
+
+See `examples/client.toml`. Unknown sections/settings and wrong value types are
+rejected. CLI flags override environment settings, which override file settings.
+Client address selection is `--host > TLLAMA_HOST > client.host > 127.0.0.1:54800`.
 HTTP and HTTPS URLs, an optional reverse-proxy path prefix, host:port, :port,
 and bracketed/bare IPv6 are supported. An omitted port always means 54800;
 write an explicit :443 or :80 when a reverse proxy uses that port. Wildcard
@@ -57,8 +81,8 @@ listener addresses 0.0.0.0 and :: connect through loopback. The client preserves
 the HTTP(S) scheme; the daemon's legacy environment parser does not enable TLS.
 Credentials, query strings and fragments in the address are refused.
 
-`--host`, `--timeout` and `--json` work before or after the subcommand.
-Without `--timeout`, list/show/pull/run have no response-read deadline: rebuilding
+`--config`, `--host`, `--timeout` and `--json` work before or after the subcommand.
+Without an explicit timeout in the file or CLI, list/show/pull/run have no response-read deadline: rebuilding
 metadata or waiting for a server-side download lookup may take longer than a
 fixed limit. Other commands retain a 30-second HTTP inactivity timeout.
 Connection setup remains capped at 10 seconds, including for list/show/pull/run.
@@ -80,6 +104,14 @@ newline. `show --modelfile` returns TOML, not an Ollama Modelfile conversion.
 `ps` derives processor placement from the server's compatibility size fields;
 unknown values remain unknown. These fields are not a measurement of physical
 RAM/VRAM residency. Detailed memory/provenance remains available with `ps --json`.
+
+Human sizes in list/ps tables and pull/create progress use binary units by
+default: B, KiB, MiB, GiB and TiB (powers of 1024). Set
+`[display] decimal_units = true` or pass `--decimal-units` for decimal B, kB, MB,
+GB and TB (powers of 1000). `--no-decimal-units` overrides a decimal file setting.
+Both flags work before or after the subcommand. These are formatting choices;
+JSON and API sizes remain unchanged in bytes, and processor percentages use
+the original byte values.
 
 Human tables and verbose statistics use the client's numeric locale for decimal
 and grouping separators. `list` modification times and `ps` expiry times use the
@@ -186,12 +218,24 @@ text is read as one input and prepended to an argument prompt with two newlines.
 Whitespace and slash-prefixed text are otherwise preserved. An explicit empty
 prompt is still a request; stdin EOF does not open an interactive terminal.
 
-`--option NAME=JSON` can be repeated (last value for a name wins). `--system`
+`--option KEY=VALUE` can be repeated (last value for a key wins). VALUE uses
+JSON syntax: numbers such as `32768` or `0.7`, booleans `true`/`false`, quoted
+strings, arrays or objects as supported by the option. This is the individual
+value, not a complete JSON request body. Preserve JSON quotes when the shell
+would remove them; for example, `--option 'stop=["END"]'` passes an array.
+Supported keys, types and load/request scope are listed in
+[Ollama options](ollama-options.md).
+
+`--system`
 sets a session system message, `--think` accepts true/false or a supported level,
 `--format` accepts json or a JSON schema object, and `--keep-alive` selects a
 server residence duration. The server validates parameter names and supported
 values. Inappropriate controls for embedding/Decision modes fail explicitly.
-`--hide-thinking` affects display only: reasoning normally goes to stderr,
+`[display] hide_thinking = true` hides reasoning by default for completion
+models. `--hide-thinking` and `--show-thinking` override that preference for a
+run; it has no effect on embedding/Decision modes. It changes display only,
+not the request's thinking control, conversation messages or JSON events.
+Reasoning normally goes to stderr,
 answer text to stdout. Thinking is grouped under `Thinking:` and followed by
 an `Answer:` separator before answer text starts. These labels go to stderr,
 so redirected stdout still contains only the answer. Reasoning uses the
@@ -206,6 +250,33 @@ output and make the exit status nonzero; requests are never automatically retrie
 Ctrl+C closes the request and exits with status 130 in one-shot mode.
 
 ## Interactive run
+
+### Choose the context before loading
+
+```sh
+tllama run MODEL --option num_ctx=32768
+```
+
+The context override is sent in the initial preload, before the first REPL
+prompt, and retained in subsequent requests. TLlama therefore loads the model
+with the requested context from the start. There is no preliminary load using
+the model/server default just to change context after entering the REPL.
+Other supported load-time options, such as `num_batch`, use the same path;
+sampling options such as `temperature` are also retained for requests.
+No model definition or global server setting is rewritten.
+
+This avoids the extra reload that can follow changing `/set parameter num_ctx`
+after an interactive client has already preloaded with different settings.
+The reviewed Ollama CLI provides that REPL command, but no equivalent generic
+`run --option` switch. Ollama also supports model defaults and HTTP options;
+the distinction here is configuring this particular CLI run before its preload.
+
+An existing resident model with incompatible settings may still require a new
+generation, and expiry, unloading or zero keep-alive can require later loads.
+This shortcut avoids the default-then-custom-context sequence; it is not a
+promise that every session will perform exactly one physical load.
+
+### Preparation and terminal input
 
 `tllama run MODEL` opens a prompt_toolkit REPL when stdin is a terminal and
 no prompt arguments were supplied. Before the first prompt it prepares the
@@ -259,6 +330,12 @@ chat turns enter conversation history. Errors and cancelled partial replies
 are displayed but are not reused as context. There is no automatic retry.
 
 ## Verbose timing and usage
+
+`[display] verbose = true` enables request statistics by default in `run`,
+including the REPL. `--verbose` (or `-v`) and `--no-verbose` override this for
+one run. The REPL's `/set verbose` and `/set quiet` change the current session
+without writing to the client file. Statistics also work for embedding and
+Decision modes; other commands do not acquire extra output from this setting.
 
 `tllama run MODEL --verbose` (or `-v`) prints statistics to stderr after each
 completed request. `/set verbose` and `/set quiet` toggle this locally in every

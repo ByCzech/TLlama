@@ -104,9 +104,11 @@ async def test_preload_requires_explicit_confirmation(reply):
             await client.preload('model')
 
 
-@pytest.mark.parametrize('mode', ['completion', 'embedding', 'decision'])
-async def test_preload_finishes_before_repl_prompt(monkeypatch, mode):
+@pytest.mark.parametrize('mode,context', [('completion', None), ('embedding', None), ('decision', None),
+                                        ('completion', 32768), ('embedding', 32768)])
+async def test_preload_finishes_before_repl_prompt(monkeypatch, mode, context):
     events = []
+    options = {'num_ctx': context} if context is not None else None
     class Input(io.StringIO):
         def isatty(self):
             return True
@@ -115,14 +117,17 @@ async def test_preload_finishes_before_repl_prompt(monkeypatch, mode):
         events.append('show')
         return {'capabilities': [mode]}
     async def preload(model, **kwargs):
+        assert kwargs == {'options': options, 'keep_alive': None}
         events.append('preload')
         return True
     async def repl(client, session):
         assert events == ['show', 'preload']
+        assert session.controls.get('options') == options
         events.append('prompt')
         return 0
     monkeypatch.setattr('tllama.cli_repl.repl', repl)
-    assert await run(SimpleNamespace(show=show, preload=preload), build_parser().parse_args(['run', 'model'])) == 0
+    args = ['run', 'model'] + (['--option', f'num_ctx={context}'] if context is not None else [])
+    assert await run(SimpleNamespace(show=show, preload=preload), build_parser().parse_args(args)) == 0
     assert events[-1] == 'prompt'
 
 

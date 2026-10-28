@@ -2,7 +2,8 @@
 
 TLlama provides a model service, client and configuration layer over a patched
 llama.cpp runtime. Its main advantages are explicit per-model control, extended
-native model/hardware support and inspectable runtime evidence.
+native model/hardware support, configurable client/daemon interfaces and
+inspectable runtime evidence.
 See the [documentation index](../TOC.md) for the complete guide set.
 
 ## Independent K and V precision
@@ -53,6 +54,97 @@ Three distinct capabilities matter:
 | One model, explicit device list | Comma-separated native selectors are passed unchanged; layer/row splitting and `tensor_split` remain native controls |
 | Automatic placement | An ordered backend policy tries one backend family per attempt, then CPU; it does not create a mixed-backend group |
 
+### Main model and auxiliary models on different backends
+
+A main chat model can use CUDA or ROCm while Decision and embedding models use
+Vulkan under the same daemon. Each registered model has its own selector and
+private worker. For example, with these GGUF files already registered/stored:
+
+```toml
+# models/Local/main-chat.toml
+[llm]
+model = "Local/main-chat.gguf"
+
+[runtime]
+device = "CUDA0" # Use ROCm0 instead for the intended AMD native device.
+n_ctx = 32768
+```
+
+```toml
+# models/Local/helper-decision.toml
+[llm]
+model = "Local/helper-decision.gguf"
+
+[runtime]
+device = "Vulkan0"
+```
+
+```toml
+# models/Local/helper-embedding.toml
+[llm]
+model = "Local/helper-embedding.gguf"
+
+[runtime]
+device = "Vulkan0"
+embedding = true
+pooling_type = -1
+```
+
+These examples illustrate placement. The Decision file must be a supported
+Decision GGUF; its mode comes from metadata, not the filename, and does not use
+`embedding = true`. The embedding file must support the documented pooling
+contract. Retain each model's required context, batch, K/V and attention settings;
+see [Decision configuration](native-decision.md) and
+[embedding configuration](native-embeddings.md).
+
+To permit all three profiles to remain resident, set the daemon's server TOML:
+
+```toml
+[lifecycle]
+max_loaded_models = 3
+```
+
+The default is one resident model; increasing this limit permits more workers
+but does not reserve sufficient GPU memory for them. Each model can then be
+called by its public name: `main-chat`, `helper-decision`, `helper-embedding`.
+For example, `tllama run main-chat` uses the chat profile, and
+`tllama run helper-embedding 'Text to embed'` returns embeddings.
+
+Selectors include the backend, so `CUDA0`, `ROCm0` and `Vulkan0` are distinct
+native choices despite sharing index 0. In the reviewed Ollama scheduler,
+`main_gpu = 0` considers index 0 in each backend group and chooses a candidate;
+it does not explicitly name a backend. Ollama internally distinguishes device
+IDs by backend, so the difference is direct per-model configuration rather
+than an inability to identify its devices.
+
+Use the selectors actually reported by the installed runtime; `Vulkan0` is not
+automatically an auxiliary card or the same physical card as `CUDA0`/`ROCm0`.
+The [inventory guide](device-inventory.md) explains enumeration, visibility and
+the separation between native rows and physical PCI evidence.
+
+### One physical card exposed through two backends
+
+The same physical card can, when supported by its drivers/runtime, be exposed
+as both a native CUDA/ROCm device and a Vulkan device. TLlama permits a model
+to use its CUDA/ROCm selector and a different model to use its Vulkan selector.
+The configuration above therefore also supports this arrangement if the chosen
+selectors refer to that same card. No TLlama change or cross-API buffer sharing
+is required: they are separate worker processes with independent allocations.
+
+Both workers compete for the same physical memory and compute resources.
+Weights, K/V caches, compute buffers and backend overhead consume that shared
+capacity; the two backend views do not provide two pools of VRAM. TLlama's
+resident-model limit counts workers, not per-physical-GPU budgets, and native
+fit uses the selected backend's memory estimates. There is no coordinated
+physical-memory reservation across the workers; sufficient memory and actual
+driver/model compatibility must be verified on the host. Concurrent use may
+contend and is not a promise of higher throughput.
+
+This is configuration support verified in the resolver/launch/residency paths,
+not a new hardware qualification of simultaneous CUDA/ROCm and Vulkan inference.
+
+### A single model across multiple devices
+
 For a compatible ordinary generation model, a requested mixed-backend profile
 can look like this:
 
@@ -68,7 +160,10 @@ tensor_split = [1.0, 1.0]
 
 Both selectors must exist and refer to the intended devices. One physical GPU
 can appear through several backends: listing it twice does not create additional
-VRAM. TLlama does not deduplicate physical devices or promise that every
+VRAM. Do not use two views of the same card as if they were two independent
+cards to increase a single model's capacity. This multi-device example targets
+distinct physical devices; the per-model worker example above is a separate
+use case. TLlama does not deduplicate physical devices or promise that every
 cross-backend/model combination works. Mixed-backend execution remains a
 hardware qualification item. Instella rejects native `--split-mode tensor`
 (mode 3, not exposed by this TLlama configuration); this is distinct from the
@@ -116,12 +211,31 @@ native upstream base rather than presented as a unique TLlama invention.
 
 ## Inspectable configuration and model profiles
 
-- Global defaults resolve CLI > environment > server TOML > built-in defaults.
+TLlama brings persistent client preferences, inspectable service defaults and
+per-model runtime profiles into one configuration workflow. The CLI exposes
+both client behavior and supported inference controls directly:
+
+| Scope | Persistent configuration | Direct controls |
+| --- | --- | --- |
+| Client connection and display | System then user `client.toml`; a user can replace individual settings | `--host`, `--timeout`, `--config`, `--json`, `--decimal-units` / `--no-decimal-units` |
+| Run/REPL presentation and requests | `[display] verbose` and `hide_thinking`; request controls remain explicit | `--verbose` / `--no-verbose`, `--hide-thinking` / `--show-thinking`, `--option KEY=VALUE`, `--system`, `--think`, `--format`, `--keep-alive` |
+| Daemon | `server.toml`, environment and CLI overrides | Listener/storage/runtime selection, device/backend defaults, context/K/V settings, lifecycle and telemetry; `--check-config` and `--print-config` |
+| Model runtime | Each model's `[runtime]`, sampling, template and system settings | Context, device placement, independent K/V precision, native fitting and safety margin, MTP and other typed load controls |
+
+- Client files layer built-in defaults, `/etc/tllama/client.toml`, then
+  `$XDG_CONFIG_HOME/tllama/client.toml` (normally `~/.config/tllama/client.toml`).
+  A user file can change only display preferences while retaining the system
+  server address, or explicitly replace that address. `--config PATH` reads only
+  the selected file over built-in defaults. CLI flags override supported
+  environment settings and file defaults. Binary sizes are the default; JSON
+  continues to carry the original byte values.
+- Daemon defaults resolve CLI > environment > server TOML > built-in defaults.
   Per-model definitions and supported request overrides provide stronger scoped
   settings. `--check-config` validates configuration before serving;
   `--print-config` reports resolved values and their sources.
 - Load controls include context, batches, CPU threads, GPU layers, split mode,
-  RoPE/YaRN, NUMA, mmap/mlock, operation/KV offload, LoRA and typed GGUF metadata
+  native `fit` and `fit_target_mib`, RoPE/YaRN, NUMA, mmap/mlock,
+  operation/KV offload, LoRA and typed GGUF metadata
   overrides. Templates, system prompts, sampling and FIM ordering are also
   explicit model settings; no arbitrary native command-line passthrough is needed.
 - Different public model names can share the same GGUF/projector files while
@@ -134,7 +248,29 @@ native upstream base rather than presented as a unique TLlama invention.
 - GGUF sampling recommendations are used where explicit settings are absent.
   Unsupported settings fail visibly instead of silently disappearing.
 
-See [daemon configuration](daemon.md), [model configuration](configuration.md)
+Compared with the reviewed Ollama CLI, TLlama adds explicit connection/timeout
+flags, common full-response `--json` output, repeated `--option KEY=VALUE` request
+overrides and layered client TOML preferences. Ollama already has options for
+timings, thinking display, format and keep-alive; those basic capabilities are
+not exclusive to TLlama.
+
+For example, `tllama run MODEL --option num_ctx=32768` includes the requested
+context in the first interactive preload and subsequent requests. It avoids
+the default-context load followed by a reload that can occur when context is
+changed only after entering the REPL. The reviewed Ollama client exposes
+`/set parameter num_ctx` in its REPL but no generic run-time CLI option for this
+workflow; model defaults and HTTP requests remain alternative Ollama workflows.
+See [context before loading](cli.md#choose-the-context-before-loading).
+
+The native `llama-server` already has extensive runtime flags, environment
+settings and router model presets. TLlama's advantage is the integrated client
+configuration and named per-model service layer around those controls, alongside
+its OpenAI-compatible HTTP API. It is not a claim to expose more total native
+flags than llama.cpp, or every option through an OpenAI request body.
+
+See [client configuration and CLI](cli.md), [example client TOML](../examples/client.toml),
+[daemon configuration](daemon.md), [model configuration](configuration.md),
+[native fit controls](native-config.md#native-fit-memory-margin)
 and [model repositories](model-repositories.md).
 
 ## Memory evidence beyond a process-size estimate
@@ -206,8 +342,11 @@ See [imports](cli.md#create-and-import-models), [metadata cache](metadata-cache.
 
 ## Comparison with the reviewed projects
 
-Compared on 27 October 2026. Upstream development can change these details;
-the [source audit](feature-source-audit.md) pins the inspected revisions.
+External comparison baseline reviewed on 27 October 2026; TLlama client
+configuration and fit entries updated on 28 October for the develop/1.x branch.
+Upstream development can change these details; the
+[source audit](feature-source-audit.md) pins the inspected revisions and records
+the configuration update.
 
 | Area | TLlama | Reviewed Ollama | Official llama.cpp |
 | --- | --- | --- | --- |
@@ -216,7 +355,9 @@ the [source audit](feature-source-audit.md) pins the inspected revisions.
 | Instella-MoE | Experimental native-fork converter/loader/graph | No Instella registration found in inspected source | No Instella registration found in inspected source; community PR credited |
 | Legacy ROCm deployment | Development kernels plus optional matching BLAS add-ons | Hardware/runtime policy differs; no blanket exclusivity claim | Generic HIP/GCN support already exists; the complete deployment is a separate concern |
 | Memory inspection | Fork memory endpoint plus validated public provenance, payload/assignment/locality | No equivalent TLlama endpoint is claimed | Inspected source has no `/tllama/memory` extension |
+| Client configuration and CLI | Layered system/user TOML; explicit address, timeout, JSON, request-option and display switches | Reviewed CLI uses `OLLAMA_HOST` for the address; no equivalent layered client preferences or common connection/JSON/option switches found | Rich native server flags, environment, router presets and web UI settings; a different scope from TLlama's remote CLI client |
 | Service configuration | Persistent per-model TOML, inspectable global CLI/env/TOML layers and managed workers | Modelfiles, options and server environment have their own scope | Native flags/configuration and server capabilities; not the TLlama model-definition service |
+| Native fitting policy | Global/model `fit` and `fit_target_mib`; automatic fitting or explicit all/off | Scheduler and runner policies have their own controls | `--fit`, `--fit-target` and explicit GPU-layer settings already exist |
 
 The intended distinction is practical control and integrated extensions. GPU
 backends, separate native K/V switches, embeddings and many model architectures

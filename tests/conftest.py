@@ -34,6 +34,13 @@ def isolated_formatting_locale(monkeypatch):
             locale.setlocale(category, value)
 
 
+@pytest.fixture(autouse=True)
+def isolated_client_config_files(monkeypatch, tmp_path):
+    """CLI tests must not inherit a developer's installed client preferences."""
+    monkeypatch.setattr('tllama.client_config.default_config_paths',
+                        lambda environ: (tmp_path / 'system-client.toml', tmp_path / 'user-client.toml'))
+
+
 @pytest.fixture
 def clean_tllama_config_environment(monkeypatch):
     """Give opt-in config tests only the settings they explicitly supply."""

@@ -123,6 +123,50 @@ TLlama-only model implementation.
 
 ## Comparison checks
 
+### Configuration and CLI update — 28 October 2026
+
+The develop/1.x tree through `8473dc2` adds client configuration (0134–0136)
+and native fit configuration (0137–0138) after the original 0129 review.
+`client_config.py`, `cli.py`, `cli_run.py` and `cli_output.py` implement system/user
+client TOML layering, isolated explicit file selection, address/timeouts, JSON,
+typed request options and display preferences. `native_params.py`, `native_cli.py`,
+`native_config.py`, `worker_config.py` and `automatic_worker.py` implement typed
+fit margins and explicit fitting policy across device selection. Their client,
+configuration and native-fit tests cover the respective contracts. These are
+development-branch additions, not a claim that the 1.0.0 tag contained them.
+
+For the Ollama comparison, the pinned `cmd/cmd.go` registers run controls for
+verbose, format, think, hidethinking and keepalive, among others. These are not
+advertised as TLlama-exclusive features. The inspected CLI reads the address via
+`OLLAMA_HOST`/the environment-based API client; no equivalent system/user client
+TOML or common `--host`, `--timeout`, `--json` and repeated `--option` switches
+were found in that command surface. This does not claim that Ollama has no
+configuration files: its FAQ also documents `~/.ollama/server.json` for disabling
+cloud functionality. Server config, model Modelfiles and external launch-tool
+configuration have different scopes from TLlama's client preferences.
+
+For the context-before-preload example, TLlama's `RunSession.create` retains
+the parsed options, `RunSession.preload` forwards them, and `submit` reuses the
+same controls. In the pinned Ollama source, `RunHandler` calls
+`loadOrUnloadModel` before entering the interactive loop; `cmd/interactive.go`
+provides `/set parameter num_ctx`. No generic `run --option` registration was
+found. The claim concerns avoiding a default-then-custom-context CLI sequence,
+not the absence of Ollama Modelfile, environment or HTTP alternatives.
+
+The official native `tools/server/README.md` and `common/arg.cpp` already expose
+extensive server flags, including `--fit`/`--fit-target`, router INI presets and
+web UI JSON settings. TLlama adds typed global/model configuration and a remote
+CLI around a supported subset; it does not invent native fitting or claim a
+larger total flag count than llama-server. OpenAI wire compatibility does not
+imply that every load setting is an OpenAI request parameter.
+
+Sources: [pinned Ollama CLI](https://github.com/ollama/ollama/blob/8ec9ecdf692e417798169ff8d5972159078d3754/cmd/cmd.go),
+[API client](https://github.com/ollama/ollama/blob/8ec9ecdf692e417798169ff8d5972159078d3754/api/client.go),
+[Ollama FAQ](https://github.com/ollama/ollama/blob/8ec9ecdf692e417798169ff8d5972159078d3754/docs/faq.mdx),
+and [native server reference](https://github.com/ggml-org/llama.cpp/blob/e86f5fd1e9f584b0fcec71d7da9a92de44e8bcbf/tools/server/README.md).
+
+### Original native comparison findings
+
 Ollama's inspected `envconfig/config.go` declares one `OLLAMA_KV_CACHE_TYPE`;
 `llm/server.go` resolves it and `llm/llama_server.go` passes the same value as
 both `--cache-type-k` and `--cache-type-v`. Official llama.cpp already has the
@@ -140,6 +184,32 @@ The inspected official native source does not include the fork's
 `/tllama/memory` contract. General process metrics or memory fitting in another
 project are not claimed absent; the specific distinction is the TLlama structured
 payload/assignment/locality extension and its validated public projection.
+
+### Main/auxiliary backend placement — 28 October 2026
+
+The placement examples use the existing resolver, `WorkerLaunchSpec.command`
+and `NativeResidency`: each public model keeps its selector, gets a private
+worker and occupies one resident-generation slot. There is no physical-card
+association or cross-backend exclusivity check in these paths. The device
+inventory explicitly keeps native observations separate from physical PCI
+evidence. The pinned native `common/arg.cpp::parse_device_list` resolves exact
+device names; `src/llama.cpp::llama_prepare_model_devices` retains explicitly
+selected devices instead of applying the automatic selection/deduplication
+branch. Different workers can therefore request different backend views of one
+card without application changes; this is not new hardware inference evidence.
+
+Pinned Ollama `ml/device.go::DeviceID` contains both `ID` and `Library`.
+`server/sched.go::selectLlamaServerPlacement` groups by library, and
+`bestExplicitMainGPU` considers `group[mainGPU]` in each eligible group before
+selecting a candidate. Thus numeric `main_gpu = 0` is not an explicit backend
+selector, but saying Ollama cannot internally distinguish backend/device pairs
+would be incorrect. TLlama's concrete difference is named per-model selectors
+such as CUDA0/ROCm0/Vulkan0 for the main and auxiliary roles.
+
+Sources: [Ollama scheduler](https://github.com/ollama/ollama/blob/8ec9ecdf692e417798169ff8d5972159078d3754/server/sched.go),
+[device identity](https://github.com/ollama/ollama/blob/8ec9ecdf692e417798169ff8d5972159078d3754/ml/device.go),
+[native device parsing](https://github.com/ggml-org/llama.cpp/blob/e86f5fd1e9f584b0fcec71d7da9a92de44e8bcbf/common/arg.cpp),
+and [native device selection](https://github.com/ggml-org/llama.cpp/blob/e86f5fd1e9f584b0fcec71d7da9a92de44e8bcbf/src/llama.cpp).
 
 ### Pinned comparison links
 

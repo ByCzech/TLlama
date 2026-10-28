@@ -43,6 +43,10 @@ client working directory unless their paths are absolute.
 Show version information.
 .SH OPTIONS
 .TP
+.B --config PATH
+Read only this client TOML file over built-in defaults, excluding system and
+user configuration files.
+.TP
 .B --host ADDRESS
 Server address; overrides TLLAMA_HOST. Default: http://127.0.0.1:54800.
 .TP
@@ -52,12 +56,41 @@ Override the request timeout policy.
 .B --json
 Use machine-readable output where supported.
 .TP
+.B --decimal-units, --no-decimal-units
+Select decimal kB/MB/GB/TB or binary KiB/MiB/GiB/TiB for human sizes. Binary is
+the default. API and JSON byte values are unchanged.
+.TP
+.B run MODEL --verbose, -v, --no-verbose
+Override the default display of request timing and token statistics on stderr.
+.TP
+.B run MODEL --hide-thinking, --show-thinking
+Hide or show reasoning text for completion models. This changes display only,
+not generation controls, conversation messages or JSON events.
+.TP
+.B run MODEL --option KEY=VALUE
+Set a request option; repeatable, with the last value for a key winning.
+VALUE uses JSON syntax, for example num_ctx=32768 or temperature=0.7.
+Load-time options are included in the first interactive preload, avoiding
+a default-context load followed by a reload merely to change the context.
+.TP
 .B --help
 Show help. Each command has its own --help.
 .TP
 .B --version
 Show the installed client version.
 .SH FILES
+.I /etc/tllama/client.toml
+.br
+.I $XDG_CONFIG_HOME/tllama/client.toml
+(default: ~/.config/tllama/client.toml)
+.PP
+System settings are read first, then individual user settings override them.
+The [client] table accepts host and timeout. The [display] table accepts
+decimal_units, hide_thinking and verbose (booleans, default false).
+CLI options override environment
+settings, which override file settings. Missing automatic files are ignored;
+invalid or unreadable files and missing explicit files are errors.
+.PP
 .I /usr/share/doc/tllama/docs/cli.md
 .SH SEE ALSO
 .BR tllamad (1)

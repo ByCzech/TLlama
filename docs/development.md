@@ -121,8 +121,33 @@ Keep configuration, request validation, native serialization and response
 ownership contracts explicit. Log through module loggers; let entry points
 configure handlers. Do not execute client/model tool calls.
 
-Daemon configuration and systemd integration are implemented. Before release,
-apply the [documentation review](release-review-100.md) corrections, resolve
-the recorded release decisions, then merge/tag the verified refactor. Debian application
-packaging is planned afterward in a separate branch. Personal planning/handoff
-Markdown lives outside the Git repository.
+## Release changelog and builds
+
+[CHANGELOG.md](../CHANGELOG.md) summarizes user-visible changes from Git, with
+upgrade notes and release tag links. Keep implementation-only commits in the
+Git history rather than copying every subject into the release summary. For a
+review of the next release after 1.0.0:
+
+```sh
+git log --reverse --no-merges --format='%h %s' v1.0.0..HEAD
+git diff --stat v1.0.0..HEAD
+```
+
+For subsequent releases, replace `v1.0.0` with the previous release tag. A full
+text export, including commit bodies, can be generated separately when needed:
+
+```sh
+git log --reverse --no-merges --format='%h %cs %s%n%b' v1.0.0..HEAD > git-changelog.txt
+```
+
+Before tagging, update the upstream changelog and `debian/changelog`, run the
+full pytest suite, and review the version in the release artifacts. Native
+worker process tests need Unix-domain socket support; most tests do not need
+GPU hardware. The [Debian package notes](../debian/README.Debian) describe the
+offline package smoke and version handling. Build the Python wheel/source
+archive from the final release tag so setuptools-scm derives the intended
+version; Debian builds derive it from `debian/changelog`.
+
+The [1.0.0 documentation review](release-review-100.md) is a historical record,
+not the current release checklist. Personal planning/handoff Markdown lives
+outside the Git repository.

@@ -119,8 +119,9 @@ def resolve_worker_config(
     if device is None:
         sources["device"] = "backend priority"
         runtime["device"] = None
-        if sources["n_gpu_layers"] == "baseline":
-            runtime["n_gpu_layers"], sources["n_gpu_layers"] = None, "native fit"
+    if (sources["n_gpu_layers"] == "baseline" and runtime.get("fit") is not False
+            and (device is None or runtime.get("fit") is True)):
+        runtime["n_gpu_layers"], sources["n_gpu_layers"] = None, "native fit"
     if device == "none":
         if sources["n_gpu_layers"] != "baseline" and runtime["n_gpu_layers"] not in (0, None):
             raise ConfigError("CPU device 'none' conflicts with explicit n_gpu_layers; use 0")
@@ -153,6 +154,11 @@ def resolve_worker_config(
                 or virtual_spec.fim_order != "auto"):
             raise ConfigError("Embedding/Decision workers do not accept model sampling, system prompts or FIM settings")
     sampling = coerce_sampling_overrides(config.sampling_overrides)
+    fit = runtime.get("fit")
+    if device == "none":
+        fit = False
+    elif device is not None and fit is None:
+        fit = runtime["n_gpu_layers"] is None
     try:
         launch = WorkerLaunchSpec(
             model=model, executable=config.runtime_executable if executable is None else executable,
@@ -160,7 +166,7 @@ def resolve_worker_config(
             backend_priority=config.backend_priority,
             version_policy=config.runtime_version_policy,
             memory_source=config.memory_source, memory_compare=config.memory_compare,
-            n_ctx=int(runtime["n_ctx"]), fit=runtime["n_gpu_layers"] is None,
+            n_ctx=int(runtime["n_ctx"]), fit=fit,
             n_gpu_layers=None if runtime["n_gpu_layers"] is None else int(runtime["n_gpu_layers"]),
             type_k=runtime["type_k"], type_v=runtime["type_v"], flash_attn=runtime["flash_attn"],
             embedding=runtime["embedding"], pooling_type=runtime["pooling_type"],

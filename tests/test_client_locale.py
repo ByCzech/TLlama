@@ -79,7 +79,7 @@ def test_numeric_grouping_applies_to_tables_and_all_verbose_measurements(czech_n
     model = {'name': 'm', 'size': 16773098312, 'size_vram': 16746961480,
              'context_length': 262144, 'expires_at': None}
     text = processes_text({'models': [model]})
-    assert '16,8 GB' in text and '0,2% CPU / 99,8% GPU' in text
+    assert '15,6 GiB' in text and '0,2% CPU / 99,8% GPU' in text
     assert '262\u202f144' in text and 'pinned' in text
     stats = statistics({'eval_count': 12345, 'eval_duration': 1_000_000_000}, elapsed=2.5, first_text=0.25)
     assert '2,500 s' in stats and '0,250 s' in stats
