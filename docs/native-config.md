@@ -57,6 +57,7 @@ a shell; paths and serialized values stay individual argv elements.
 |---|---|---|
 | Model / projector paths | `--model`, `--mmproj` | Resolved storage paths |
 | `device`, `n_gpu_layers`, `n_ctx` | `--device`, `--n-gpu-layers`, `--ctx-size` | Load |
+| `fit_target_mib` | `--fit-target` | Load; nonnegative integer MiB, broadcast to all devices |
 | `type_k`, `type_v`, `flash_attn` | `--cache-type-k`, `--cache-type-v`, `--flash-attn on/off` | Load |
 | `n_batch`, `n_ubatch` | `--batch-size`, `--ubatch-size` | Load |
 | `n_threads`, `n_threads_batch` | `--threads`, `--threads-batch` | Load |
@@ -92,6 +93,31 @@ is not emulated. Scaled LoRA paths containing ':' cannot be represented by this
 pinned parser and are refused. CSV quotes/commas in other paths/metadata strings
 are escaped. KV override keys/strings must fit the native 127-byte UTF-8 fields.
 TOML round-trip content is retained; resolving does not rewrite supplied files.
+
+## Native fit memory margin
+
+Global server TOML and model TOML accept `[runtime] fit_target_mib = 512`.
+The model value overrides the global value. The global environment spelling is
+`TLLAMA_RUNTIME_FIT_TARGET_MIB=512`. An omitted value preserves the native
+default, currently 1024 MiB (1 GiB) per device. Zero is accepted.
+
+This is a target for memory to leave free when native fitting is enabled, not
+an allocation, an additional KV cache, or bytes added to reported memory use.
+It has no effect when `--fit` is off. The scalar is passed unchanged as one
+`--fit-target` value, so the native server broadcasts it to all devices.
+Known projector requirements are intended to be added separately by the native
+server; the margin does not replace them. Native estimation and device-mapping
+limitations still apply. Lower margins can fit more work but may allow OOM.
+
+```toml
+[runtime]
+n_ctx = 132864
+fit_target_mib = 512
+```
+
+Restart/unload the resident model to apply changed load settings. Native
+`LLAMA_ARG_*` variables are removed from inherited worker environments; use the
+TLlama setting rather than exporting `LLAMA_ARG_FIT_TARGET` to the daemon.
 
 ## Request mapping and validation
 

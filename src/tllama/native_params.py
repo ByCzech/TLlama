@@ -13,6 +13,7 @@ from types import MappingProxyType
 
 RUNTIME_TYPES = {
     "device": "str", "n_ctx": "int", "n_gpu_layers": "int",
+    "fit_target_mib": "int",
     "split_mode": "int", "main_gpu": "int", "tensor_split": "List[float]",
     "use_mmap": "bool", "use_mlock": "bool", "kv_overrides": "Dict",
     "seed": "int", "n_batch": "int", "n_ubatch": "int",
@@ -150,6 +151,8 @@ def runtime_problem(name: str, value: Any) -> str | None:
         return f"'{name}' must be positive"
     if name == "n_gpu_layers" and value < -1:
         return "'n_gpu_layers' must be -1 (all) or nonnegative"
+    if name == "fit_target_mib" and value < 0:
+        return "'fit_target_mib' must be nonnegative (MiB per device)"
     if name in ("split_mode", "rope_scaling_type", "numa"):
         allowed = {"split_mode": SPLIT_MODES, "rope_scaling_type": ROPE_MODES, "numa": NUMA_MODES}[name]
         if value not in allowed:

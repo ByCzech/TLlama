@@ -8,6 +8,7 @@ from tllama.native_params import NUMA_MODES, ROPE_MODES, SPLIT_MODES, MTP_DRAFT_
 
 
 VALUE_FLAGS = {
+    "fit_target_mib": "--fit-target",
     "n_batch": "--batch-size", "n_ubatch": "--ubatch-size",
     "n_threads": "--threads", "n_threads_batch": "--threads-batch",
     "main_gpu": "--main-gpu", "seed": "--seed",
