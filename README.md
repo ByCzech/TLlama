@@ -57,8 +57,9 @@ generation, vision, embedding and Decision models.
 Start with the [documentation index](TOC.md), the detailed
 [features and comparison](docs/features.md), [hardware support](docs/hardware.md)
 and [packages and platform roadmap](docs/distribution.md).
-TLlama 1.0.0 has been released; this branch also documents ongoing 1.x
-development, including the client configuration and fit controls below.
+TLlama 1.0.0 has been released; this branch prepares 1.1.0, including the
+client configuration and fit controls below. See the [changelog](CHANGELOG.md)
+for release changes and upgrade notes.
 These pages distinguish implemented features, tested configurations and planned
 distribution work.
 
@@ -135,9 +136,10 @@ precedence. A global device setting is a default for models.
 File selection, all flags, environment names, source reporting and reload
 behavior are described in [daemon.md](docs/daemon.md). The server configuration
 is separate from per-model TOML. See [systemd.md](docs/systemd.md) for installing
-the supplied [tllamad.service](systemd/tllamad.service) manually. The native
-runtime already has modular Debian packaging; application packaging and planned
-Linux/Windows/macOS distribution are tracked in [distribution.md](docs/distribution.md).
+the supplied [tllamad.service](systemd/tllamad.service) manually. Debian packages
+provide the application and the separate modular native runtime; installation
+and planned Linux/Windows/macOS distribution are described in
+[distribution.md](docs/distribution.md).
 
 ## Client commands and REPL
 

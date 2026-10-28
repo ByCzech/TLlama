@@ -15,6 +15,16 @@ on upgrade through the normal dpkg configuration-file mechanism. The unit
 reads this file explicitly; CLI > environment > TOML > built-in defaults.
 Use systemctl edit tllamad.service for unit overrides.
 
+Client configuration is separate from the daemon configuration. Examples are
+installed in /usr/share/doc/tllama/examples/client.toml and server.toml.
+The client example is not enabled automatically. For system defaults, copy it
+to /etc/tllama/client.toml; for user preferences, copy it to
+$XDG_CONFIG_HOME/tllama/client.toml (normally ~/.config/tllama/client.toml).
+Built-in defaults < system file < user file; explicit --config reads only the
+selected file over built-in defaults. Supported environment values and CLI
+flags override file values. See docs/cli.md for the full precedence rules.
+The upstream CHANGELOG.md includes release changes and upgrade notes.
+
 The service is enabled and started on installation, subject to the host's
 service policy. It listens on 127.0.0.1:54800 by default, without preloading
 a model. Upgrades stop the old daemon and its workers before replacing code,
@@ -58,10 +68,10 @@ Hugging Face support is installed as a runtime dependency so pull works.
   debuild -us -uc -b
 
 For a source build, supply the matching tllama_<upstream>.orig.tar.gz alongside
-the checkout, then use debuild -us -uc. For the initial candidate:
+the checkout, then use debuild -us -uc. After creating the v1.1.0 release tag:
 
-  git archive --format=tar --prefix=tllama-1.0.0~rc1/ master |
-    gzip -n > ../tllama_1.0.0~rc1.orig.tar.gz
+  git archive --format=tar --prefix=tllama-1.1.0/ v1.1.0 |
+    gzip -n > ../tllama_1.1.0.orig.tar.gz
   debuild -us -uc
 
 The package uses source format 3.0 (quilt). debian/changelog owns the Debian
@@ -70,7 +80,7 @@ the prerelease tilde is removed for PEP 440. The rules export
 SETUPTOOLS_SCM_PRETEND_VERSION_FOR_TLLAMA, so a Git-less source build produces
 the same version: 1.0.0~rc1-1 reports 1.0.0rc1, and 1.0.0-1 reports 1.0.0.
 This does not create or move a Git release tag. Bump the changelog when the
-final release is ready.
+next release is prepared.
 
 The build runs a small offline application smoke against the built package;
 DEB_BUILD_OPTIONS=nocheck / DEB_BUILD_PROFILES=nocheck can skip it in the usual

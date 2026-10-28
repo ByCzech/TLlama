@@ -1,3 +1,13 @@
+tllama (1.1.0-1) unstable; urgency=medium
+
+  * Add layered client TOML configuration and display preferences.
+  * Default human-readable sizes to binary units, with decimal units optional.
+  * Expose native fit policy and memory margin configuration.
+  * Validate metadata and digest caches against cache-file timestamps.
+  * Ship client/server configuration examples and upstream release notes.
+
+ -- NemaChybu team APT archive <maintainers@nemachybu.cz>  Wed, 28 Oct 2026 23:45:15 +0100
+
 tllama (1.0.0-1) unstable; urgency=medium
 
   * Release TLlama 1.0.0.

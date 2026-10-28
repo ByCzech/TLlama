@@ -7,6 +7,12 @@ source installation and [hardware](hardware.md) for selecting a backend.
 
 ## Debian packages
 
+TLlama 1.0.0 was released with Python wheel/source archives and a Debian
+application package, published in the maintainer's APT archive. This branch
+prepares application version 1.1.0 (`tllama` Debian version `1.1.0-1`); see
+the [changelog](../CHANGELOG.md) for changes and upgrade notes. Application and
+native runtime versions are independent.
+
 Debian runtime packages have already been built and used for project hardware
 qualification. The accepted development set is `0.7.0~dev+b11850.1-1`, using
 native `b11850-0e9433bfd3`. The native project has modular Debian packaging:
@@ -43,23 +49,33 @@ from the Python application. TLlama can select another absolute runtime path.
 For a configured APT source that supplies these exact package names:
 
 ```sh
-sudo apt install tllama-server
+sudo apt install tllama
 # Add the backend appropriate for this machine, for example:
 sudo apt install tllama-server-backend-vulkan
 ```
 
-This example does not add an APT source or claim the development packages are
-in Debian's official archive. Use the maintainer's configured package source
-or locally built matching `.deb` files. Do not infer repository URLs, signing
-keys or public 1.0.0 publication from package naming. Native source/build profiles
+The `tllama` application depends on the separate `tllama-server` runtime.
+It installs `/etc/tllama/server.toml` and the `tllamad` systemd service, using
+the `tllama` service account. See the [Debian package notes](../debian/README.Debian)
+for service behavior, permissions and local-unit upgrades.
+
+Client/server configuration examples are installed under
+`/usr/share/doc/tllama/examples/`. The client example is not installed as an
+active configuration. Copy `client.toml` to `/etc/tllama/client.toml` for system
+defaults or to `$XDG_CONFIG_HOME/tllama/client.toml` (normally
+`~/.config/tllama/client.toml`) for user preferences; see the
+[client configuration rules](cli.md#http-client-basics).
+
+This example does not add an APT source or claim the packages are in Debian's
+official archive. Use the maintainer's configured package source or locally
+built matching `.deb` files. Native source/build profiles
 are maintained in [tllama-server](https://github.com/ByCzech/tllama-server).
 Its public main snapshot may predate the applied development series.
 
 The Python application can be installed from source with the instructions in
 [README](../README.md); the supplied [systemd unit](../systemd/tllamad.service)
-has a [manual setup guide](systemd.md). Completing the application package and
-release installation flow remains separate from the already-built native
-runtime packages. This documentation does not announce a released 1.0.0 package.
+has a [manual setup guide](systemd.md). Building the Python wheel or source
+archive does not build or bundle the native runtime.
 
 ## Planned builds and installers
 
@@ -69,7 +85,7 @@ without a promised release date or claimed published download:
 
 | Platform | Present basis | Planned distribution work |
 | --- | --- | --- |
-| Linux | Source installation, supplied systemd unit and exercised Debian native packages | Finished application/native package integration and convenient builds/installers |
+| Linux | Python wheel/source archive, Debian application/native packages and systemd service | Additional convenient builds/installers |
 | Windows | Native upstream backend/toolchain capabilities and configurable runtime path | TLlama builds/installers, dependency bundling and platform lifecycle/transport qualification |
 | macOS | Native CPU/Accelerate/Metal capabilities | TLlama builds/installers and platform/backend qualification |
 
@@ -82,5 +98,6 @@ so a macOS build also needs an appropriate explicit selector or policy.
 Installer formats, CPU architectures, signing/notarization, update channels,
 bundled SDK versions and release dates remain to be selected and validated.
 No MSI, DMG, universal binary, self-updater or cross-platform feature parity is
-promised by the present source tree. Track final release readiness in the
-[review record](release-review-100.md).
+promised by the present source tree. Release changes are tracked in the
+[changelog](../CHANGELOG.md); the [1.0.0 review record](release-review-100.md)
+retains its historical review and qualification decisions.

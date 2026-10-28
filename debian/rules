@@ -16,6 +16,10 @@ override_dh_auto_test:
 	# Build/install smoke only; the full inference suite is a development check.
 	dh_auto_test -- --system=custom --test-args='PYTHONPATH={build_dir}:$$PYTHONPATH {interpreter} {dir}/debian/tests/smoke --expected-version $(SETUPTOOLS_SCM_PRETEND_VERSION_FOR_TLLAMA)'
 
+override_dh_installchangelogs:
+	# Preserve documentation links to the upstream filename without a second copy.
+	dh_installchangelogs --keep CHANGELOG.md
+
 override_dh_installsystemd:
 	# Drain owned workers before replacing Python modules, then start the new code.
 	dh_installsystemd --no-restart-after-upgrade

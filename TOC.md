@@ -6,6 +6,7 @@ original build identities and evidence.
 
 ## Overview, advantages and installation
 
+- [Changelog and upgrade notes](CHANGELOG.md): release summaries derived from Git.
 - [Features and practical comparison](docs/features.md): per-model control,
   extensions, memory evidence, APIs, storage and process ownership.
 - [Hardware and backends](docs/hardware.md): AMD targets and GPU families,
