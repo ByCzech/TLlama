@@ -43,6 +43,10 @@ client working directory unless their paths are absolute.
 Show version information.
 .SH OPTIONS
 .TP
+.B --config PATH
+Read only this client TOML file over built-in defaults, excluding system and
+user configuration files.
+.TP
 .B --host ADDRESS
 Server address; overrides TLLAMA_HOST. Default: http://127.0.0.1:54800.
 .TP
@@ -58,6 +62,16 @@ Show help. Each command has its own --help.
 .B --version
 Show the installed client version.
 .SH FILES
+.I /etc/tllama/client.toml
+.br
+.I $XDG_CONFIG_HOME/tllama/client.toml
+(default: ~/.config/tllama/client.toml)
+.PP
+System settings are read first, then individual user settings override them.
+The [client] table accepts host and timeout. CLI options override environment
+settings, which override file settings. Missing automatic files are ignored;
+invalid or unreadable files and missing explicit files are errors.
+.PP
 .I /usr/share/doc/tllama/docs/cli.md
 .SH SEE ALSO
 .BR tllamad (1)

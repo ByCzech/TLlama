@@ -49,7 +49,26 @@ tllama version                   # client + connected server version
 tllama --host 192.0.2.10:54800 list --json
 ```
 
-Client address selection is `--host > TLLAMA_HOST > 127.0.0.1:54800`.
+Client defaults are read from `/etc/tllama/client.toml`, then
+`$XDG_CONFIG_HOME/tllama/client.toml` (normally `~/.config/tllama/client.toml`).
+Later explicit values override earlier values individually; an omitted setting
+inherits its previous value, even within the same table. Missing automatic files
+are ignored. Invalid or unreadable files are errors.
+
+`--config PATH` instead reads only that file over built-in defaults, excluding
+both automatic files. A missing explicit file is an error. Files are read only
+by the CLI; constructing the Python HTTP client does not discover configuration.
+Help and `--version` do not read configuration or contact a server.
+
+```toml
+[client]
+host = "http://127.0.0.1:54800"
+# timeout = 120 # Optional positive finite HTTP inactivity limit in seconds.
+```
+
+See `examples/client.toml`. Unknown sections/settings and wrong value types are
+rejected. CLI flags override environment settings, which override file settings.
+Client address selection is `--host > TLLAMA_HOST > client.host > 127.0.0.1:54800`.
 HTTP and HTTPS URLs, an optional reverse-proxy path prefix, host:port, :port,
 and bracketed/bare IPv6 are supported. An omitted port always means 54800;
 write an explicit :443 or :80 when a reverse proxy uses that port. Wildcard
@@ -57,8 +76,8 @@ listener addresses 0.0.0.0 and :: connect through loopback. The client preserves
 the HTTP(S) scheme; the daemon's legacy environment parser does not enable TLS.
 Credentials, query strings and fragments in the address are refused.
 
-`--host`, `--timeout` and `--json` work before or after the subcommand.
-Without `--timeout`, list/show/pull/run have no response-read deadline: rebuilding
+`--config`, `--host`, `--timeout` and `--json` work before or after the subcommand.
+Without an explicit timeout in the file or CLI, list/show/pull/run have no response-read deadline: rebuilding
 metadata or waiting for a server-side download lookup may take longer than a
 fixed limit. Other commands retain a 30-second HTTP inactivity timeout.
 Connection setup remains capped at 10 seconds, including for list/show/pull/run.

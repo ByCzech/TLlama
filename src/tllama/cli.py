@@ -27,6 +27,8 @@ def _positive_timeout(value):
 
 def _client_options(parser):
     # Suppressed subparser defaults preserve flags supplied before the command.
+    parser.add_argument('--config', default=argparse.SUPPRESS, metavar='PATH',
+                        help='Read only this client TOML file instead of system/user files.')
     parser.add_argument('--host', default=argparse.SUPPRESS,
                         help='Server HTTP(S) address (overrides TLLAMA_HOST; default 127.0.0.1:54800).')
     parser.add_argument('--timeout', type=_positive_timeout, default=argparse.SUPPRESS,
@@ -185,6 +187,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     from tllama.client import ClientConfigError, ClientError
 
     try:
+        from tllama.client_config import load_client_config
+        config = load_client_config(getattr(args, 'config', None),
+                                    {key: getattr(args, key) for key in ('host', 'timeout')
+                                     if hasattr(args, key)})
+        args.host, args.timeout = config.host, config.timeout
         return asyncio.run(_execute(args))
     except ClientConfigError as exc:
         print(f'tllama: {exc}', file=sys.stderr)

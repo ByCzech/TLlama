@@ -1,0 +1,7 @@
+# Optional client defaults. Files layer as /etc/tllama/client.toml then
+# $XDG_CONFIG_HOME/tllama/client.toml (normally ~/.config/tllama/client.toml).
+# --config PATH reads only that file, over built-in defaults.
+# CLI flags override environment settings, which override file settings.
+[client]
+# host = "http://127.0.0.1:54800"
+# timeout = 120 # Seconds; omit to retain command-dependent HTTP timeouts.
