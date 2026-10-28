@@ -22,6 +22,9 @@ original build identities and evidence.
 - [Daemon configuration](docs/daemon.md): server TOML, environment, CLI and inspection.
 - [Model configuration](docs/configuration.md): model TOML, precedence and sampling.
 - [Example server configuration](examples/server.toml).
+- [Client configuration and flags](docs/cli.md#http-client-basics): layered
+  system/user preferences, connection defaults and display controls.
+- [Example client configuration](examples/client.toml).
 - [Native configuration reference](docs/native-config.md).
 - [Backend selection and fallback](docs/backend-priority.md).
 - [Device inventory and selector evidence](docs/device-inventory.md).

@@ -12,6 +12,11 @@ generation, vision, embedding and Decision models.
 
 ## At a glance
 
+- **Configurable client, daemon and model profiles:** layer system/user client
+  TOML preferences and override them from the CLI; inspect daemon CLI/env/TOML
+  defaults and keep native load choices in each model profile. Client switches
+  cover the remote server, HTTP timeouts, JSON output, request options, units,
+  reasoning display and statistics. See the [configuration overview](docs/features.md#inspectable-configuration-and-model-profiles).
 - **Independent K and V cache precision per model:** combine, for example,
   `type_k = "q8_0"` and `type_v = "q4_0"`, with global defaults and explicit
   model overrides. This goes beyond Ollama's single global K/V type.
@@ -48,8 +53,10 @@ generation, vision, embedding and Decision models.
 Start with the [documentation index](TOC.md), the detailed
 [features and comparison](docs/features.md), [hardware support](docs/hardware.md)
 and [packages and platform roadmap](docs/distribution.md).
-The project is under active development toward 1.0.0. These pages distinguish
-implemented features, tested configurations and planned distribution work.
+TLlama 1.0.0 has been released; this branch also documents ongoing 1.x
+development, including the client configuration and fit controls below.
+These pages distinguish implemented features, tested configurations and planned
+distribution work.
 
 ## Install and start
 
@@ -148,6 +155,36 @@ separates reasoning from the final answer and supports session slash commands.
 One-shot prompts and stdin are also supported. Output/JSON stays on stdout;
 progress, reasoning and optional timings go to stderr. See
 [cli.md](docs/cli.md) for exact dispatch, options, commands and cancellation.
+
+Client preferences live in a separate `client.toml`, for example:
+
+```toml
+# ~/.config/tllama/client.toml
+[client]
+host = "http://inference-server:54800"
+# timeout = 120
+
+[display]
+decimal_units = false
+hide_thinking = false
+verbose = true
+```
+
+Built-in defaults are overlaid by `/etc/tllama/client.toml`, then the user file
+under `$XDG_CONFIG_HOME/tllama` (normally `~/.config/tllama`). Only explicitly
+set values override earlier values. `--config PATH` instead selects one file
+over built-in defaults. CLI flags override the file and supported environment
+values; for the server address, `--host` overrides `TLLAMA_HOST`.
+
+```sh
+tllama --host http://other-server:54800 --timeout 120 ps --json
+tllama --config examples/client.toml ps --no-decimal-units
+tllama run MODEL --option num_ctx=32768 --option temperature=0.7 --no-verbose
+```
+
+This gives the HTTP client direct controls as well as persistent preferences;
+it does not change server defaults or model definitions. See the
+[client configuration example](examples/client.toml) and [CLI guide](docs/cli.md).
 
 ## Models and imports
 

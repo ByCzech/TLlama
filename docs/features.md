@@ -2,7 +2,8 @@
 
 TLlama provides a model service, client and configuration layer over a patched
 llama.cpp runtime. Its main advantages are explicit per-model control, extended
-native model/hardware support and inspectable runtime evidence.
+native model/hardware support, configurable client/daemon interfaces and
+inspectable runtime evidence.
 See the [documentation index](../TOC.md) for the complete guide set.
 
 ## Independent K and V precision
@@ -116,12 +117,31 @@ native upstream base rather than presented as a unique TLlama invention.
 
 ## Inspectable configuration and model profiles
 
-- Global defaults resolve CLI > environment > server TOML > built-in defaults.
+TLlama brings persistent client preferences, inspectable service defaults and
+per-model runtime profiles into one configuration workflow. The CLI exposes
+both client behavior and supported inference controls directly:
+
+| Scope | Persistent configuration | Direct controls |
+| --- | --- | --- |
+| Client connection and display | System then user `client.toml`; a user can replace individual settings | `--host`, `--timeout`, `--config`, `--json`, `--decimal-units` / `--no-decimal-units` |
+| Run/REPL presentation and requests | `[display] verbose` and `hide_thinking`; request controls remain explicit | `--verbose` / `--no-verbose`, `--hide-thinking` / `--show-thinking`, `--option NAME=JSON`, `--system`, `--think`, `--format`, `--keep-alive` |
+| Daemon | `server.toml`, environment and CLI overrides | Listener/storage/runtime selection, device/backend defaults, context/K/V settings, lifecycle and telemetry; `--check-config` and `--print-config` |
+| Model runtime | Each model's `[runtime]`, sampling, template and system settings | Context, device placement, independent K/V precision, native fitting and safety margin, MTP and other typed load controls |
+
+- Client files layer built-in defaults, `/etc/tllama/client.toml`, then
+  `$XDG_CONFIG_HOME/tllama/client.toml` (normally `~/.config/tllama/client.toml`).
+  A user file can change only display preferences while retaining the system
+  server address, or explicitly replace that address. `--config PATH` reads only
+  the selected file over built-in defaults. CLI flags override supported
+  environment settings and file defaults. Binary sizes are the default; JSON
+  continues to carry the original byte values.
+- Daemon defaults resolve CLI > environment > server TOML > built-in defaults.
   Per-model definitions and supported request overrides provide stronger scoped
   settings. `--check-config` validates configuration before serving;
   `--print-config` reports resolved values and their sources.
 - Load controls include context, batches, CPU threads, GPU layers, split mode,
-  RoPE/YaRN, NUMA, mmap/mlock, operation/KV offload, LoRA and typed GGUF metadata
+  native `fit` and `fit_target_mib`, RoPE/YaRN, NUMA, mmap/mlock,
+  operation/KV offload, LoRA and typed GGUF metadata
   overrides. Templates, system prompts, sampling and FIM ordering are also
   explicit model settings; no arbitrary native command-line passthrough is needed.
 - Different public model names can share the same GGUF/projector files while
@@ -134,7 +154,21 @@ native upstream base rather than presented as a unique TLlama invention.
 - GGUF sampling recommendations are used where explicit settings are absent.
   Unsupported settings fail visibly instead of silently disappearing.
 
-See [daemon configuration](daemon.md), [model configuration](configuration.md)
+Compared with the reviewed Ollama CLI, TLlama adds explicit connection/timeout
+flags, common full-response `--json` output, repeated `--option NAME=JSON` request
+overrides and layered client TOML preferences. Ollama already has options for
+timings, thinking display, format and keep-alive; those basic capabilities are
+not exclusive to TLlama.
+
+The native `llama-server` already has extensive runtime flags, environment
+settings and router model presets. TLlama's advantage is the integrated client
+configuration and named per-model service layer around those controls, alongside
+its OpenAI-compatible HTTP API. It is not a claim to expose more total native
+flags than llama.cpp, or every option through an OpenAI request body.
+
+See [client configuration and CLI](cli.md), [example client TOML](../examples/client.toml),
+[daemon configuration](daemon.md), [model configuration](configuration.md),
+[native fit controls](native-config.md#native-fit-memory-margin)
 and [model repositories](model-repositories.md).
 
 ## Memory evidence beyond a process-size estimate
@@ -206,8 +240,11 @@ See [imports](cli.md#create-and-import-models), [metadata cache](metadata-cache.
 
 ## Comparison with the reviewed projects
 
-Compared on 27 October 2026. Upstream development can change these details;
-the [source audit](feature-source-audit.md) pins the inspected revisions.
+External comparison baseline reviewed on 27 October 2026; TLlama client
+configuration and fit entries updated on 28 October for the develop/1.x branch.
+Upstream development can change these details; the
+[source audit](feature-source-audit.md) pins the inspected revisions and records
+the configuration update.
 
 | Area | TLlama | Reviewed Ollama | Official llama.cpp |
 | --- | --- | --- | --- |
@@ -216,7 +253,9 @@ the [source audit](feature-source-audit.md) pins the inspected revisions.
 | Instella-MoE | Experimental native-fork converter/loader/graph | No Instella registration found in inspected source | No Instella registration found in inspected source; community PR credited |
 | Legacy ROCm deployment | Development kernels plus optional matching BLAS add-ons | Hardware/runtime policy differs; no blanket exclusivity claim | Generic HIP/GCN support already exists; the complete deployment is a separate concern |
 | Memory inspection | Fork memory endpoint plus validated public provenance, payload/assignment/locality | No equivalent TLlama endpoint is claimed | Inspected source has no `/tllama/memory` extension |
+| Client configuration and CLI | Layered system/user TOML; explicit address, timeout, JSON, request-option and display switches | Reviewed CLI uses `OLLAMA_HOST` for the address; no equivalent layered client preferences or common connection/JSON/option switches found | Rich native server flags, environment, router presets and web UI settings; a different scope from TLlama's remote CLI client |
 | Service configuration | Persistent per-model TOML, inspectable global CLI/env/TOML layers and managed workers | Modelfiles, options and server environment have their own scope | Native flags/configuration and server capabilities; not the TLlama model-definition service |
+| Native fitting policy | Global/model `fit` and `fit_target_mib`; automatic fitting or explicit all/off | Scheduler and runner policies have their own controls | `--fit`, `--fit-target` and explicit GPU-layer settings already exist |
 
 The intended distinction is practical control and integrated extensions. GPU
 backends, separate native K/V switches, embeddings and many model architectures
