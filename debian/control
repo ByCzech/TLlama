@@ -48,6 +48,7 @@ Depends:
  python3-pydantic (>= 2.0.0),
  python3-tomlkit (>= 0.13.0),
  python3-uvicorn (>= 0.23.0)
+Suggests: tllama-doc
 Description: local model inference daemon and command-line client
  TLlama serves Ollama-compatible and OpenAI-compatible inference APIs using
  private native tllama-server workers. It manages model definitions, model
@@ -56,3 +57,19 @@ Description: local model inference daemon and command-line client
  This package provides the tllamad foreground daemon, its systemd service and
  server configuration, and the tllama client with an interactive prompt.
  Native inference backends are supplied by separate tllama-server packages.
+
+Package: tllama-doc
+Section: doc
+Architecture: all
+Multi-Arch: foreign
+Depends: ${misc:Depends}
+Suggests: tllama
+Breaks: tllama (<< 1.1.0-1~)
+Replaces: tllama (<< 1.1.0-1~)
+Description: documentation and configuration examples for TLlama
+ TLlama serves Ollama-compatible and OpenAI-compatible inference APIs using
+ private native tllama-server workers.
+ .
+ This package provides the user and administrator guides, API and native
+ runtime references, hardware qualification records and configuration examples.
+ It can be installed independently of the client, daemon and native runtime.
