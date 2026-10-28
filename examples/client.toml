@@ -5,3 +5,6 @@
 [client]
 # host = "http://127.0.0.1:54800"
 # timeout = 120 # Seconds; omit to retain command-dependent HTTP timeouts.
+
+[display]
+# decimal_units = false # Default: KiB/MiB/GiB/TiB; true: kB/MB/GB/TB.

@@ -35,6 +35,8 @@ def _client_options(parser):
                         help='HTTP inactivity limit in seconds (default: no read limit for list/show/pull/run, otherwise 30; connect at most 10).')
     parser.add_argument('--json', action='store_true', default=argparse.SUPPRESS,
                         help='Print the full server response as JSON.')
+    parser.add_argument('--decimal-units', action=argparse.BooleanOptionalAction, default=argparse.SUPPRESS,
+                        help='Use decimal kB/MB/GB/TB; --no-decimal-units selects binary units (default).')
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -112,7 +114,8 @@ async def _execute(args):
             return 0
         if args.operation == 'create':
             from tllama.client_import import create_from_file
-            data = await create_from_file(client, args.model, args.file, force=args.force, as_json=as_json)
+            data = await create_from_file(client, args.model, args.file, force=args.force, as_json=as_json,
+                                          decimal_units=args.decimal_units)
             print(json.dumps(data, ensure_ascii=False) if as_json else f'created: {args.model}')
             return 0
         if args.operation == 'pull':
@@ -125,7 +128,8 @@ async def _execute(args):
                         from tllama.cli_output import size_text
                         text = event['status']
                         if 'completed' in event:
-                            text += f": {size_text(event['completed'])} / {size_text(event.get('total'))}"
+                            text += (f": {size_text(event['completed'], decimal_units=args.decimal_units)} / "
+                                     f"{size_text(event.get('total'), decimal_units=args.decimal_units)}")
                         if text != previous:
                             print(text, file=sys.stderr, flush=True)
                             previous = text
@@ -154,10 +158,10 @@ async def _execute(args):
             text = f'unload requested: {args.model}'
         elif args.operation == 'list':
             data = await _wait_for_model_info(client.list_models(), notice=not as_json)
-            text = '' if as_json else models_text(data)
+            text = '' if as_json else models_text(data, decimal_units=args.decimal_units)
         elif args.operation == 'ps':
             data = await client.ps()
-            text = '' if as_json else processes_text(data)
+            text = '' if as_json else processes_text(data, decimal_units=args.decimal_units)
         elif args.operation == 'show':
             data = await _wait_for_model_info(client.show(args.model), notice=not as_json)
             text = '' if as_json else show_text(args.model, data, args.field)
@@ -189,9 +193,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         from tllama.client_config import load_client_config
         config = load_client_config(getattr(args, 'config', None),
-                                    {key: getattr(args, key) for key in ('host', 'timeout')
+                                    {key: getattr(args, key) for key in ('host', 'timeout', 'decimal_units')
                                      if hasattr(args, key)})
         args.host, args.timeout = config.host, config.timeout
+        args.decimal_units = config.decimal_units
         return asyncio.run(_execute(args))
     except ClientConfigError as exc:
         print(f'tllama: {exc}', file=sys.stderr)

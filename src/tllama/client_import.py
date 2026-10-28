@@ -10,7 +10,7 @@ import threading
 
 from tllama.client import ClientError
 from tllama.cli_status import WaitStatus
-from tllama.cli_locale import number_text
+from tllama.cli_output import size_text
 from tllama.helpers.model_toml import parse_model_toml, validate_definition_name
 
 CHUNK = 1024 * 1024
@@ -90,7 +90,7 @@ def _groups(spec, directory, *, stop):
     return groups
 
 
-async def create_from_file(client, model, path, *, force=False, as_json=False):
+async def create_from_file(client, model, path, *, force=False, as_json=False, decimal_units=False):
     directory = Path.cwd()
     path = Path(path).expanduser().absolute()
     try:
@@ -121,7 +121,8 @@ async def create_from_file(client, model, path, *, force=False, as_json=False):
             for file, digest, signature in files:
                 if not await client.blob_exists(digest):
                     if not as_json:
-                        print(f'Uploading {file.name} ({number_text(signature[2])} bytes)', file=sys.stderr, flush=True)
+                        print(f'Uploading {file.name} ({size_text(signature[2], decimal_units=decimal_units)})',
+                              file=sys.stderr, flush=True)
                     async with WaitStatus('Uploading model file…', enabled=not as_json), \
                             aclosing(_chunks(file, signature)) as content:
                         await client.upload_blob(digest, content)

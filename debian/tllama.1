@@ -56,6 +56,10 @@ Override the request timeout policy.
 .B --json
 Use machine-readable output where supported.
 .TP
+.B --decimal-units, --no-decimal-units
+Select decimal kB/MB/GB/TB or binary KiB/MiB/GiB/TiB for human sizes. Binary is
+the default. API and JSON byte values are unchanged.
+.TP
 .B --help
 Show help. Each command has its own --help.
 .TP
@@ -68,7 +72,8 @@ Show the installed client version.
 (default: ~/.config/tllama/client.toml)
 .PP
 System settings are read first, then individual user settings override them.
-The [client] table accepts host and timeout. CLI options override environment
+The [client] table accepts host and timeout. The [display] table accepts
+decimal_units (boolean, default false). CLI options override environment
 settings, which override file settings. Missing automatic files are ignored;
 invalid or unreadable files and missing explicit files are errors.
 .PP

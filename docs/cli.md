@@ -64,6 +64,9 @@ Help and `--version` do not read configuration or contact a server.
 [client]
 host = "http://127.0.0.1:54800"
 # timeout = 120 # Optional positive finite HTTP inactivity limit in seconds.
+
+[display]
+decimal_units = false
 ```
 
 See `examples/client.toml`. Unknown sections/settings and wrong value types are
@@ -99,6 +102,14 @@ newline. `show --modelfile` returns TOML, not an Ollama Modelfile conversion.
 `ps` derives processor placement from the server's compatibility size fields;
 unknown values remain unknown. These fields are not a measurement of physical
 RAM/VRAM residency. Detailed memory/provenance remains available with `ps --json`.
+
+Human sizes in list/ps tables and pull/create progress use binary units by
+default: B, KiB, MiB, GiB and TiB (powers of 1024). Set
+`[display] decimal_units = true` or pass `--decimal-units` for decimal B, kB, MB,
+GB and TB (powers of 1000). `--no-decimal-units` overrides a decimal file setting.
+Both flags work before or after the subcommand. These are formatting choices;
+JSON and API sizes remain unchanged in bytes, and processor percentages use
+the original byte values.
 
 Human tables and verbose statistics use the client's numeric locale for decimal
 and grouping separators. `list` modification times and `ps` expiry times use the

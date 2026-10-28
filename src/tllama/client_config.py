@@ -10,13 +10,15 @@ import tomlkit
 from tllama.client import ClientConfigError, DEFAULT_HOST, server_url
 
 
-SETTINGS = {'client.host': ('host', str), 'client.timeout': ('timeout', float)}
+SETTINGS = {'client.host': ('host', str), 'client.timeout': ('timeout', float),
+            'display.decimal_units': ('decimal_units', bool)}
 
 
 @dataclass(frozen=True)
 class ClientConfig:
     host: str = DEFAULT_HOST
     timeout: float | None = None
+    decimal_units: bool = False
 
 
 def default_config_paths(environ):
@@ -28,6 +30,8 @@ def default_config_paths(environ):
 
 def _validate(key, value, origin):
     expected = SETTINGS[key][1]
+    if expected is bool and type(value) is not bool:
+        raise ClientConfigError(f'{origin}: {key} must be true or false.')
     if expected is str:
         if not isinstance(value, str) or not value.strip() or '\0' in value:
             raise ClientConfigError(f'{origin}: {key} must be a nonempty string.')
