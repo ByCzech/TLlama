@@ -205,7 +205,8 @@ class AutomaticWorker:
             if device == 'none':
                 options.update(op_offload=False, offload_kqv=False)
             candidate = replace(spec, device=device, n_gpu_layers=0 if device == 'none' else spec.n_gpu_layers,
-                                fit=device != 'none' and spec.n_gpu_layers is None, runtime_options=options)
+                                fit=device != 'none' and (spec.fit if spec.fit is not None
+                                                        else spec.n_gpu_layers is None), runtime_options=options)
             self._worker = self._factory(candidate)
             record = {'backend': backend, 'device': device, 'outcome': 'starting'}
             self.selection_attempts.append(record)

@@ -13,7 +13,7 @@ from types import MappingProxyType
 
 RUNTIME_TYPES = {
     "device": "str", "n_ctx": "int", "n_gpu_layers": "int",
-    "fit_target_mib": "int",
+    "fit": "bool", "fit_target_mib": "int",
     "split_mode": "int", "main_gpu": "int", "tensor_split": "List[float]",
     "use_mmap": "bool", "use_mlock": "bool", "kv_overrides": "Dict",
     "seed": "int", "n_batch": "int", "n_ubatch": "int",

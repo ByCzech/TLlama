@@ -71,3 +71,108 @@ def test_direct_launch_options_validate_margin_and_keep_native_environment_owned
     assert 'LLAMA_ARG_FIT_TARGET' not in spec.child_environment({'LLAMA_ARG_FIT_TARGET': '0'})
     with pytest.raises(ValueError, match='fit_target_mib'):
         runtime_cli_args({'fit_target_mib': -1})
+
+
+@pytest.mark.parametrize('device,settings,fit,layers', [
+    ('CUDA0', '', 'off', 'all'),
+    ('CUDA0', 'fit=true', 'on', 'auto'),
+    ('CUDA0', 'fit=false', 'off', 'all'),
+    ('CUDA0', 'fit=true\nn_gpu_layers=-1', 'on', 'all'),
+    ('CUDA0', 'fit=false\nn_gpu_layers=5', 'off', '5'),
+    ('none', 'fit=true', 'off', '0'),
+])
+def test_explicit_device_fit_policy_preserves_explicit_counts(device, settings, fit, layers):
+    model = parse_model_toml(LLM + f'[runtime]\ndevice="{device}"\n{settings}\n')
+    resolved = resolve_worker_config(BackendConfig(), MODEL, model)
+    args = argv(resolved)
+    assert option(args, '--fit') == fit and option(args, '--n-gpu-layers') == layers
+
+
+def test_fit_global_environment_and_model_precedence():
+    config = load_daemon_config(False, environ={'TLLAMA_RUNTIME_FIT': 'false'}, discover=False)
+    assert config.backend.runtime_overrides['fit'] is False
+    model = parse_model_toml(LLM + '[runtime]\nfit=true\n')
+    resolved = resolve_worker_config(config.backend, MODEL, model)
+    assert resolved.launch.fit is True and resolved.sources['fit'] == 'TOML'
+
+
+@pytest.mark.parametrize('value', ['0', '1', '"false"', '[]'])
+def test_fit_toml_requires_a_boolean(value):
+    with pytest.raises(TomlModelError, match='fit'):
+        parse_model_toml(LLM + f'[runtime]\nfit={value}')
+
+
+def test_direct_device_launch_without_fit_override_keeps_all_off_default():
+    args = WorkerLaunchSpec(model=MODEL, device='CUDA0').command(Path('/private/key'))
+    assert option(args, '--fit') == 'off' and option(args, '--n-gpu-layers') == 'all'
+
+
+@pytest.mark.parametrize('value', [0, 1, 'false'])
+def test_private_fit_override_is_strictly_boolean(value):
+    with pytest.raises(ValueError, match='fit must be a boolean'):
+        WorkerLaunchSpec(model=MODEL, device='CUDA0', fit=value)
+
+
+@pytest.mark.parametrize('settings,fit,layers', [
+    ('', 'on', 'auto'), ('fit=false', 'off', 'all'), ('fit=true', 'on', 'auto'),
+    ('n_gpu_layers=-1', 'off', 'all'), ('fit=false\nn_gpu_layers=-1', 'off', 'all'),
+    ('fit=true\nn_gpu_layers=-1', 'on', 'all'), ('fit=false\nn_gpu_layers=3', 'off', '3'),
+])
+async def test_automatic_selection_respects_fit_override(monkeypatch, settings, fit, layers):
+    from tllama.automatic_worker import AutomaticWorker
+    async def discovery(spec):
+        return ('CUDA0',)
+    class Worker:
+        def __init__(self, spec):
+            self.spec = spec
+        async def start(self):
+            return self
+        async def close(self):
+            pass
+    monkeypatch.setattr('tllama.automatic_worker.discover_devices', discovery)
+    model = parse_model_toml(LLM + f'[runtime]\nn_ctx=132864\nfit_target_mib=512\n{settings}\n')
+    resolved = resolve_worker_config(BackendConfig(), MODEL, model)
+    worker = AutomaticWorker(resolved.launch, worker_factory=Worker)
+    try:
+        await worker.start()
+        args = worker.spec.command(Path('/private/key'))
+        assert option(args, '--fit') == fit and option(args, '--n-gpu-layers') == layers
+        assert option(args, '--fit-target') == '512' and option(args, '--ctx-size') == '132864'
+    finally:
+        await worker.close()
+
+
+@pytest.mark.parametrize('failure,retry_cpu', [('CUDA driver version is insufficient', True),
+                                             ('out of memory', False)])
+async def test_cpu_fallback_disables_fit_but_oom_never_changes_placement(monkeypatch, failure, retry_cpu):
+    from tllama.automatic_worker import AutomaticWorker
+    from tllama.worker import WorkerStartupError
+    async def discovery(spec):
+        return ('CUDA0',)
+    attempts = []
+    class Worker:
+        def __init__(self, spec):
+            self.spec = spec
+            attempts.append(spec)
+        async def start(self):
+            if self.spec.device == 'CUDA0':
+                raise WorkerStartupError(failure)
+            return self
+        async def close(self):
+            pass
+    monkeypatch.setattr('tllama.automatic_worker.discover_devices', discovery)
+    model = parse_model_toml(LLM + '[runtime]\nfit=true\n')
+    resolved = resolve_worker_config(BackendConfig(backend_priority=('CUDA',)), MODEL, model)
+    worker = AutomaticWorker(resolved.launch, worker_factory=Worker)
+    try:
+        if retry_cpu:
+            await worker.start()
+            args = worker.spec.command(Path('/private/key'))
+            assert option(args, '--fit') == 'off' and option(args, '--n-gpu-layers') == '0'
+            assert [spec.device for spec in attempts] == ['CUDA0', 'none']
+        else:
+            with pytest.raises(WorkerStartupError, match='out of memory'):
+                await worker.start()
+            assert len(attempts) == 1
+    finally:
+        await worker.close()

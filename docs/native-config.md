@@ -25,7 +25,7 @@ process. Missing device selection defers backend selection until worker startup.
 | Context | Request `num_ctx` > TOML `n_ctx` > global context; global default 0 = trained maximum |
 | GPU layers | Explicit placement retains default `all`; automatic placement fits unset GPU layer count natively; explicit counts retained on GPU attempts |
 | CPU | `device=none` forces layers 0, operation/KV/projector offload disabled; explicit contradictory offload rejected |
-| Fit / parallel / context shift | Explicit placement: off; automatic fitting: on / 1 / off unless runtime `context_shift` or request `num_keep` enables it |
+| Fit / parallel / context shift | Fit: automatic policy unless `[runtime].fit` overrides it; CPU off / 1 / off unless runtime `context_shift` or request `num_keep` enables it |
 | Flash attention | Off unless configured; supplied model profiles remain on |
 | Batch / ubatch | 512 / 512 unless configured |
 | Threads | Omitted when unset: native automatic policy, replacing the binding's thread defaults |
@@ -58,6 +58,7 @@ a shell; paths and serialized values stay individual argv elements.
 | Model / projector paths | `--model`, `--mmproj` | Resolved storage paths |
 | `device`, `n_gpu_layers`, `n_ctx` | `--device`, `--n-gpu-layers`, `--ctx-size` | Load |
 | `fit_target_mib` | `--fit-target` | Load; nonnegative integer MiB, broadcast to all devices |
+| `fit` | `--fit on/off` | Load; optional boolean override, CPU attempts always off |
 | `type_k`, `type_v`, `flash_attn` | `--cache-type-k`, `--cache-type-v`, `--flash-attn on/off` | Load |
 | `n_batch`, `n_ubatch` | `--batch-size`, `--ubatch-size` | Load |
 | `n_threads`, `n_threads_batch` | `--threads`, `--threads-batch` | Load |
@@ -96,6 +97,15 @@ TOML round-trip content is retained; resolving does not rewrite supplied files.
 
 ## Native fit memory margin
 
+`[runtime] fit = true/false` explicitly enables/disables native fitting for GPU
+attempts. If omitted, automatic device selection fits an unset GPU layer count;
+explicit devices or explicitly configured layer counts retain their existing
+default of fitting off. Explicit `fit = true` also makes an otherwise unset
+layer count automatic on an explicitly selected GPU. Explicit counts remain
+explicit; native fitting may only adjust context when its size is unset (0).
+CPU placement and CPU fallback always disable fit and force zero GPU layers.
+The daemon environment spelling is `TLLAMA_RUNTIME_FIT=true/false`.
+
 Global server TOML and model TOML accept `[runtime] fit_target_mib = 512`.
 The model value overrides the global value. The global environment spelling is
 `TLLAMA_RUNTIME_FIT_TARGET_MIB=512`. An omitted value preserves the native
@@ -112,8 +122,26 @@ limitations still apply. Lower margins can fit more work but may allow OOM.
 ```toml
 [runtime]
 n_ctx = 132864
+fit = true
 fit_target_mib = 512
 ```
+
+To require full weight offload without automatic fitting, use this in the
+model TOML (or as global runtime defaults):
+
+```toml
+[runtime]
+n_ctx = 132864
+n_gpu_layers = -1
+fit = false
+```
+
+This emits `--n-gpu-layers all --fit off` for GPU attempts. `fit = false`
+alone also selects all layers when no count was configured. Existing model
+`n_gpu_layers = -1` without a fit override continues to mean all/off.
+Full offload still permits intentional host input/output/staging buffers.
+If it cannot fit, an OOM is not treated as an acceleration initialization
+failure and does not trigger automatic CPU fallback.
 
 Restart/unload the resident model to apply changed load settings. Native
 `LLAMA_ARG_*` variables are removed from inherited worker environments; use the

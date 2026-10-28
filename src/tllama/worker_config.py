@@ -38,7 +38,9 @@ class WorkerLaunchSpec:
     n_ctx: int = 2048
     n_gpu_layers: int | None = None
     backend_priority: tuple[str, ...] = DEFAULT_BACKEND_PRIORITY
-    fit: bool = False
+    # Unset preserves the policy: automatic selection fits unset layer counts;
+    # a direct explicit-device launch defaults to fitting off.
+    fit: bool | None = None
     type_k: str | None = None
     type_v: str | None = None
     flash_attn: bool | None = None
@@ -80,8 +82,8 @@ class WorkerLaunchSpec:
 
     def __post_init__(self):
         object.__setattr__(self, "backend_priority", backend_priority(self.backend_priority))
-        if type(self.fit) is not bool:
-            raise ValueError("fit must be a boolean")
+        if self.fit is not None and type(self.fit) is not bool:
+            raise ValueError("fit must be a boolean or unset")
         if self.version_policy not in ("warn", "strict"):
             raise ValueError("version_policy must be warn or strict")
         if self.memory_source not in ("auto", "native", "log"):

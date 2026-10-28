@@ -23,6 +23,7 @@ metadata_ttl = 300
 
 [runtime]
 n_ctx = 0
+# fit = true # Optional override; omit to retain automatic/explicit placement policy.
 # fit_target_mib = 1024 # Native fit safety margin per device; applies when fitting is enabled.
 # device = "Vulkan0" # Global default; individual model TOML can override it.
 # flash_attn = true
