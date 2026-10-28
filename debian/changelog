@@ -1,12 +1,20 @@
 tllama (1.1.0-1) unstable; urgency=medium
 
-  * Add layered client TOML configuration and display preferences.
-  * Default human-readable sizes to binary units, with decimal units optional.
-  * Expose native fit policy and memory margin configuration.
-  * Validate metadata and digest caches against cache-file timestamps.
-  * Ship client/server configuration examples and upstream release notes.
+  * New upstream release:
+    - Add layered client TOML configuration and display preferences.
+    - Default human-readable sizes to binary units, with decimal units optional.
+    - Expose native fit policy and memory margin configuration.
+    - Validate metadata and digest caches against cache-file timestamps.
+  * Split guides and configuration examples into the independent tllama-doc
+    package; suggest it from the application package.
+  * Keep the client, daemon, systemd service, server configuration and man
+    pages in tllama, together with the operational Debian README.
+  * Retain documentation paths under /usr/share/doc/tllama and declare
+    Breaks/Replaces for files moved from pre-1.1.0 application packages.
+  * Install the upstream changelog through debhelper, preserving its filename
+    link, and include the documentation index and configuration examples.
 
- -- NemaChybu team APT archive <maintainers@nemachybu.cz>  Wed, 28 Oct 2026 23:45:15 +0100
+ -- NemaChybu team APT archive <maintainers@nemachybu.cz>  Thu, 29 Oct 2026 00:11:14 +0100
 
 tllama (1.0.0-1) unstable; urgency=medium
 

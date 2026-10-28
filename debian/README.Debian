@@ -1,6 +1,15 @@
 TLlama for Debian
 =================
 
+The source builds two independent binary packages:
+
+  tllama       client, daemon, systemd service, server config and man pages
+  tllama-doc   guides, reference documentation and configuration examples
+
+Install tllama-doc when local guides or examples are wanted. It is suggested
+by tllama, not required, and does not depend on Python or the native runtime.
+The application retains this Debian README and its standard changelogs.
+
 The tllama package installs both /usr/bin/tllama (client) and /usr/bin/tllamad
 (foreground daemon), using the system Python. It depends on tllama-server,
 whose metapackage supplies the private native runtime and CPU backend. Install
@@ -15,8 +24,12 @@ on upgrade through the normal dpkg configuration-file mechanism. The unit
 reads this file explicitly; CLI > environment > TOML > built-in defaults.
 Use systemctl edit tllamad.service for unit overrides.
 
-Client configuration is separate from the daemon configuration. Examples are
-installed in /usr/share/doc/tllama/examples/client.toml and server.toml.
+Client configuration is separate from the daemon configuration. The optional
+tllama-doc package installs examples in
+/usr/share/doc/tllama/examples/client.toml and server.toml, along with README.md,
+TOC.md and docs/ under /usr/share/doc/tllama/. These paths retain the locations
+used before the package split. The documentation package can be installed
+without installing or starting the daemon.
 The client example is not enabled automatically. For system defaults, copy it
 to /etc/tllama/client.toml; for user preferences, copy it to
 $XDG_CONFIG_HOME/tllama/client.toml (normally ~/.config/tllama/client.toml).
