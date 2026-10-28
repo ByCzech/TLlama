@@ -218,7 +218,15 @@ text is read as one input and prepended to an argument prompt with two newlines.
 Whitespace and slash-prefixed text are otherwise preserved. An explicit empty
 prompt is still a request; stdin EOF does not open an interactive terminal.
 
-`--option NAME=JSON` can be repeated (last value for a name wins). `--system`
+`--option KEY=VALUE` can be repeated (last value for a key wins). VALUE uses
+JSON syntax: numbers such as `32768` or `0.7`, booleans `true`/`false`, quoted
+strings, arrays or objects as supported by the option. This is the individual
+value, not a complete JSON request body. Preserve JSON quotes when the shell
+would remove them; for example, `--option 'stop=["END"]'` passes an array.
+Supported keys, types and load/request scope are listed in
+[Ollama options](ollama-options.md).
+
+`--system`
 sets a session system message, `--think` accepts true/false or a supported level,
 `--format` accepts json or a JSON schema object, and `--keep-alive` selects a
 server residence duration. The server validates parameter names and supported
@@ -242,6 +250,33 @@ output and make the exit status nonzero; requests are never automatically retrie
 Ctrl+C closes the request and exits with status 130 in one-shot mode.
 
 ## Interactive run
+
+### Choose the context before loading
+
+```sh
+tllama run MODEL --option num_ctx=32768
+```
+
+The context override is sent in the initial preload, before the first REPL
+prompt, and retained in subsequent requests. TLlama therefore loads the model
+with the requested context from the start. There is no preliminary load using
+the model/server default just to change context after entering the REPL.
+Other supported load-time options, such as `num_batch`, use the same path;
+sampling options such as `temperature` are also retained for requests.
+No model definition or global server setting is rewritten.
+
+This avoids the extra reload that can follow changing `/set parameter num_ctx`
+after an interactive client has already preloaded with different settings.
+The reviewed Ollama CLI provides that REPL command, but no equivalent generic
+`run --option` switch. Ollama also supports model defaults and HTTP options;
+the distinction here is configuring this particular CLI run before its preload.
+
+An existing resident model with incompatible settings may still require a new
+generation, and expiry, unloading or zero keep-alive can require later loads.
+This shortcut avoids the default-then-custom-context sequence; it is not a
+promise that every session will perform exactly one physical load.
+
+### Preparation and terminal input
 
 `tllama run MODEL` opens a prompt_toolkit REPL when stdin is a terminal and
 no prompt arguments were supplied. Before the first prompt it prepares the

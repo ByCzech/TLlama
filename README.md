@@ -182,6 +182,13 @@ tllama --config examples/client.toml ps --no-decimal-units
 tllama run MODEL --option num_ctx=32768 --option temperature=0.7 --no-verbose
 ```
 
+For an interactive session, `tllama run MODEL --option num_ctx=32768` sends the
+context setting in the initial preload, before the REPL opens. This avoids
+loading with the default context and then reloading solely because the user
+changes it in the REPL. The option is retained for subsequent requests without
+rewriting the model definition. `--option KEY=VALUE` is repeatable; each VALUE
+uses JSON syntax, so numeric values can be written directly as above.
+
 This gives the HTTP client direct controls as well as persistent preferences;
 it does not change server defaults or model definitions. See the
 [client configuration example](examples/client.toml) and [CLI guide](docs/cli.md).

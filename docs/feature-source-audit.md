@@ -145,6 +145,14 @@ configuration files: its FAQ also documents `~/.ollama/server.json` for disablin
 cloud functionality. Server config, model Modelfiles and external launch-tool
 configuration have different scopes from TLlama's client preferences.
 
+For the context-before-preload example, TLlama's `RunSession.create` retains
+the parsed options, `RunSession.preload` forwards them, and `submit` reuses the
+same controls. In the pinned Ollama source, `RunHandler` calls
+`loadOrUnloadModel` before entering the interactive loop; `cmd/interactive.go`
+provides `/set parameter num_ctx`. No generic `run --option` registration was
+found. The claim concerns avoiding a default-then-custom-context CLI sequence,
+not the absence of Ollama Modelfile, environment or HTTP alternatives.
+
 The official native `tools/server/README.md` and `common/arg.cpp` already expose
 extensive server flags, including `--fit`/`--fit-target`, router INI presets and
 web UI JSON settings. TLlama adds typed global/model configuration and a remote

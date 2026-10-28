@@ -35,7 +35,7 @@ def load_json(text):
 def option(text):
     name, sep, value = text.partition('=')
     if not sep or not name.strip():
-        raise argparse.ArgumentTypeError('use NAME=JSON, e.g. temperature=0.7')
+        raise argparse.ArgumentTypeError('use KEY=VALUE, e.g. num_ctx=32768; VALUE uses JSON syntax')
     try:
         return name, load_json(value)
     except ValueError as exc:
@@ -62,7 +62,9 @@ def add_run_options(parser):
     parser.add_argument('model')
     parser.add_argument('prompt', nargs='*', help='Prompt text (stdin is prepended when piped).')
     parser.add_argument('--system', help='Session system prompt; does not change the model definition.')
-    parser.add_argument('--option', action='append', type=option, default=[], metavar='NAME=JSON')
+    parser.add_argument('--option', action='append', type=option, default=[], metavar='KEY=VALUE',
+                        help='Set a request option before loading; repeatable. VALUE uses JSON syntax, '
+                             'e.g. num_ctx=32768 or temperature=0.7.')
     parser.add_argument('--think', type=think_value, help='true, false, or a server-supported reasoning level.')
     parser.add_argument('--format', type=response_format, help='json or a JSON schema object.')
     parser.add_argument('--keep-alive', help='Server model residence duration, e.g. 5m or 0.')

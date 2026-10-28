@@ -124,7 +124,7 @@ both client behavior and supported inference controls directly:
 | Scope | Persistent configuration | Direct controls |
 | --- | --- | --- |
 | Client connection and display | System then user `client.toml`; a user can replace individual settings | `--host`, `--timeout`, `--config`, `--json`, `--decimal-units` / `--no-decimal-units` |
-| Run/REPL presentation and requests | `[display] verbose` and `hide_thinking`; request controls remain explicit | `--verbose` / `--no-verbose`, `--hide-thinking` / `--show-thinking`, `--option NAME=JSON`, `--system`, `--think`, `--format`, `--keep-alive` |
+| Run/REPL presentation and requests | `[display] verbose` and `hide_thinking`; request controls remain explicit | `--verbose` / `--no-verbose`, `--hide-thinking` / `--show-thinking`, `--option KEY=VALUE`, `--system`, `--think`, `--format`, `--keep-alive` |
 | Daemon | `server.toml`, environment and CLI overrides | Listener/storage/runtime selection, device/backend defaults, context/K/V settings, lifecycle and telemetry; `--check-config` and `--print-config` |
 | Model runtime | Each model's `[runtime]`, sampling, template and system settings | Context, device placement, independent K/V precision, native fitting and safety margin, MTP and other typed load controls |
 
@@ -155,10 +155,18 @@ both client behavior and supported inference controls directly:
   Unsupported settings fail visibly instead of silently disappearing.
 
 Compared with the reviewed Ollama CLI, TLlama adds explicit connection/timeout
-flags, common full-response `--json` output, repeated `--option NAME=JSON` request
+flags, common full-response `--json` output, repeated `--option KEY=VALUE` request
 overrides and layered client TOML preferences. Ollama already has options for
 timings, thinking display, format and keep-alive; those basic capabilities are
 not exclusive to TLlama.
+
+For example, `tllama run MODEL --option num_ctx=32768` includes the requested
+context in the first interactive preload and subsequent requests. It avoids
+the default-context load followed by a reload that can occur when context is
+changed only after entering the REPL. The reviewed Ollama client exposes
+`/set parameter num_ctx` in its REPL but no generic run-time CLI option for this
+workflow; model defaults and HTTP requests remain alternative Ollama workflows.
+See [context before loading](cli.md#choose-the-context-before-loading).
 
 The native `llama-server` already has extensive runtime flags, environment
 settings and router model presets. TLlama's advantage is the integrated client
