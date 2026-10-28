@@ -21,8 +21,12 @@ generation, vision, embedding and Decision models.
   `type_k = "q8_0"` and `type_v = "q4_0"`, with global defaults and explicit
   model overrides. This goes beyond Ollama's single global K/V type.
 - **Choose the device, including its backend:** assign one model to `ROCm0`,
-  another to `Vulkan0` or `CUDA0`, and another to CPU. Explicit comma-separated
-  selectors also reach the native multi-device path, including mixed backends
+  another to `Vulkan0` or `CUDA0`, and another to CPU. A main chat model can use
+  CUDA/ROCm while auxiliary Decision/embedding models use Vulkan, on another
+  card or a second backend view of the same card with shared physical memory;
+  see the [placement example](docs/features.md#main-model-and-auxiliary-models-on-different-backends).
+  Explicit comma-separated selectors also reach the native multi-device path,
+  including mixed backends
   where the model and installed runtime support them.
 - **Extended AMD support:** the development runtime includes native legacy
   Vega targets `gfx900`, `gfx906` and `gfx90c`, plus architecture-specific

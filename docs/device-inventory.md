@@ -95,6 +95,17 @@ remain unavailable and are reported; absent sysfs is not an empty proven machine
 The diagnostic never pairs PCI rows and native rows by order, description,
 memory size or a backend index. All such associations remain unavailable.
 
+## One card, multiple native selectors
+
+`CUDA0`/`ROCm0` and `Vulkan0` are backend-scoped selectors. They may refer to the
+same physical GPU or to different GPUs; matching index numbers or descriptions
+do not establish identity. The explicit model selector is passed unchanged to
+the native worker, and separate model workers may use separate backend views
+of one card. This shares physical capacity, not allocations or an extra memory
+pool. The inventory does not merge their rows or impose a physical-card lock.
+See the [main/auxiliary placement example](features.md#main-model-and-auxiliary-models-on-different-backends)
+and its [shared-card variant](features.md#one-physical-card-exposed-through-two-backends).
+
 ## Identity model for the next implementation
 
 | Layer | Meaning | Stability / rule |

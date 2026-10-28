@@ -54,6 +54,97 @@ Three distinct capabilities matter:
 | One model, explicit device list | Comma-separated native selectors are passed unchanged; layer/row splitting and `tensor_split` remain native controls |
 | Automatic placement | An ordered backend policy tries one backend family per attempt, then CPU; it does not create a mixed-backend group |
 
+### Main model and auxiliary models on different backends
+
+A main chat model can use CUDA or ROCm while Decision and embedding models use
+Vulkan under the same daemon. Each registered model has its own selector and
+private worker. For example, with these GGUF files already registered/stored:
+
+```toml
+# models/Local/main-chat.toml
+[llm]
+model = "Local/main-chat.gguf"
+
+[runtime]
+device = "CUDA0" # Use ROCm0 instead for the intended AMD native device.
+n_ctx = 32768
+```
+
+```toml
+# models/Local/helper-decision.toml
+[llm]
+model = "Local/helper-decision.gguf"
+
+[runtime]
+device = "Vulkan0"
+```
+
+```toml
+# models/Local/helper-embedding.toml
+[llm]
+model = "Local/helper-embedding.gguf"
+
+[runtime]
+device = "Vulkan0"
+embedding = true
+pooling_type = -1
+```
+
+These examples illustrate placement. The Decision file must be a supported
+Decision GGUF; its mode comes from metadata, not the filename, and does not use
+`embedding = true`. The embedding file must support the documented pooling
+contract. Retain each model's required context, batch, K/V and attention settings;
+see [Decision configuration](native-decision.md) and
+[embedding configuration](native-embeddings.md).
+
+To permit all three profiles to remain resident, set the daemon's server TOML:
+
+```toml
+[lifecycle]
+max_loaded_models = 3
+```
+
+The default is one resident model; increasing this limit permits more workers
+but does not reserve sufficient GPU memory for them. Each model can then be
+called by its public name: `main-chat`, `helper-decision`, `helper-embedding`.
+For example, `tllama run main-chat` uses the chat profile, and
+`tllama run helper-embedding 'Text to embed'` returns embeddings.
+
+Selectors include the backend, so `CUDA0`, `ROCm0` and `Vulkan0` are distinct
+native choices despite sharing index 0. In the reviewed Ollama scheduler,
+`main_gpu = 0` considers index 0 in each backend group and chooses a candidate;
+it does not explicitly name a backend. Ollama internally distinguishes device
+IDs by backend, so the difference is direct per-model configuration rather
+than an inability to identify its devices.
+
+Use the selectors actually reported by the installed runtime; `Vulkan0` is not
+automatically an auxiliary card or the same physical card as `CUDA0`/`ROCm0`.
+The [inventory guide](device-inventory.md) explains enumeration, visibility and
+the separation between native rows and physical PCI evidence.
+
+### One physical card exposed through two backends
+
+The same physical card can, when supported by its drivers/runtime, be exposed
+as both a native CUDA/ROCm device and a Vulkan device. TLlama permits a model
+to use its CUDA/ROCm selector and a different model to use its Vulkan selector.
+The configuration above therefore also supports this arrangement if the chosen
+selectors refer to that same card. No TLlama change or cross-API buffer sharing
+is required: they are separate worker processes with independent allocations.
+
+Both workers compete for the same physical memory and compute resources.
+Weights, K/V caches, compute buffers and backend overhead consume that shared
+capacity; the two backend views do not provide two pools of VRAM. TLlama's
+resident-model limit counts workers, not per-physical-GPU budgets, and native
+fit uses the selected backend's memory estimates. There is no coordinated
+physical-memory reservation across the workers; sufficient memory and actual
+driver/model compatibility must be verified on the host. Concurrent use may
+contend and is not a promise of higher throughput.
+
+This is configuration support verified in the resolver/launch/residency paths,
+not a new hardware qualification of simultaneous CUDA/ROCm and Vulkan inference.
+
+### A single model across multiple devices
+
 For a compatible ordinary generation model, a requested mixed-backend profile
 can look like this:
 
@@ -69,7 +160,10 @@ tensor_split = [1.0, 1.0]
 
 Both selectors must exist and refer to the intended devices. One physical GPU
 can appear through several backends: listing it twice does not create additional
-VRAM. TLlama does not deduplicate physical devices or promise that every
+VRAM. Do not use two views of the same card as if they were two independent
+cards to increase a single model's capacity. This multi-device example targets
+distinct physical devices; the per-model worker example above is a separate
+use case. TLlama does not deduplicate physical devices or promise that every
 cross-backend/model combination works. Mixed-backend execution remains a
 hardware qualification item. Instella rejects native `--split-mode tensor`
 (mode 3, not exposed by this TLlama configuration); this is distinct from the

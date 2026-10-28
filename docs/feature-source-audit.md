@@ -185,6 +185,32 @@ The inspected official native source does not include the fork's
 project are not claimed absent; the specific distinction is the TLlama structured
 payload/assignment/locality extension and its validated public projection.
 
+### Main/auxiliary backend placement — 28 October 2026
+
+The placement examples use the existing resolver, `WorkerLaunchSpec.command`
+and `NativeResidency`: each public model keeps its selector, gets a private
+worker and occupies one resident-generation slot. There is no physical-card
+association or cross-backend exclusivity check in these paths. The device
+inventory explicitly keeps native observations separate from physical PCI
+evidence. The pinned native `common/arg.cpp::parse_device_list` resolves exact
+device names; `src/llama.cpp::llama_prepare_model_devices` retains explicitly
+selected devices instead of applying the automatic selection/deduplication
+branch. Different workers can therefore request different backend views of one
+card without application changes; this is not new hardware inference evidence.
+
+Pinned Ollama `ml/device.go::DeviceID` contains both `ID` and `Library`.
+`server/sched.go::selectLlamaServerPlacement` groups by library, and
+`bestExplicitMainGPU` considers `group[mainGPU]` in each eligible group before
+selecting a candidate. Thus numeric `main_gpu = 0` is not an explicit backend
+selector, but saying Ollama cannot internally distinguish backend/device pairs
+would be incorrect. TLlama's concrete difference is named per-model selectors
+such as CUDA0/ROCm0/Vulkan0 for the main and auxiliary roles.
+
+Sources: [Ollama scheduler](https://github.com/ollama/ollama/blob/8ec9ecdf692e417798169ff8d5972159078d3754/server/sched.go),
+[device identity](https://github.com/ollama/ollama/blob/8ec9ecdf692e417798169ff8d5972159078d3754/ml/device.go),
+[native device parsing](https://github.com/ggml-org/llama.cpp/blob/e86f5fd1e9f584b0fcec71d7da9a92de44e8bcbf/common/arg.cpp),
+and [native device selection](https://github.com/ggml-org/llama.cpp/blob/e86f5fd1e9f584b0fcec71d7da9a92de44e8bcbf/src/llama.cpp).
+
 ### Pinned comparison links
 
 - [Ollama K/V environment](https://github.com/ollama/ollama/blob/8ec9ecdf692e417798169ff8d5972159078d3754/envconfig/config.go),
