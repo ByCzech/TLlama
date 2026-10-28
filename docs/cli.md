@@ -67,6 +67,8 @@ host = "http://127.0.0.1:54800"
 
 [display]
 decimal_units = false
+hide_thinking = false
+verbose = false
 ```
 
 See `examples/client.toml`. Unknown sections/settings and wrong value types are
@@ -221,7 +223,11 @@ sets a session system message, `--think` accepts true/false or a supported level
 `--format` accepts json or a JSON schema object, and `--keep-alive` selects a
 server residence duration. The server validates parameter names and supported
 values. Inappropriate controls for embedding/Decision modes fail explicitly.
-`--hide-thinking` affects display only: reasoning normally goes to stderr,
+`[display] hide_thinking = true` hides reasoning by default for completion
+models. `--hide-thinking` and `--show-thinking` override that preference for a
+run; it has no effect on embedding/Decision modes. It changes display only,
+not the request's thinking control, conversation messages or JSON events.
+Reasoning normally goes to stderr,
 answer text to stdout. Thinking is grouped under `Thinking:` and followed by
 an `Answer:` separator before answer text starts. These labels go to stderr,
 so redirected stdout still contains only the answer. Reasoning uses the
@@ -289,6 +295,12 @@ chat turns enter conversation history. Errors and cancelled partial replies
 are displayed but are not reused as context. There is no automatic retry.
 
 ## Verbose timing and usage
+
+`[display] verbose = true` enables request statistics by default in `run`,
+including the REPL. `--verbose` (or `-v`) and `--no-verbose` override this for
+one run. The REPL's `/set verbose` and `/set quiet` change the current session
+without writing to the client file. Statistics also work for embedding and
+Decision modes; other commands do not acquire extra output from this setting.
 
 `tllama run MODEL --verbose` (or `-v`) prints statistics to stderr after each
 completed request. `/set verbose` and `/set quiet` toggle this locally in every

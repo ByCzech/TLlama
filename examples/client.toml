@@ -8,3 +8,5 @@
 
 [display]
 # decimal_units = false # Default: KiB/MiB/GiB/TiB; true: kB/MB/GB/TB.
+# hide_thinking = false # Hide reasoning in completion output, not in saved messages/JSON.
+# verbose = false # Print run/REPL request statistics to stderr.

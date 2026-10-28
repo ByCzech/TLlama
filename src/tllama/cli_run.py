@@ -66,8 +66,12 @@ def add_run_options(parser):
     parser.add_argument('--think', type=think_value, help='true, false, or a server-supported reasoning level.')
     parser.add_argument('--format', type=response_format, help='json or a JSON schema object.')
     parser.add_argument('--keep-alive', help='Server model residence duration, e.g. 5m or 0.')
-    parser.add_argument('--hide-thinking', action='store_true', help='Hide reasoning text; does not disable thinking.')
-    parser.add_argument('--verbose', '-v', action='store_true', help='Print measured timings and token statistics to stderr.')
+    parser.add_argument('--hide-thinking', action='store_true', default=argparse.SUPPRESS,
+                        help='Hide reasoning text; does not disable thinking.')
+    parser.add_argument('--show-thinking', dest='hide_thinking', action='store_false', default=argparse.SUPPRESS,
+                        help='Show reasoning text, overriding the client display preference.')
+    parser.add_argument('--verbose', '-v', action=argparse.BooleanOptionalAction, default=argparse.SUPPRESS,
+                        help='Enable/disable measured timings and token statistics on stderr.')
 
 
 @dataclass
@@ -95,13 +99,13 @@ class RunSession:
             ('options', dict(args.option) or None), ('think', args.think),
             ('format', args.format), ('keep_alive', args.keep_alive)) if value is not None}
         mode = modes.pop()
-        if mode != 'completion' and (args.system is not None or args.hide_thinking
-                                      or set(controls) & {'think', 'format'}):
+        if mode != 'completion' and (args.system is not None or set(controls) & {'think', 'format'}):
             raise ClientError('System, thinking and format controls require a completion model.')
         if mode == 'decision' and controls:
             raise ClientError('Decision models do not accept generation or residence controls.')
         return cls(args.model, mode, controls, args.system, as_json=getattr(args, 'json', False),
-                   hide_thinking=args.hide_thinking, verbose=getattr(args, 'verbose', False))
+                   hide_thinking=mode == 'completion' and getattr(args, 'hide_thinking', False),
+                   verbose=getattr(args, 'verbose', False))
 
     async def submit(self, client, text):
         started = time.perf_counter()

@@ -60,6 +60,13 @@ Use machine-readable output where supported.
 Select decimal kB/MB/GB/TB or binary KiB/MiB/GiB/TiB for human sizes. Binary is
 the default. API and JSON byte values are unchanged.
 .TP
+.B run MODEL --verbose, -v, --no-verbose
+Override the default display of request timing and token statistics on stderr.
+.TP
+.B run MODEL --hide-thinking, --show-thinking
+Hide or show reasoning text for completion models. This changes display only,
+not generation controls, conversation messages or JSON events.
+.TP
 .B --help
 Show help. Each command has its own --help.
 .TP
@@ -73,7 +80,8 @@ Show the installed client version.
 .PP
 System settings are read first, then individual user settings override them.
 The [client] table accepts host and timeout. The [display] table accepts
-decimal_units (boolean, default false). CLI options override environment
+decimal_units, hide_thinking and verbose (booleans, default false).
+CLI options override environment
 settings, which override file settings. Missing automatic files are ignored;
 invalid or unreadable files and missing explicit files are errors.
 .PP
