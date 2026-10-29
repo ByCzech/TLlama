@@ -7,12 +7,11 @@ source installation and [hardware](hardware.md) for selecting a backend.
 
 ## Debian packages
 
-TLlama 1.1.0 was released with Python wheel/source archives and separate Debian
-application/documentation packages, published in the maintainer's APT archive.
-This branch develops application version 1.2.0; development Debian builds use
-prerelease versions until the final release is prepared. See
-the [changelog](../CHANGELOG.md) for changes and upgrade notes. Application and
-native runtime versions are independent.
+TLlama 1.2.0 builds as Python wheel/source archives and separate Debian
+application/documentation packages (`1.2.0-1`). The maintainer's APT archive
+supplies published Debian releases. See the [changelog](../CHANGELOG.md) for
+changes and upgrade notes. Application and native runtime versions are
+independent.
 
 Debian runtime packages have already been built and used for project hardware
 qualification. The accepted development set is `0.7.0~dev+b11850.1-1`, using

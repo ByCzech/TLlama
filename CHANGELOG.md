@@ -5,7 +5,7 @@ identify the source; the complete history retains tests, refactoring and
 intermediate development steps. TLlama application versions
 are independent of the separately packaged `tllama-server` native runtime.
 
-## 1.2.0 — Unreleased
+## 1.2.0 — 2026-10-29
 
 ### Added
 
@@ -29,6 +29,23 @@ are independent of the separately packaged `tllama-server` native runtime.
   lifecycle diagnostics. Existing consumers of these extensions must opt in.
   Summary sizes are cached per native observation using the same accounting
   policy as detailed reports; polling does not copy full native inventories.
+
+### Upgrade notes
+
+- Upgrade and restart the daemon to use compact process reports and the
+  `detailed` query parameter. Updating only the client leaves the server's
+  response unchanged. Scripts reading memory or lifecycle diagnostics must
+  request `/api/ps?detailed=true` explicitly.
+- REPL input history is enabled by default. Use `run --no-history` or
+  `[history] enabled = false` to disable persistence. Named conversation saves
+  remain explicit; starting a new REPL does not automatically restore one.
+- The installed client configuration contains only commented example values,
+  so it preserves built-in defaults. User configuration, supported environment
+  settings and CLI overrides retain their existing precedence.
+
+Source baseline: [v1.1.0](https://github.com/ByCzech/TLlama/tree/v1.1.0).
+The complete release range is
+[v1.1.0...v1.2.0](https://github.com/ByCzech/TLlama/compare/v1.1.0...v1.2.0).
 
 ## 1.1.0
 

@@ -57,7 +57,7 @@ generation, vision, embedding and Decision models.
 Start with the [documentation index](TOC.md), the detailed
 [features and comparison](docs/features.md), [hardware support](docs/hardware.md)
 and [packages and platform roadmap](docs/distribution.md).
-TLlama 1.1.0 has been released; this branch develops 1.2.0, including scoped
+TLlama 1.2.0 includes scoped
 REPL history/conversation saves, compact process reports, native device listing
 and optional terminal notifications. See the [changelog](CHANGELOG.md)
 for release changes and upgrade notes.
