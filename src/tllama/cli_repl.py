@@ -14,6 +14,10 @@ Ctrl+C cancels input or the active request; Ctrl+D exits at an empty prompt.
 /help, /?                 Show this help
 /bye, /exit               End this session
 /clear                    Clear conversation messages; keep session settings
+/save NAME                Save conversation and settings locally (overwrites NAME)
+/load NAME                Replace conversation and settings from a local save
+/sessions                 List saves for this server/model
+/forget NAME              Remove one local save
 /show model|parameters|system
 /set parameter NAME JSON  Set a request option (e.g. temperature 0.7)
 /set system TEXT          Replace the session system prompt and clear conversation
@@ -41,6 +45,7 @@ def terminal(*, history=None):
         event.current_buffer.insert_text('\n')
     completer = NestedCompleter.from_nested_dict({
         '/help': None, '/?': None, '/bye': None, '/exit': None, '/clear': None,
+        '/save': None, '/load': None, '/sessions': None, '/forget': None,
         '/show': {'model': None, 'parameters': None, 'system': None},
         '/set': {'parameter': None, 'system': None, 'think': None, 'format': None, 'keep_alive': None,
                  'verbose': None, 'quiet': None},
@@ -63,6 +68,22 @@ async def command(client, session, text):
     elif name == '/clear' and not argument:
         session.messages.clear()
         print('Conversation cleared.', file=sys.stderr)
+    elif name in {'/save', '/load', '/forget', '/sessions'}:
+        from tllama.cli_sessions import SessionStore
+        store = SessionStore(getattr(client, 'url', None), session.model, session.mode)
+        if name == '/sessions' and not argument:
+            print('\n'.join(store.names()) or 'No saved sessions.', file=sys.stderr)
+        elif name == '/save' and argument:
+            store.save(argument, session)
+            print(f'Session saved: {argument}', file=sys.stderr)
+        elif name == '/load' and argument:
+            store.load(argument, session)
+            print(f'Session loaded: {argument}', file=sys.stderr)
+        elif name == '/forget' and argument:
+            store.forget(argument)
+            print(f'Session removed: {argument}', file=sys.stderr)
+        else:
+            raise ClientError('Use /save NAME, /load NAME, /forget NAME or /sessions.')
     elif name == '/show':
         if argument == 'model':
             from tllama.cli import _wait_for_model_info

@@ -12,6 +12,8 @@ are independent of the separately packaged `tllama-server` native runtime.
 - REPL input history persists by default, privately scoped by server/model
   under the XDG state directory. Configure `[history] enabled`, override with
   `run --history`/`--no-history`, or clear saved inputs with `--clear-history`.
+- Explicit REPL `/save`, `/load`, `/sessions` and `/forget` commands preserve
+  conversations and settings in private, server/model-scoped JSON saves.
 
 ## 1.1.0
 

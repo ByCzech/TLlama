@@ -314,6 +314,13 @@ messages go to stderr, including when `--json` is selected.
 - `/bye` or `/exit`: end the session. Ctrl+D also exits at an empty prompt.
 - `/clear`: forget conversation messages, retaining session settings and input
   history. This does not unload the model or clear the server's KV cache.
+- `/save NAME`: explicitly save completed conversation messages, system prompt,
+  request controls and verbose/thinking display settings. Replaces that save.
+- `/load NAME`: validate a save and replace the current conversation/settings;
+  no prompts are replayed and no server request is made. The next prompt uses
+  restored controls and may reload the worker if load settings differ.
+- `/sessions`: list saves for this normalized server URL and model.
+- `/forget NAME`: remove a save; the active conversation is retained.
 - `/show model`: fetch model information from the server.
 - `/show parameters`: display explicit session request controls, not merged
   model/server defaults. `/show system` shows the session system override, or
@@ -328,8 +335,15 @@ validates parameter names/values on the next request. Embedding models accept
 their supported runner options; Decision models accept no generation controls.
 Embedding/Decision REPL inputs are independent requests, not conversation turns.
 Use `//text` to send a prompt beginning with `/text`. Other ordinary prompt text
-is passed literally, without shell parsing. Save/load/create/copy are not part
-of this initial shell.
+is passed literally, without shell parsing. Named saves live under
+`$XDG_STATE_HOME/tllama/sessions/` (normally `~/.local/state/tllama/sessions/`),
+separate from input history. Names are 1..64 ASCII letters/digits/dots/underscores/
+hyphens, starting with a letter/digit. Files are versioned JSON, at most 16 MiB,
+written atomically with mode `0600` in a private `0700` scope directory.
+They contain plaintext conversation data and are written only by `/save`;
+there is no automatic conversation save/restore. Server, model and capability
+mode must match before a save can be loaded. Invalid files leave the active
+session unchanged. REPL commands do not import files into the model repository.
 
 Ctrl+C while editing discards current input. During inference it cancels and
 closes the active HTTP request, waits for client cleanup and returns to the
