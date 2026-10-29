@@ -175,6 +175,9 @@ class AutomaticWorker:
     def memory_snapshot(self):
         return self._worker.memory_snapshot() if self._worker else self._telemetry.snapshot()
 
+    def memory_sizes(self):
+        return self._worker.memory_sizes() if self._worker else self._telemetry.sizes()
+
     async def start(self):
         if self._state != 'new' or self._closing:
             raise WorkerError('An automatic worker can be started only once')

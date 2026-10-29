@@ -103,7 +103,10 @@ combined with `--json`; they write the field verbatim, including any final
 newline. `show --modelfile` returns TOML, not an Ollama Modelfile conversion.
 `ps` derives processor placement from the server's compatibility size fields;
 unknown values remain unknown. These fields are not a measurement of physical
-RAM/VRAM residency. Detailed memory/provenance remains available with `ps --json`.
+RAM/VRAM residency.
+`tllama ps --json` returns the compact API response, while
+`tllama ps --detailed --json` requests complete TLlama diagnostics. The
+`--detailed` flag requires `--json`; the human table uses only summary fields.
 
 Human sizes in list/ps tables and pull/create progress use binary units by
 default: B, KiB, MiB, GiB and TiB (powers of 1024). Set
@@ -297,14 +300,30 @@ terminals and encodings that cannot display the selected frames.
 
 Enter sends a prompt; Alt+Enter inserts a
 newline. Bracketed paste preserves multiline text as one input. Tab completes
-slash commands; Up/Down recall input from this process's in-memory history.
-No prompts or messages are written to a history file. Prompts and REPL control
+slash commands; Up/Down recall input, including earlier sessions by default.
+Input history is stored under `$XDG_STATE_HOME/tllama/history/` (normally
+`~/.local/state/tllama/history/`), separately hashed by normalized server URL
+and model name. Scope directories are private (`0700`), files use `0600`.
+Inputs can contain sensitive text. Set `[history] enabled = false` in the
+client config or use `run --no-history` to keep input history in memory only.
+`run --clear-history` removes saved inputs for the selected server/model before
+opening the REPL; combine with `--no-history` to clear without retaining new
+inputs. Input history does not restore conversation messages or runtime settings.
+Failure to initialize history falls back to memory with a warning.
+Prompts and REPL control
 messages go to stderr, including when `--json` is selected.
 
 - `/help` or `/?`: list commands and key bindings.
 - `/bye` or `/exit`: end the session. Ctrl+D also exits at an empty prompt.
 - `/clear`: forget conversation messages, retaining session settings and input
   history. This does not unload the model or clear the server's KV cache.
+- `/save NAME`: explicitly save completed conversation messages, system prompt,
+  request controls and verbose/thinking display settings. Replaces that save.
+- `/load NAME`: validate a save and replace the current conversation/settings;
+  no prompts are replayed and no server request is made. The next prompt uses
+  restored controls and may reload the worker if load settings differ.
+- `/sessions`: list saves for this normalized server URL and model.
+- `/forget NAME`: remove a save; the active conversation is retained.
 - `/show model`: fetch model information from the server.
 - `/show parameters`: display explicit session request controls, not merged
   model/server defaults. `/show system` shows the session system override, or
@@ -319,8 +338,15 @@ validates parameter names/values on the next request. Embedding models accept
 their supported runner options; Decision models accept no generation controls.
 Embedding/Decision REPL inputs are independent requests, not conversation turns.
 Use `//text` to send a prompt beginning with `/text`. Other ordinary prompt text
-is passed literally, without shell parsing. Save/load/create/copy are not part
-of this initial shell.
+is passed literally, without shell parsing. Named saves live under
+`$XDG_STATE_HOME/tllama/sessions/` (normally `~/.local/state/tllama/sessions/`),
+separate from input history. Names are 1..64 ASCII letters/digits/dots/underscores/
+hyphens, starting with a letter/digit. Files are versioned JSON, at most 16 MiB,
+written atomically with mode `0600` in a private `0700` scope directory.
+They contain plaintext conversation data and are written only by `/save`;
+there is no automatic conversation save/restore. Server, model and capability
+mode must match before a save can be loaded. Invalid files leave the active
+session unchanged. REPL commands do not import files into the model repository.
 
 Ctrl+C while editing discards current input. During inference it cancels and
 closes the active HTTP request, waits for client cleanup and returns to the
@@ -328,6 +354,29 @@ prompt. Server disconnect handling remains responsible for stopping native
 work; the client cannot promise immediate GPU cancellation. Only completed
 chat turns enter conversation history. Errors and cancelled partial replies
 are displayed but are not reused as context. There is no automatic retry.
+
+## Terminal notifications
+
+The client can emit BEL (`\a`) on stderr after selected events. Notifications
+are disabled by default and only emitted if stderr is a terminal; stdout/JSON
+is never modified. The terminal decides whether BEL is audible, visual or
+ignored. Configure these independent notification preferences in client.toml:
+
+```toml
+[notifications]
+bell = true
+bell_events = ["model_ready", "response_finished"]
+```
+
+`--bell` and `--no-bell` override the enabled preference and work before or
+after the subcommand. The default event list contains `model_ready` (successful
+retained REPL preload) and `response_finished` (completed generation, embedding
+or Decision response, after output/statistics). Readiness does not imply a
+cold load; `keep_alive=0` does not emit it. One-shot calls have no separate
+preload and emit only response completion. Optional events are `pull_finished`,
+`create_finished` and `error`. Invalid or duplicate event names are config
+errors; an empty list disables all notifications. Errors notify once at their
+handling boundary. Ctrl+C cancellation does not emit completion or error.
 
 ## Verbose timing and usage
 

@@ -1,5 +1,10 @@
 # Native memory reporting
 
+From 1.2, request `/api/ps?detailed=true` to obtain the `memory` inventory and
+generation/lifecycle diagnostics described here. Plain `/api/ps` returns the
+compact compatibility summary. Both use cached observations and the same
+SIZE/PROCESSOR policy; the compact path does not copy the native inventory.
+
 ## Ollama-compatible process summary
 
 `size` and `size_vram` are compatibility fields, separate from the detailed

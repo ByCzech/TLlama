@@ -29,6 +29,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         overrides = {key: value for key, value in vars(args).items() if '.' in key}
         config = load_daemon_config(False if args.no_config else args.config, overrides,
                                     discover=not args.no_config)
+        if args.list_devices:
+            if args.command is not None:
+                raise ConfigError('Device listing cannot be combined with a maintenance command')
+            from tllama.daemon_devices import list_devices
+            return list_devices(config.values['engine.executable'])
         if args.check_config or args.print_config:
             if args.command is not None:
                 raise ConfigError('Configuration inspection cannot be combined with a maintenance command')

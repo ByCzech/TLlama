@@ -8,12 +8,16 @@ from pathlib import Path
 import tomlkit
 
 from tllama.client import ClientConfigError, DEFAULT_HOST, server_url
+from tllama.client_notifications import DEFAULT_EVENTS, EVENTS
 
 
 SETTINGS = {'client.host': ('host', str), 'client.timeout': ('timeout', float),
             'display.decimal_units': ('decimal_units', bool),
             'display.hide_thinking': ('hide_thinking', bool),
-            'display.verbose': ('verbose', bool)}
+            'display.verbose': ('verbose', bool),
+            'history.enabled': ('history_enabled', bool),
+            'notifications.bell': ('bell', bool),
+            'notifications.bell_events': ('bell_events', list)}
 
 
 @dataclass(frozen=True)
@@ -23,6 +27,9 @@ class ClientConfig:
     decimal_units: bool = False
     hide_thinking: bool = False
     verbose: bool = False
+    history_enabled: bool = True
+    bell: bool = False
+    bell_events: tuple[str, ...] = DEFAULT_EVENTS
 
 
 def default_config_paths(environ):
@@ -34,6 +41,11 @@ def default_config_paths(environ):
 
 def _validate(key, value, origin):
     expected = SETTINGS[key][1]
+    if expected is list:
+        if (not isinstance(value, (list, tuple)) or any(not isinstance(v, str) or v not in EVENTS for v in value)
+                or len(value) != len(set(value))):
+            raise ClientConfigError(f'{origin}: {key} must be a list of unique supported events: {", ".join(sorted(EVENTS))}.')
+        return tuple(value)
     if expected is bool and type(value) is not bool:
         raise ClientConfigError(f'{origin}: {key} must be true or false.')
     if expected is str:

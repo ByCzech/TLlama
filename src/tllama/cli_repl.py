@@ -14,6 +14,10 @@ Ctrl+C cancels input or the active request; Ctrl+D exits at an empty prompt.
 /help, /?                 Show this help
 /bye, /exit               End this session
 /clear                    Clear conversation messages; keep session settings
+/save NAME                Save conversation and settings locally (overwrites NAME)
+/load NAME                Replace conversation and settings from a local save
+/sessions                 List saves for this server/model
+/forget NAME              Remove one local save
 /show model|parameters|system
 /set parameter NAME JSON  Set a request option (e.g. temperature 0.7)
 /set system TEXT          Replace the session system prompt and clear conversation
@@ -21,11 +25,12 @@ Ctrl+C cancels input or the active request; Ctrl+D exits at an empty prompt.
 /set format VALUE         json, a schema object, or off
 /set keep_alive VALUE     Server model residence duration (e.g. 5m or 0)
 /set verbose, /set quiet  Enable/disable measured request statistics
-Use //text to send a literal /text prompt. History stays in memory for this session.
+Use //text to send a literal /text prompt. Input history is private per server/model;
+--no-history disables persistence and --clear-history clears saved inputs on startup.
 """
 
 
-def terminal():
+def terminal(*, history=None):
     try:
         from prompt_toolkit import PromptSession
         from prompt_toolkit.completion import NestedCompleter
@@ -40,11 +45,12 @@ def terminal():
         event.current_buffer.insert_text('\n')
     completer = NestedCompleter.from_nested_dict({
         '/help': None, '/?': None, '/bye': None, '/exit': None, '/clear': None,
+        '/save': None, '/load': None, '/sessions': None, '/forget': None,
         '/show': {'model': None, 'parameters': None, 'system': None},
         '/set': {'parameter': None, 'system': None, 'think': None, 'format': None, 'keep_alive': None,
                  'verbose': None, 'quiet': None},
     })
-    return PromptSession(history=InMemoryHistory(), completer=completer, key_bindings=keys,
+    return PromptSession(history=history if history is not None else InMemoryHistory(), completer=completer, key_bindings=keys,
                          complete_while_typing=False, prompt_continuation='... ',
                          output=create_output(stdout=sys.stderr))
 
@@ -62,6 +68,22 @@ async def command(client, session, text):
     elif name == '/clear' and not argument:
         session.messages.clear()
         print('Conversation cleared.', file=sys.stderr)
+    elif name in {'/save', '/load', '/forget', '/sessions'}:
+        from tllama.cli_sessions import SessionStore
+        store = SessionStore(getattr(client, 'url', None), session.model, session.mode)
+        if name == '/sessions' and not argument:
+            print('\n'.join(store.names()) or 'No saved sessions.', file=sys.stderr)
+        elif name == '/save' and argument:
+            store.save(argument, session)
+            print(f'Session saved: {argument}', file=sys.stderr)
+        elif name == '/load' and argument:
+            store.load(argument, session)
+            print(f'Session loaded: {argument}', file=sys.stderr)
+        elif name == '/forget' and argument:
+            store.forget(argument)
+            print(f'Session removed: {argument}', file=sys.stderr)
+        else:
+            raise ClientError('Use /save NAME, /load NAME, /forget NAME or /sessions.')
     elif name == '/show':
         if argument == 'model':
             from tllama.cli import _wait_for_model_info
@@ -148,7 +170,10 @@ async def _interruptible(awaitable):
 
 
 async def repl(client, session, *, reader=None):
-    reader = reader if reader is not None else terminal()
+    if reader is None:
+        from tllama.cli_history import input_history
+        reader = terminal(history=input_history(getattr(client, 'url', None), session.model,
+                          enabled=session.history_enabled, clear=session.clear_history))
     print(f'TLlama: {session.model} ({session.mode}). /help for commands.', file=sys.stderr)
     while True:
         try:
@@ -169,3 +194,4 @@ async def repl(client, session, *, reader=None):
                 await submit(client, session, text)
         except (ClientError, ValueError, argparse.ArgumentTypeError) as exc:
             print(f'tllama: {exc}', file=sys.stderr)
+            session._notify('error')

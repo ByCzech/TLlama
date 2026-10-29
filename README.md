@@ -57,8 +57,9 @@ generation, vision, embedding and Decision models.
 Start with the [documentation index](TOC.md), the detailed
 [features and comparison](docs/features.md), [hardware support](docs/hardware.md)
 and [packages and platform roadmap](docs/distribution.md).
-TLlama 1.0.0 has been released; this branch prepares 1.1.0, including the
-client configuration and fit controls below. See the [changelog](CHANGELOG.md)
+TLlama 1.2.0 includes scoped
+REPL history/conversation saves, compact process reports, native device listing
+and optional terminal notifications. See the [changelog](CHANGELOG.md)
 for release changes and upgrade notes.
 These pages distinguish implemented features, tested configurations and planned
 distribution work.
@@ -147,6 +148,7 @@ and planned Linux/Windows/macOS distribution are described in
 tllama list
 tllama show MODEL
 tllama ps
+tllama ps --detailed --json
 tllama pull namespace/repository/model-file
 tllama cp SOURCE DESTINATION
 tllama create MODEL -f model.toml
@@ -161,6 +163,16 @@ separates reasoning from the final answer and supports session slash commands.
 One-shot prompts and stdin are also supported. Output/JSON stays on stdout;
 progress, reasoning and optional timings go to stderr. See
 [cli.md](docs/cli.md) for exact dispatch, options, commands and cancellation.
+REPL inputs persist privately per server/model by default (`--no-history`
+disables persistence). `/save NAME` and `/load NAME` explicitly preserve and
+restore conversations and settings. Terminal bells are opt-in through
+`[notifications]` or `--bell`/`--no-bell`.
+
+To inspect devices locally without starting the daemon or loading a model:
+
+```sh
+tllamad --list-devices
+```
 
 Client preferences live in a separate `client.toml`, for example:
 

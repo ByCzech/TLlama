@@ -1,2 +1,3 @@
 examples/server.toml etc/tllama
+examples/client.toml etc/tllama
 systemd/tllamad.service usr/lib/systemd/system

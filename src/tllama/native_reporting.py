@@ -218,13 +218,17 @@ def public_memory(telemetry):
     return memory
 
 
-def ollama_processes(generations):
+def ollama_processes(generations, *, detailed=False):
     models = []
     for entry in generations:
-        metadata, memory = entry['metadata'], public_memory(entry['memory'])
-        compatibility = ollama_memory_summary(memory)
-        size, size_vram = compatibility['size'], compatibility['size_vram']
-        memory['ollama_compatibility'] = compatibility
+        metadata = entry['metadata']
+        if detailed:
+            memory = public_memory(entry['memory'])
+            compatibility = ollama_memory_summary(memory)
+            size, size_vram = compatibility['size'], compatibility['size_vram']
+            memory['ollama_compatibility'] = compatibility
+        else:
+            size, size_vram = entry['memory_sizes']
         family = metadata.get('arch', 'unknown')
         parameter_size = metadata.get('parameter_size')
         if not parameter_size:
@@ -240,8 +244,8 @@ def ollama_processes(generations):
             'context_length':entry['context_length'], 'expires_at':entry['expires_at'],
             'details':{'parent_model':'', 'format':'gguf', 'family':family, 'families':[family],
                        'parameter_size':parameter_size, 'quantization_level':metadata.get('bits', 'unknown')},
-            # Native ownership and metric provenance are TLlama extensions.
-            'generation':entry['generation'], 'state':entry['state'], 'pid':entry['pid'],
-            'leases':entry['leases'], 'retirement_reason':entry['retirement_reason'], 'memory':memory,
         })
+        if detailed:
+            models[-1].update(generation=entry['generation'], state=entry['state'], pid=entry['pid'],
+                             leases=entry['leases'], retirement_reason=entry['retirement_reason'], memory=memory)
     return {'models':models}

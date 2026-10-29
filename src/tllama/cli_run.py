@@ -60,6 +60,9 @@ def think_value(text):
 
 def add_run_options(parser):
     parser.add_argument('model')
+    parser.add_argument('--history', dest='history_enabled', action=argparse.BooleanOptionalAction,
+                        default=argparse.SUPPRESS, help='Persist REPL input history (default); --no-history keeps it in memory.')
+    parser.add_argument('--clear-history', action='store_true', help='Clear this server/model input history before opening the REPL.')
     parser.add_argument('prompt', nargs='*', help='Prompt text (stdin is prepended when piped).')
     parser.add_argument('--system', help='Session system prompt; does not change the model definition.')
     parser.add_argument('--option', action='append', type=option, default=[], metavar='KEY=VALUE',
@@ -86,9 +89,12 @@ class RunSession:
     as_json: bool = False
     hide_thinking: bool = False
     verbose: bool = False
+    history_enabled: bool = True
+    clear_history: bool = False
+    notifier: object = field(default=None, repr=False, compare=False)
 
     @classmethod
-    async def create(cls, client, args):
+    async def create(cls, client, args, *, notifier=None):
         from tllama.cli import _wait_for_model_info
         info = await _wait_for_model_info(client.show(args.model), notice=not getattr(args, 'json', False))
         capabilities = info.get('capabilities')
@@ -107,7 +113,9 @@ class RunSession:
             raise ClientError('Decision models do not accept generation or residence controls.')
         return cls(args.model, mode, controls, args.system, as_json=getattr(args, 'json', False),
                    hide_thinking=mode == 'completion' and getattr(args, 'hide_thinking', False),
-                   verbose=getattr(args, 'verbose', False))
+                   verbose=getattr(args, 'verbose', False),
+                   history_enabled=getattr(args, 'history_enabled', True),
+                   clear_history=getattr(args, 'clear_history', False), notifier=notifier)
 
     async def submit(self, client, text):
         started = time.perf_counter()
@@ -116,6 +124,7 @@ class RunSession:
                 data = await client.embed(self.model, text, **self.controls)
             print(json.dumps(data, ensure_ascii=False), flush=True)
             self._statistics(data, started)
+            self._notify('response_finished')
             return
         if self.mode == 'decision':
             try:
@@ -128,6 +137,7 @@ class RunSession:
                 data = await client.decision(self.model, payload['state'], payload['questions'])
             print(json.dumps(data, ensure_ascii=False), flush=True)
             self._statistics(data, started)
+            self._notify('response_finished')
             return
         request = ([{'role': 'system', 'content': self.system}] if self.system is not None else [])
         request += self.messages + [{'role': 'user', 'content': text}]
@@ -165,6 +175,11 @@ class RunSession:
         # silently become context for the next interactive request.
         self.messages.extend([{'role': 'user', 'content': text}, reply])
         self._statistics(terminal or {}, started, first_text=first_text)
+        self._notify('response_finished')
+
+    def _notify(self, event):
+        if self.notifier is not None:
+            self.notifier.notify(event)
 
     def _statistics(self, data, started, *, first_text=None):
         if self.verbose:
@@ -182,18 +197,23 @@ class RunSession:
             from tllama.cli_locale import number_text
             print(f'Preload request: {number_text(time.perf_counter() - started, 3)} s'
                   + ('' if loaded else ' (not retained)'), file=sys.stderr, flush=True)
+        if loaded:
+            self._notify('model_ready')
 
 
-async def run(client, args):
+async def run(client, args, *, notifier=None):
+    if notifier is None:
+        from tllama.client_notifications import BellNotifier
+        notifier = BellNotifier.from_args(args)
     text = ' '.join(args.prompt) if args.prompt else None
     if not sys.stdin.isatty():
         piped = sys.stdin.read()
         text = piped + ('\n\n' + text if text is not None else '')
     if text is None:
         from tllama.cli_repl import repl
-        session = await RunSession.create(client, args)
+        session = await RunSession.create(client, args, notifier=notifier)
         await session.preload(client)
         return await repl(client, session)
-    session = await RunSession.create(client, args)
+    session = await RunSession.create(client, args, notifier=notifier)
     await session.submit(client, text)
     return 0

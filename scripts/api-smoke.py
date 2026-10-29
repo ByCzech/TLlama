@@ -124,7 +124,7 @@ async def exercise(args):
                 return response
 
             # No model loads for the agreed checkpoint limitations.
-            empty_ps = await client.get('/api/ps')
+            empty_ps = await client.get('/api/ps?detailed=true')
             require(empty_ps.status_code == 200 and empty_ps.json() == {'models':[]}, 'Expected an empty native /api/ps')
             require((await client.post('/api/generate', json={'model': args.model, 'prompt':'x', 'suffix':'x', 'raw':True})).status_code == 400,
                     'Expected explicit raw/suffix incompatibility')
@@ -160,7 +160,7 @@ async def exercise(args):
                         'Public endpoint reloaded a different configuration')
 
             async def ps(stage, *, state='ready', leases=None):
-                response = await client.get('/api/ps')
+                response = await client.get('/api/ps?detailed=true')
                 require(response.status_code == 200, 'Native /api/ps failed')
                 models = response.json()['models']
                 require(len(models) == 1, 'Expected one owned native generation in /api/ps')
@@ -331,7 +331,7 @@ async def exercise(args):
             require(worker.process.returncode is not None and not worker.runtime_directory.exists(), 'Native process/directory survived unload')
             report('worker-closed', pid=worker.pid, returncode=worker.process.returncode,
                    directory_removed=True, residency=manager.native_snapshot())
-            require((await client.get('/api/ps')).json() == {'models':[]}, 'Closed generation survived in /api/ps')
+            require((await client.get('/api/ps?detailed=true')).json() == {'models':[]}, 'Closed generation survived in /api/ps')
             report('ps-empty', models=[])
     finally:
         server.should_exit = True

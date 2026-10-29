@@ -13,6 +13,11 @@ serves model APIs and supervises private native tllama-server workers.
 It stays in the foreground. The Debian package supplies tllamad.service.
 .SH OPTIONS
 .TP
+.B --list-devices
+Forward the selected native runtime's device table and exit without starting
+the server or loading a model. Cannot be combined with configuration inspection
+or rebuildrepo. Normal configuration/runtime-path selection still applies.
+.TP
 .B --config FILE
 Select a server TOML configuration file explicitly.
 .TP

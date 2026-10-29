@@ -133,7 +133,7 @@ async def test_unload_preserves_active_generate_image_stream_until_completion(vi
         await wait_until(lambda: manager.test.roots and (manager.test.roots[0] / "started").exists())
         generation = manager.native_snapshot()[0]["generation"]
         await manager.unload_native_model(name)
-        [process] = (await client.get("/api/ps")).json()["models"]
+        [process] = (await client.get("/api/ps?detailed=true")).json()["models"]
         assert process["state"] == "draining" and process["leases"] == 1
     finally:
         (manager.test.roots[0] / "release").touch()
@@ -141,7 +141,7 @@ async def test_unload_preserves_active_generate_image_stream_until_completion(vi
     frames = [json.loads(line) for line in response.text.splitlines()]
     assert frames[-1]["done"] and frames[-1]["done_reason"] == "stop"
     await manager.wait_native_closed(generation)
-    assert (await client.get("/api/ps")).json() == {"models": []}
+    assert (await client.get("/api/ps?detailed=true")).json() == {"models": []}
 
 
 @pytest.mark.parametrize("stream", [False, True])

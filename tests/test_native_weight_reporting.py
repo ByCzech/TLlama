@@ -27,7 +27,7 @@ def reported(raw, **selection):
              'model': 'renamed', 'generation': 1, 'context_length': 4096,
              'expires_at': None, 'state': 'ready', 'pid': 123, 'leases': 0,
              'retirement_reason': None}
-    return ollama_processes([entry])
+    return ollama_processes([entry], detailed=True)
 
 
 def model(raw):

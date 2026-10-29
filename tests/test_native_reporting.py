@@ -18,7 +18,7 @@ MIB = 1024**2
 
 
 async def ps(client):
-    response = await client.get('/api/ps')
+    response = await client.get('/api/ps?detailed=true')
     assert response.status_code == 200
     return response.json()['models']
 
