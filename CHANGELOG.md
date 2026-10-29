@@ -14,6 +14,8 @@ are independent of the separately packaged `tllama-server` native runtime.
   `run --history`/`--no-history`, or clear saved inputs with `--clear-history`.
 - Explicit REPL `/save`, `/load`, `/sessions` and `/forget` commands preserve
   conversations and settings in private, server/model-scoped JSON saves.
+- `tllamad --list-devices` forwards the selected native runtime's device table
+  without starting the application or loading a model.
 
 ### Changed
 

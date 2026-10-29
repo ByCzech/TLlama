@@ -46,6 +46,7 @@ def add_daemon_options(parser):
     inspection = parser.add_mutually_exclusive_group()
     inspection.add_argument('--check-config', action='store_true', help='Validate configuration and exit without serving.')
     inspection.add_argument('--print-config', action='store_true', help='Print effective values and sources as JSON and exit.')
+    inspection.add_argument('--list-devices', action='store_true', help='Print native runtime devices and exit without serving or loading a model.')
     for flag, key, env, help_text in OPTIONS:
         parser.add_argument('--' + flag, dest=key, default=argparse.SUPPRESS,
                             metavar=flag.replace('-', '_').upper(), help=f'{help_text} ({env}).')

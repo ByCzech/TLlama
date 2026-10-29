@@ -1,5 +1,10 @@
 # Daemon configuration
 
+`tllamad --list-devices` forwards the configured native runtime's device table
+and exits without starting the server or loading a model. `--config`,
+`--no-config` and `--runtime-path` retain their normal precedence. See the
+[device guide](device-inventory.md#one-shot-daemon-command-12) for scope and limits.
+
 `tllamad` runs the server in the foreground. `tllama` is the HTTP client.
 The source equivalents are `python -m tllama.daemon` and `python -m tllama`.
 

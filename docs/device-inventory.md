@@ -1,5 +1,28 @@
 # Device inventory and placement design — 0070
 
+## One-shot daemon command (1.2)
+
+```sh
+tllamad --list-devices
+tllamad --config /etc/tllama/server.toml --list-devices
+tllamad --no-config --runtime-path /absolute/path/to/tllama-server --list-devices
+```
+
+This local command forwards the selected runtime's `--list-devices` stdout,
+stderr and exit status. It uses normal daemon config/CLI/environment precedence
+and worker environment sanitization. It does not start the HTTP application,
+create the model store, load a model or require an existing daemon. The child
+has a 30-second deadline and a combined 4 MiB output limit, with owned-process
+cleanup on failure or interruption. It does not enforce a diagnostic fingerprint
+allowlist or reinterpret the native table. Startup failures return 1; native
+exit codes are preserved (signals use 128 + signal).
+
+Run it as the intended service user with the intended visibility environment.
+Separate backend selectors can describe the same physical GPU; CPU selection
+is `none` and is not part of this native device table. Listing can initialize
+SDKs/drivers and is not a guarantee of zero GPU overhead. The more detailed
+capture procedure below remains available for qualification.
+
 This checkpoint captures discovery evidence without loading a model or changing
 production placement. Run it on the current test machine with the same installed
 native binary and inherited environment as the accepted inference runs:
