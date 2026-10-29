@@ -92,6 +92,12 @@ settings, which override file settings. Missing automatic files are ignored;
 invalid or unreadable files and missing explicit files are errors.
 .PP
 .I /usr/share/doc/tllama/docs/cli.md
+.SH TERMINAL NOTIFICATIONS
+Notifications are off by default. [notifications] bell=true enables BEL on
+terminal stderr for bell_events (default model_ready and response_finished).
+Optional events are pull_finished, create_finished and error. --bell and
+--no-bell override the enabled preference. stdout and JSON are unchanged;
+Ctrl+C cancellation does not notify.
 .SH PROCESS DIAGNOSTICS
 ps --json returns the compact server summary. ps --detailed --json requests
 the complete TLlama memory and lifecycle diagnostics. --detailed requires --json.

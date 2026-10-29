@@ -194,3 +194,4 @@ async def repl(client, session, *, reader=None):
                 await submit(client, session, text)
         except (ClientError, ValueError, argparse.ArgumentTypeError) as exc:
             print(f'tllama: {exc}', file=sys.stderr)
+            session._notify('error')

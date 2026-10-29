@@ -13,3 +13,8 @@
 
 [history]
 # enabled = true # Persist REPL input history separately for each server/model.
+
+[notifications]
+# bell = false # BEL on stderr only when stderr is a terminal.
+# bell_events = ["model_ready", "response_finished"]
+# Other optional events: "pull_finished", "create_finished", "error".

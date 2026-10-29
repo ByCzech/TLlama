@@ -16,6 +16,9 @@ are independent of the separately packaged `tllama-server` native runtime.
   conversations and settings in private, server/model-scoped JSON saves.
 - `tllamad --list-devices` forwards the selected native runtime's device table
   without starting the application or loading a model.
+- Opt-in terminal bell notifications for model readiness, completed responses,
+  pulls/imports and errors. Configure `[notifications]` or override with
+  `--bell`/`--no-bell`; the default is off and stdout/JSON stays unchanged.
 
 ### Changed
 

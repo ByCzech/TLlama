@@ -355,6 +355,29 @@ work; the client cannot promise immediate GPU cancellation. Only completed
 chat turns enter conversation history. Errors and cancelled partial replies
 are displayed but are not reused as context. There is no automatic retry.
 
+## Terminal notifications
+
+The client can emit BEL (`\a`) on stderr after selected events. Notifications
+are disabled by default and only emitted if stderr is a terminal; stdout/JSON
+is never modified. The terminal decides whether BEL is audible, visual or
+ignored. Configure these independent notification preferences in client.toml:
+
+```toml
+[notifications]
+bell = true
+bell_events = ["model_ready", "response_finished"]
+```
+
+`--bell` and `--no-bell` override the enabled preference and work before or
+after the subcommand. The default event list contains `model_ready` (successful
+retained REPL preload) and `response_finished` (completed generation, embedding
+or Decision response, after output/statistics). Readiness does not imply a
+cold load; `keep_alive=0` does not emit it. One-shot calls have no separate
+preload and emit only response completion. Optional events are `pull_finished`,
+`create_finished` and `error`. Invalid or duplicate event names are config
+errors; an empty list disables all notifications. Errors notify once at their
+handling boundary. Ctrl+C cancellation does not emit completion or error.
+
 ## Verbose timing and usage
 
 `[display] verbose = true` enables request statistics by default in `run`,

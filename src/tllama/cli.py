@@ -37,6 +37,8 @@ def _client_options(parser):
                         help='Print the full server response as JSON.')
     parser.add_argument('--decimal-units', action=argparse.BooleanOptionalAction, default=argparse.SUPPRESS,
                         help='Use decimal kB/MB/GB/TB; --no-decimal-units selects binary units (default).')
+    parser.add_argument('--bell', action=argparse.BooleanOptionalAction, default=argparse.SUPPRESS,
+                        help='Enable/disable configured terminal bell notifications (default: off).')
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -104,12 +106,14 @@ async def _wait_for_model_info(awaitable, *, notice):
 async def _execute(args):
     from tllama.client import ClientError, TLlamaClient
     from tllama.cli_output import models_text, processes_text, show_text
+    from tllama.client_notifications import BellNotifier
+    notifier = BellNotifier.from_args(args)
 
     as_json = getattr(args, 'json', False)
     async with TLlamaClient(getattr(args, 'host', None), timeout=getattr(args, 'timeout', None)) as client:
         if args.operation == 'run':
             from tllama.cli_run import run
-            return await run(client, args)
+            return await run(client, args, notifier=notifier)
         if args.operation == 'cp':
             data = await client.copy(args.source, args.destination, force=args.force)
             print(json.dumps(data, ensure_ascii=False) if as_json else f'copied: {args.source} -> {args.destination}')
@@ -119,6 +123,7 @@ async def _execute(args):
             data = await create_from_file(client, args.model, args.file, force=args.force, as_json=as_json,
                                           decimal_units=args.decimal_units)
             print(json.dumps(data, ensure_ascii=False) if as_json else f'created: {args.model}')
+            notifier.notify('create_finished')
             return 0
         if args.operation == 'pull':
             previous = None
@@ -137,6 +142,7 @@ async def _execute(args):
                             previous = text
             if not as_json:
                 print(f'pulled: {args.model}')
+            notifier.notify('pull_finished')
             return 0
         if args.operation == 'rm':
             failed = False
@@ -146,6 +152,7 @@ async def _execute(args):
                 except ClientError as exc:
                     failed = True
                     print(f'tllama: {model}: {exc}', file=sys.stderr)
+                    notifier.notify('error')
                     if as_json:
                         print(json.dumps({'model': model, 'error': str(exc)}, ensure_ascii=False))
                 else:
@@ -198,18 +205,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         from tllama.client_config import load_client_config
         config = load_client_config(getattr(args, 'config', None),
                                     {key: getattr(args, key) for key in
-                                     ('host', 'timeout', 'decimal_units', 'hide_thinking', 'verbose', 'history_enabled')
+                                     ('host', 'timeout', 'decimal_units', 'hide_thinking', 'verbose', 'history_enabled', 'bell')
                                      if hasattr(args, key)})
         args.host, args.timeout = config.host, config.timeout
         args.decimal_units = config.decimal_units
         args.hide_thinking, args.verbose = config.hide_thinking, config.verbose
         args.history_enabled = config.history_enabled
+        args.bell, args.bell_events = config.bell, config.bell_events
         return asyncio.run(_execute(args))
     except ClientConfigError as exc:
         print(f'tllama: {exc}', file=sys.stderr)
+        from tllama.client_notifications import BellNotifier
+        BellNotifier.from_args(args).notify('error')
         return 2
     except ClientError as exc:
         print(f'tllama: {exc}', file=sys.stderr)
+        from tllama.client_notifications import BellNotifier
+        BellNotifier.from_args(args).notify('error')
         return 1
     except KeyboardInterrupt:
         return 130
