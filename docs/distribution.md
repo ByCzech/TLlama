@@ -7,9 +7,10 @@ source installation and [hardware](hardware.md) for selecting a backend.
 
 ## Debian packages
 
-TLlama 1.0.0 was released with Python wheel/source archives and a Debian
-application package, published in the maintainer's APT archive. This branch
-prepares application version 1.1.0 (`tllama` Debian version `1.1.0-1`); see
+TLlama 1.1.0 was released with Python wheel/source archives and separate Debian
+application/documentation packages, published in the maintainer's APT archive.
+This branch develops application version 1.2.0; development Debian builds use
+prerelease versions until the final release is prepared. See
 the [changelog](../CHANGELOG.md) for changes and upgrade notes. Application and
 native runtime versions are independent.
 
@@ -59,11 +60,13 @@ It installs `/etc/tllama/server.toml` and the `tllamad` systemd service, using
 the `tllama` service account. See the [Debian package notes](../debian/README.Debian)
 for service behavior, permissions and local-unit upgrades.
 
-Client/server configuration examples are installed under
-`/usr/share/doc/tllama/examples/`. The client example is not installed as an
-active configuration. Copy `client.toml` to `/etc/tllama/client.toml` for system
-defaults or to `$XDG_CONFIG_HOME/tllama/client.toml` (normally
-`~/.config/tllama/client.toml`) for user preferences; see the
+The optional `tllama-doc` package installs guides and client/server examples
+under `/usr/share/doc/tllama/`, including `examples/`. From 1.2 the application
+itself installs `/etc/tllama/client.toml` as a dpkg-managed conffile; example
+values are commented out and built-in defaults apply. Local edits survive
+upgrades through normal dpkg conffile handling. User preferences go in
+`$XDG_CONFIG_HOME/tllama/client.toml` (normally `~/.config/tllama/client.toml`).
+The client also works with no configuration file. See the
 [client configuration rules](cli.md#http-client-basics).
 
 This example does not add an APT source or claim the packages are in Debian's
