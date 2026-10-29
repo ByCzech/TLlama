@@ -1,3 +1,16 @@
+tllama (1.2.0~dev1-1) unstable; urgency=medium
+
+  * Prepare the 1.2.0 development series:
+    - Persist scoped REPL input history and add explicit conversation saves.
+    - Make /api/ps compact by default with opt-in detailed diagnostics.
+    - Forward native device enumeration through tllamad --list-devices.
+    - Add optional client terminal notifications, disabled by default.
+  * Install the commented client configuration example as
+    /etc/tllama/client.toml in the application package, independent of
+    tllama-doc. Preserve local configuration edits through dpkg conffiles.
+
+ -- NemaChybu team APT archive <maintainers@nemachybu.cz>  Thu, 29 Oct 2026 16:19:57 +0100
+
 tllama (1.1.0-1) unstable; urgency=medium
 
   * New upstream release:

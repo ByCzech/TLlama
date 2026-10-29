@@ -3,7 +3,7 @@ TLlama for Debian
 
 The source builds two independent binary packages:
 
-  tllama       client, daemon, systemd service, server config and man pages
+  tllama       client, daemon, systemd service, client/server configs and man pages
   tllama-doc   guides, reference documentation and configuration examples
 
 Install tllama-doc when local guides or examples are wanted. It is suggested
@@ -24,14 +24,19 @@ on upgrade through the normal dpkg configuration-file mechanism. The unit
 reads this file explicitly; CLI > environment > TOML > built-in defaults.
 Use systemctl edit tllamad.service for unit overrides.
 
-Client configuration is separate from the daemon configuration. The optional
+Client configuration is separate from the daemon configuration.
+/etc/tllama/client.toml is installed by the application package as a
+dpkg-managed conffile. Its example settings are commented out, preserving
+built-in defaults. The client also works when no client config exists.
+Local edits are retained by the normal dpkg conffile mechanism on upgrade.
+The optional
 tllama-doc package installs examples in
 /usr/share/doc/tllama/examples/client.toml and server.toml, along with README.md,
 TOC.md and docs/ under /usr/share/doc/tllama/. These paths retain the locations
 used before the package split. The documentation package can be installed
 without installing or starting the daemon.
-The client example is not enabled automatically. For system defaults, copy it
-to /etc/tllama/client.toml; for user preferences, copy it to
+For system defaults, edit /etc/tllama/client.toml; for user preferences, copy
+the example to
 $XDG_CONFIG_HOME/tllama/client.toml (normally ~/.config/tllama/client.toml).
 Built-in defaults < system file < user file; explicit --config reads only the
 selected file over built-in defaults. Supported environment values and CLI
