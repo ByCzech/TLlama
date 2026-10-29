@@ -286,6 +286,9 @@ class NativeWorker:
         """Selected internal telemetry; public reporting is integrated separately."""
         return self.telemetry.snapshot()
 
+    def memory_sizes(self):
+        return self.telemetry.sizes()
+
     async def _fetch_memory(self):
         async with self._memory_client.stream("GET", "/tllama/memory") as response:
             if response.status_code != 200:

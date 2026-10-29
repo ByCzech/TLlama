@@ -91,6 +91,14 @@ conflict, staging and deletion contracts are in [cli.md](cli.md).
 
 ## Memory and capabilities
 
+`GET /api/ps` returns a compact model summary by default: name/model, digest,
+size/size_vram, context_length, expires_at, details and runner.
+`GET /api/ps?detailed=true` (also `detailed=1`) adds generation, state, pid,
+leases, retirement_reason and the complete memory diagnostics. Invalid boolean
+values return HTTP 400 through the Ollama validation handler. Consumers of the pre-1.2 diagnostic extensions must
+request detail explicitly. Both modes retain all owned generations and use the
+same size/placement policy; unknown values remain null.
+
 `/api/ps` does not load a model, hash weights or extend idle TTL. `size` and
 `size_vram` drive the compatibility SIZE/PROCESSOR display. With complete native
 weight evidence, they use occupied weight payload plus nonweight buffers;

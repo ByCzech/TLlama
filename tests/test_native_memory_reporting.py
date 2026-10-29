@@ -197,7 +197,7 @@ def test_public_processor_sizes_explain_the_difference_from_complete_totals(acce
     entry = {'metadata':{}, 'file_info':{}, 'memory':selected(accelerator), 'model':'m', 'generation':1,
              'context_length':4096, 'expires_at':'2099-01-01T00:00:00+00:00', 'state':'ready',
              'pid':123, 'leases':0, 'retirement_reason':None}
-    [model] = ollama_processes([entry])['models']
+    [model] = ollama_processes([entry], detailed=True)['models']
     assert model['size'] == model['size_vram'] == 1300
     assert model['memory']['allocated_bytes'] == 1350
     assert model['memory']['ollama_compatibility'] == {
@@ -247,7 +247,7 @@ def test_vision_cpu_compute_regression_reports_full_gpu_without_rewriting_invent
     entry = {'metadata':{}, 'file_info':{}, 'memory':selected(accelerator), 'model':'vision',
              'generation':1, 'context_length':262144, 'expires_at':None, 'state':'ready',
              'pid':123, 'leases':0, 'retirement_reason':None}
-    result = ollama_processes([entry])
+    result = ollama_processes([entry], detailed=True)
     [model] = result['models']
     assert model['size'] == model['size_vram'] == 1300
     assert model['memory']['allocated_bytes'] == 26138182

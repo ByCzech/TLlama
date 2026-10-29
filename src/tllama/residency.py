@@ -459,7 +459,7 @@ class NativeResidency:
                  "effective_context": (e.worker.props or {}).get("default_generation_settings", {}).get("n_ctx") if e.loaded else None,
                  "error": str(e.error) if e.error is not None else None} for e in self._entries.values()]
 
-    def reporting_snapshot(self) -> list[dict]:
+    def reporting_snapshot(self, *, detailed=True) -> list[dict]:
         """Copy owned generations without a lease, I/O, or changes to TTL.
 
         Metadata belongs to the admitted definition even when files change or
@@ -486,9 +486,11 @@ class NativeResidency:
                 'generation':entry.number, 'model':entry.definition.name, 'state':entry.state,
                 'pid':worker.pid, 'leases':entry.refs, 'expires_at':expires,
                 'retirement_reason':entry.reason, 'file_info':_plain(entry.definition.file_info),
-                'metadata':_plain(entry.definition.metadata),
+                'metadata':_plain(entry.definition.metadata) if detailed else {
+                    key: entry.definition.metadata[key] for key in ('arch', 'parameter_size', 'params', 'bits')
+                    if key in entry.definition.metadata},
                 'context_length':(worker.props or {}).get('default_generation_settings', {}).get('n_ctx') if entry.loaded else None,
-                'memory':worker.memory_snapshot(),
+                **({'memory': worker.memory_snapshot()} if detailed else {'memory_sizes': worker.memory_sizes()}),
             })
         return result
 

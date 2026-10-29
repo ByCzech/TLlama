@@ -63,6 +63,8 @@ def build_parser() -> argparse.ArgumentParser:
             command.add_argument('model')
             command.add_argument('--file', '-f', required=True, help='Client-side TOML definition path.')
             command.add_argument('--force', action='store_true', help='Replace an existing definition; never replace weights.')
+        elif name == 'ps':
+            command.add_argument('--detailed', action='store_true', help='Request full diagnostics; requires --json.')
         elif name == 'cp':
             command.add_argument('source')
             command.add_argument('destination')
@@ -160,7 +162,7 @@ async def _execute(args):
             data = await _wait_for_model_info(client.list_models(), notice=not as_json)
             text = '' if as_json else models_text(data, decimal_units=args.decimal_units)
         elif args.operation == 'ps':
-            data = await client.ps()
+            data = await client.ps(detailed=True) if args.detailed else await client.ps()
             text = '' if as_json else processes_text(data, decimal_units=args.decimal_units)
         elif args.operation == 'show':
             data = await _wait_for_model_info(client.show(args.model), notice=not as_json)
@@ -188,6 +190,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if getattr(args, 'json', False) and getattr(args, 'field', None):
         parser.error('--json cannot be combined with a show text selector')
+    if getattr(args, 'detailed', False) and not getattr(args, 'json', False):
+        parser.error('ps --detailed requires --json')
     from tllama.client import ClientConfigError, ClientError
 
     try:

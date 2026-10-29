@@ -15,6 +15,14 @@ are independent of the separately packaged `tllama-server` native runtime.
 - Explicit REPL `/save`, `/load`, `/sessions` and `/forget` commands preserve
   conversations and settings in private, server/model-scoped JSON saves.
 
+### Changed
+
+- `/api/ps` now returns a compact summary by default. Request
+  `?detailed=true` or use `tllama ps --detailed --json` for full memory and
+  lifecycle diagnostics. Existing consumers of these extensions must opt in.
+  Summary sizes are cached per native observation using the same accounting
+  policy as detailed reports; polling does not copy full native inventories.
+
 ## 1.1.0
 
 ### Added

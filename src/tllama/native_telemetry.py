@@ -24,6 +24,7 @@ class MemoryTelemetry:
         self._http_status = None
         self._support = "unknown"
         self._sequence = 0
+        self._sizes = (None, None)
 
     @property
     def needs_native(self):
@@ -34,7 +35,8 @@ class MemoryTelemetry:
         return self._reason
 
     def accept(self, report):
-        sequence = report.snapshot()["snapshot_sequence"]
+        snapshot = report.snapshot()
+        sequence = snapshot["snapshot_sequence"]
         if sequence < self._sequence:
             self.fail("snapshot_sequence_regressed", http_status=200)
             return
@@ -44,10 +46,15 @@ class MemoryTelemetry:
         self._reason = None
         self._http_status = 200
         self._support = "supported"
+        from tllama.native_reporting import ollama_memory_sizes
+        # Compute once per accepted observation, not once per /api/ps poll.
+        memory = dict(snapshot, **asdict(report.totals()), source='native_memory_api')
+        self._sizes = ollama_memory_sizes(memory)
 
     def fail(self, reason, *, http_status=None):
         # Do not keep an old known inventory selected after a failed read.
         self._native = None
+        self._sizes = (None, None)
         self._received = None
         self._reason = reason
         self._http_status = http_status
@@ -66,6 +73,15 @@ class MemoryTelemetry:
         if weights is not None:
             result["weight_storage_totals"] = asdict(weights)
         return result
+
+    def sizes(self):
+        """Compatibility sizes without copying the full native diagnostics."""
+        if self.mode != 'log' and self._native is not None:
+            return self._sizes
+        if self.mode == 'native':
+            return None, None
+        from tllama.native_reporting import ollama_memory_sizes
+        return ollama_memory_sizes(self.log.snapshot())
 
     def snapshot(self):
         """Copy cached observations without HTTP, leases or lifecycle changes."""

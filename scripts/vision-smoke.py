@@ -225,7 +225,7 @@ async def exercise(args):
                 report('after-' + prefix + '-cancel', colors=check_colors(text, True))
                 same_generation()
             await worker.refresh_memory()
-            [process] = (await client.get('/api/ps')).json()['models']
+            [process] = (await client.get('/api/ps?detailed=true')).json()['models']
             memory = process['memory']
             require((process['size'] is None) == (process['size_vram'] is None), 'Incomplete processor split')
             if memory['source'] == 'native_load_log':
@@ -241,7 +241,7 @@ async def exercise(args):
             await asyncio.wait_for(manager.wait_native_closed(generation), timeout=30)
             require(worker.process.returncode is not None and not worker.runtime_directory.exists(), 'Vision resources survived unload')
             report('worker-closed', pid=worker.pid, returncode=worker.process.returncode, directory_removed=True)
-            require((await client.get('/api/ps')).json() == {'models':[]}, 'Closed vision generation remained listed')
+            require((await client.get('/api/ps?detailed=true')).json() == {'models':[]}, 'Closed vision generation remained listed')
     finally:
         server.should_exit = True
         try:

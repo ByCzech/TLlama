@@ -92,6 +92,9 @@ settings, which override file settings. Missing automatic files are ignored;
 invalid or unreadable files and missing explicit files are errors.
 .PP
 .I /usr/share/doc/tllama/docs/cli.md
+.SH PROCESS DIAGNOSTICS
+ps --json returns the compact server summary. ps --detailed --json requests
+the complete TLlama memory and lifecycle diagnostics. --detailed requires --json.
 .SH INTERACTIVE HISTORY
 REPL inputs persist separately per server and model in XDG_STATE_HOME/tllama/history
 (normally ~/.local/state/tllama/history). Files are private to the user.

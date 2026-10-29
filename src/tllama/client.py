@@ -172,8 +172,10 @@ class TLlamaClient:
     async def show(self, model):
         return await self._request('POST', 'api/show', wait_for_server_work=True, json={'model': model})
 
-    async def ps(self):
-        data = await self._request('GET', 'api/ps')
+    async def ps(self, *, detailed=False):
+        if type(detailed) is not bool:
+            raise ClientConfigError('detailed must be true or false.')
+        data = await self._request('GET', 'api/ps', **({'params': {'detailed': 'true'}} if detailed else {}))
         self._models(data)
         return data
 

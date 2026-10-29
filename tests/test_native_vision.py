@@ -181,7 +181,7 @@ async def test_image_stream_unload_drains_protected_generation(vision):
         await wait_until(lambda: manager.test.roots and (manager.test.roots[0] / 'started').exists())
         generation = manager.native_snapshot()[0]['generation']
         await manager.unload_native_model(name)
-        [process] = (await client.get('/api/ps')).json()['models']
+        [process] = (await client.get('/api/ps?detailed=true')).json()['models']
         assert process['state'] == 'draining' and process['leases'] == 1
         assert process['size'] is None and process['memory']['reason'] == 'projector_allocation_unreported'
     finally:
@@ -189,7 +189,7 @@ async def test_image_stream_unload_drains_protected_generation(vision):
         response = await task
     assert '"done": true' in response.text
     await manager.wait_native_closed(generation)
-    assert (await client.get('/api/ps')).json() == {'models':[]}
+    assert (await client.get('/api/ps?detailed=true')).json() == {'models':[]}
 
 
 @pytest.mark.parametrize('path', ['/api/chat', '/v1/chat/completions'])

@@ -103,7 +103,10 @@ combined with `--json`; they write the field verbatim, including any final
 newline. `show --modelfile` returns TOML, not an Ollama Modelfile conversion.
 `ps` derives processor placement from the server's compatibility size fields;
 unknown values remain unknown. These fields are not a measurement of physical
-RAM/VRAM residency. Detailed memory/provenance remains available with `ps --json`.
+RAM/VRAM residency.
+`tllama ps --json` returns the compact API response, while
+`tllama ps --detailed --json` requests complete TLlama diagnostics. The
+`--detailed` flag requires `--json`; the human table uses only summary fields.
 
 Human sizes in list/ps tables and pull/create progress use binary units by
 default: B, KiB, MiB, GiB and TiB (powers of 1024). Set

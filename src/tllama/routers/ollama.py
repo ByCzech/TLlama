@@ -194,8 +194,8 @@ async def show_model_info(request: dict):
 
 
 @router.get("/ps")
-async def list_running_models():
-    return ollama_processes(model_manager.native_reporting_snapshot())
+async def list_running_models(detailed: bool = False):
+    return ollama_processes(model_manager.native_reporting_snapshot(detailed=detailed), detailed=detailed)
 
 
 @router.post("/pull")

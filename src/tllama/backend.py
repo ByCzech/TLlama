@@ -293,9 +293,9 @@ class ModelManager:
         """Internal lifecycle diagnostics; not the public /api/ps memory shape."""
         return self._native.snapshot()
 
-    def native_reporting_snapshot(self):
+    def native_reporting_snapshot(self, *, detailed=True):
         """Public reporting reads native ownership without touching inference."""
-        return self._native.reporting_snapshot()
+        return self._native.reporting_snapshot(detailed=detailed)
 
 
     def ensure_storage(self) -> None:
