@@ -194,11 +194,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         from tllama.client_config import load_client_config
         config = load_client_config(getattr(args, 'config', None),
                                     {key: getattr(args, key) for key in
-                                     ('host', 'timeout', 'decimal_units', 'hide_thinking', 'verbose')
+                                     ('host', 'timeout', 'decimal_units', 'hide_thinking', 'verbose', 'history_enabled')
                                      if hasattr(args, key)})
         args.host, args.timeout = config.host, config.timeout
         args.decimal_units = config.decimal_units
         args.hide_thinking, args.verbose = config.hide_thinking, config.verbose
+        args.history_enabled = config.history_enabled
         return asyncio.run(_execute(args))
     except ClientConfigError as exc:
         print(f'tllama: {exc}', file=sys.stderr)

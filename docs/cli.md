@@ -297,8 +297,17 @@ terminals and encodings that cannot display the selected frames.
 
 Enter sends a prompt; Alt+Enter inserts a
 newline. Bracketed paste preserves multiline text as one input. Tab completes
-slash commands; Up/Down recall input from this process's in-memory history.
-No prompts or messages are written to a history file. Prompts and REPL control
+slash commands; Up/Down recall input, including earlier sessions by default.
+Input history is stored under `$XDG_STATE_HOME/tllama/history/` (normally
+`~/.local/state/tllama/history/`), separately hashed by normalized server URL
+and model name. Scope directories are private (`0700`), files use `0600`.
+Inputs can contain sensitive text. Set `[history] enabled = false` in the
+client config or use `run --no-history` to keep input history in memory only.
+`run --clear-history` removes saved inputs for the selected server/model before
+opening the REPL; combine with `--no-history` to clear without retaining new
+inputs. Input history does not restore conversation messages or runtime settings.
+Failure to initialize history falls back to memory with a warning.
+Prompts and REPL control
 messages go to stderr, including when `--json` is selected.
 
 - `/help` or `/?`: list commands and key bindings.

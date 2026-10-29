@@ -21,11 +21,12 @@ Ctrl+C cancels input or the active request; Ctrl+D exits at an empty prompt.
 /set format VALUE         json, a schema object, or off
 /set keep_alive VALUE     Server model residence duration (e.g. 5m or 0)
 /set verbose, /set quiet  Enable/disable measured request statistics
-Use //text to send a literal /text prompt. History stays in memory for this session.
+Use //text to send a literal /text prompt. Input history is private per server/model;
+--no-history disables persistence and --clear-history clears saved inputs on startup.
 """
 
 
-def terminal():
+def terminal(*, history=None):
     try:
         from prompt_toolkit import PromptSession
         from prompt_toolkit.completion import NestedCompleter
@@ -44,7 +45,7 @@ def terminal():
         '/set': {'parameter': None, 'system': None, 'think': None, 'format': None, 'keep_alive': None,
                  'verbose': None, 'quiet': None},
     })
-    return PromptSession(history=InMemoryHistory(), completer=completer, key_bindings=keys,
+    return PromptSession(history=history if history is not None else InMemoryHistory(), completer=completer, key_bindings=keys,
                          complete_while_typing=False, prompt_continuation='... ',
                          output=create_output(stdout=sys.stderr))
 
@@ -148,7 +149,10 @@ async def _interruptible(awaitable):
 
 
 async def repl(client, session, *, reader=None):
-    reader = reader if reader is not None else terminal()
+    if reader is None:
+        from tllama.cli_history import input_history
+        reader = terminal(history=input_history(getattr(client, 'url', None), session.model,
+                          enabled=session.history_enabled, clear=session.clear_history))
     print(f'TLlama: {session.model} ({session.mode}). /help for commands.', file=sys.stderr)
     while True:
         try:

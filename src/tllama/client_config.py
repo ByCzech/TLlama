@@ -13,7 +13,8 @@ from tllama.client import ClientConfigError, DEFAULT_HOST, server_url
 SETTINGS = {'client.host': ('host', str), 'client.timeout': ('timeout', float),
             'display.decimal_units': ('decimal_units', bool),
             'display.hide_thinking': ('hide_thinking', bool),
-            'display.verbose': ('verbose', bool)}
+            'display.verbose': ('verbose', bool),
+            'history.enabled': ('history_enabled', bool)}
 
 
 @dataclass(frozen=True)
@@ -23,6 +24,7 @@ class ClientConfig:
     decimal_units: bool = False
     hide_thinking: bool = False
     verbose: bool = False
+    history_enabled: bool = True
 
 
 def default_config_paths(environ):

@@ -5,6 +5,14 @@ identify the source; the complete history retains tests, refactoring and
 intermediate development steps. TLlama application versions
 are independent of the separately packaged `tllama-server` native runtime.
 
+## 1.2.0 — Unreleased
+
+### Added
+
+- REPL input history persists by default, privately scoped by server/model
+  under the XDG state directory. Configure `[history] enabled`, override with
+  `run --history`/`--no-history`, or clear saved inputs with `--clear-history`.
+
 ## 1.1.0
 
 ### Added

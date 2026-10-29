@@ -92,5 +92,11 @@ settings, which override file settings. Missing automatic files are ignored;
 invalid or unreadable files and missing explicit files are errors.
 .PP
 .I /usr/share/doc/tllama/docs/cli.md
+.SH INTERACTIVE HISTORY
+REPL inputs persist separately per server and model in XDG_STATE_HOME/tllama/history
+(normally ~/.local/state/tllama/history). Files are private to the user.
+Use [history] enabled=false in client.toml or run --no-history to disable
+persistence. run --clear-history removes saved inputs for this scope before
+opening the REPL. Input history does not restore conversation messages.
 .SH SEE ALSO
 .BR tllamad (1)

@@ -60,6 +60,9 @@ def think_value(text):
 
 def add_run_options(parser):
     parser.add_argument('model')
+    parser.add_argument('--history', dest='history_enabled', action=argparse.BooleanOptionalAction,
+                        default=argparse.SUPPRESS, help='Persist REPL input history (default); --no-history keeps it in memory.')
+    parser.add_argument('--clear-history', action='store_true', help='Clear this server/model input history before opening the REPL.')
     parser.add_argument('prompt', nargs='*', help='Prompt text (stdin is prepended when piped).')
     parser.add_argument('--system', help='Session system prompt; does not change the model definition.')
     parser.add_argument('--option', action='append', type=option, default=[], metavar='KEY=VALUE',
@@ -86,6 +89,8 @@ class RunSession:
     as_json: bool = False
     hide_thinking: bool = False
     verbose: bool = False
+    history_enabled: bool = True
+    clear_history: bool = False
 
     @classmethod
     async def create(cls, client, args):
@@ -107,7 +112,9 @@ class RunSession:
             raise ClientError('Decision models do not accept generation or residence controls.')
         return cls(args.model, mode, controls, args.system, as_json=getattr(args, 'json', False),
                    hide_thinking=mode == 'completion' and getattr(args, 'hide_thinking', False),
-                   verbose=getattr(args, 'verbose', False))
+                   verbose=getattr(args, 'verbose', False),
+                   history_enabled=getattr(args, 'history_enabled', True),
+                   clear_history=getattr(args, 'clear_history', False))
 
     async def submit(self, client, text):
         started = time.perf_counter()

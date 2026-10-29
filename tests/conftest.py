@@ -39,6 +39,7 @@ def isolated_client_config_files(monkeypatch, tmp_path):
     """CLI tests must not inherit a developer's installed client preferences."""
     monkeypatch.setattr('tllama.client_config.default_config_paths',
                         lambda environ: (tmp_path / 'system-client.toml', tmp_path / 'user-client.toml'))
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'client-state'))
 
 
 @pytest.fixture
