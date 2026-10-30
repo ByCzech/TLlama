@@ -162,7 +162,7 @@ def test_root_identifies_the_running_daemon(client):
 
     assert response.status_code == 200
     assert response.headers["content-type"] == "text/plain; charset=utf-8"
-    assert response.text == "TLlama is running"
+    assert response.text == "TLlama compatible Ollama is running"
 
 
 def test_root_head_probe_has_get_headers_without_a_body(client):

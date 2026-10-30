@@ -9,8 +9,10 @@ are independent of the separately packaged `tllama-server` native runtime.
 
 ### Fixed
 
-- The root URL now displays `TLlama is running` as plain text. `HEAD /`
-  remains a body-free HTTP 200 probe for Ollama clients.
+- The root URL now displays `TLlama compatible Ollama is running` as plain
+  text, retaining the substring required by JetBrains AI Assistant's
+  connection check. `HEAD /` remains a body-free HTTP 200 probe for Ollama
+  clients.
 
 ## 1.2.0 — 2026-10-29
 

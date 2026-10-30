@@ -119,7 +119,8 @@ app.include_router(ollama.router)
 @app.get("/", response_class=PlainTextResponse)
 async def root_ping(request: Request):
     """Identify the daemon; retain a body-free HEAD probe for Ollama clients."""
-    message = "TLlama is running"
+    # JetBrains AI Assistant requires the substring "Ollama is running".
+    message = "TLlama compatible Ollama is running"
     return PlainTextResponse(
         "" if request.method == "HEAD" else message,
         headers={"Content-Length": str(len(message.encode("utf-8")))},
