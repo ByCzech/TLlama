@@ -5,6 +5,13 @@ identify the source; the complete history retains tests, refactoring and
 intermediate development steps. TLlama application versions
 are independent of the separately packaged `tllama-server` native runtime.
 
+## Unreleased
+
+### Fixed
+
+- The root URL now displays `TLlama is running` as plain text. `HEAD /`
+  remains a body-free HTTP 200 probe for Ollama clients.
+
 ## 1.2.0 — 2026-10-29
 
 ### Added

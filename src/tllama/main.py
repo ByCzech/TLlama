@@ -3,7 +3,8 @@ import logging
 import uvicorn
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, Request
+from fastapi.responses import PlainTextResponse
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.cors import CORSMiddleware
@@ -114,14 +115,15 @@ app.include_router(openai.router)
 app.include_router(ollama.router)
 
 
-@app.head("/")
-@app.get("/")
-async def root_ping():
-    """
-    Ollama CLI expect return 200 OK from root.
-    Method HEAD must not return any body, only headers.
-    """
-    return Response(status_code=200)
+@app.head("/", response_class=PlainTextResponse)
+@app.get("/", response_class=PlainTextResponse)
+async def root_ping(request: Request):
+    """Identify the daemon; retain a body-free HEAD probe for Ollama clients."""
+    message = "TLlama is running"
+    return PlainTextResponse(
+        "" if request.method == "HEAD" else message,
+        headers={"Content-Length": str(len(message.encode("utf-8")))},
+    )
 
 
 @app.get("/health")
