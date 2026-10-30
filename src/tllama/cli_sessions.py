@@ -72,8 +72,13 @@ class SessionStore:
             messages = data['messages']
             require(isinstance(messages, list))
             for message in messages:
-                require(isinstance(message, dict) and set(message) <= {'role', 'content', 'thinking', 'tool_calls'})
+                require(isinstance(message, dict) and set(message) <= {'role', 'content', 'thinking', 'tool_calls', 'images'})
                 require(message.get('role') in {'user', 'assistant'} and isinstance(message.get('content'), str))
+                if 'images' in message:
+                    from tllama.cli_images import validate_image
+                    require(message['role'] == 'user' and isinstance(message['images'], list) and bool(message['images']))
+                    for image in message['images']:
+                        validate_image(image)
                 if 'thinking' in message:
                     require(isinstance(message['thinking'], str))
                 if 'tool_calls' in message:
@@ -103,10 +108,13 @@ class SessionStore:
         except (OSError, ValueError, UnicodeError, RecursionError) as exc:
             raise ClientError(f'Cannot load session: {exc}') from None
         self.validate(data)
+        if any(message.get('images') for message in data['messages']) and not session.vision:
+            raise ClientError('Saved images require a completion model advertising vision; check its projector configuration.')
         # Validate everything before replacing any live conversation state.
         session.system = data['system']
         session.controls = deepcopy(data['controls'])
         session.messages = deepcopy(data['messages'])
+        session.pending_images.clear()
         session.verbose, session.hide_thinking = data['display']['verbose'], data['display']['hide_thinking']
 
     def names(self):

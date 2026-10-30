@@ -252,6 +252,64 @@ embedding/Decision output is already JSON. Errors may follow partial streamed
 output and make the exit status nonzero; requests are never automatically retried.
 Ctrl+C closes the request and exits with status 130 in one-shot mode.
 
+### Attach images
+
+```sh
+tllama run VISION_MODEL 'Describe this picture.' --image photo.png
+tllama run VISION_MODEL 'Compare these pictures.' --image first.jpg --image second.png
+printf 'Read the text in this picture.' | tllama run VISION_MODEL --image scan.png
+tllama run VISION_MODEL --image 'photo with spaces.jpg'
+```
+
+`--image FILE` is repeatable and preserves attachment order. Files are read on
+the client machine, including when `--host` points to a remote server. Their
+base64 contents are sent in the next user message's `images` array; paths are
+never sent as attachments or copied into the server's model repository. Text
+and stdin handling otherwise stay the same. Supply an explicit empty prompt
+(`''`) for a one-shot image-only request. With terminal stdin and no prompt,
+images are queued for the first REPL input instead.
+
+This interface requires a completion model advertising `vision` in `/api/show`,
+normally a model configured with its projector. Text-only, embedding and
+Decision models are refused before preload/inference. File type is checked
+from its bytes rather than its extension, using the existing server validator;
+the native worker still decides whether it can decode the image. Missing,
+unreadable, empty and non-regular files are refused. Each file is limited to
+16 MiB before base64 encoding. Images are read when attached, so later edits
+or removal of the original file do not change the queued attachment.
+
+In the REPL:
+
+```text
+/image "photo with spaces.jpg"
+/image second.png
+/images
+/unimage 2
+Describe the remaining picture.
+What colour is the object?
+```
+
+`/image FILE` queues one image; quote paths containing spaces. `/images` lists
+queued paths with 1-based indices. `/unimage INDEX` removes one queued image;
+`/unimage all` removes all queued images. These commands never send a request
+and their messages stay on stderr. Pressing Enter alone with queued images
+sends an image-only prompt. `/clear` and `/set system` clear both conversation
+messages and queued attachments.
+
+After a completed response, queued images become part of that user turn and
+the queue is emptied. Follow-up prompts retain those images in conversation
+history without attaching them to every new user message. Failed/cancelled
+turns do not enter the conversation and retain their queue for an explicit
+retry or removal. There is no automatic retry.
+
+`/save` embeds images from completed turns in the saved conversation, so
+`/load` works without the original files. It does not save unsent attachments;
+a successful `/load` clears the current queue. The existing 16 MiB limit
+applies to the complete JSON save, including base64 expansion and all messages.
+An oversized save fails without replacing an existing file; text-only saves
+remain readable. Old clients cannot load saves containing image messages.
+Input history records typed text and commands, not encoded image bytes.
+
 ## Interactive run
 
 ### Choose the context before loading
@@ -315,7 +373,7 @@ messages go to stderr, including when `--json` is selected.
 
 - `/help` or `/?`: list commands and key bindings.
 - `/bye` or `/exit`: end the session. Ctrl+D also exits at an empty prompt.
-- `/clear`: forget conversation messages, retaining session settings and input
+- `/clear`: forget conversation messages and queued images, retaining session settings and input
   history. This does not unload the model or clear the server's KV cache.
 - `/save NAME`: explicitly save completed conversation messages, system prompt,
   request controls and verbose/thinking display settings. Replaces that save.
@@ -324,6 +382,8 @@ messages go to stderr, including when `--json` is selected.
   restored controls and may reload the worker if load settings differ.
 - `/sessions`: list saves for this normalized server URL and model.
 - `/forget NAME`: remove a save; the active conversation is retained.
+- `/image FILE`, `/images`, `/unimage INDEX|all`: manage images for the next
+  prompt; see [Attach images](#attach-images).
 - `/show model`: fetch model information from the server.
 - `/show parameters`: display explicit session request controls, not merged
   model/server defaults. `/show system` shows the session system override, or

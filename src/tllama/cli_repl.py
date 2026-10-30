@@ -3,6 +3,7 @@
 import asyncio
 import argparse
 import json
+import shlex
 import signal
 import sys
 
@@ -13,7 +14,10 @@ HELP = """Enter a prompt. Alt+Enter inserts a newline; Enter submits. Pasted mul
 Ctrl+C cancels input or the active request; Ctrl+D exits at an empty prompt.
 /help, /?                 Show this help
 /bye, /exit               End this session
-/clear                    Clear conversation messages; keep session settings
+/clear                    Clear conversation and queued images; keep settings
+/image FILE               Queue a client-local image (quote paths with spaces)
+/images                   List images queued for the next prompt
+/unimage INDEX|all        Remove a queued image (1-based index) or all images
 /save NAME                Save conversation and settings locally (overwrites NAME)
 /load NAME                Replace conversation and settings from a local save
 /sessions                 List saves for this server/model
@@ -27,6 +31,7 @@ Ctrl+C cancels input or the active request; Ctrl+D exits at an empty prompt.
 /set verbose, /set quiet  Enable/disable measured request statistics
 Use //text to send a literal /text prompt. Input history is private per server/model;
 --no-history disables persistence and --clear-history clears saved inputs on startup.
+Queued images are sent with the next prompt; Enter alone sends images without text.
 """
 
 
@@ -46,6 +51,7 @@ def terminal(*, history=None):
     completer = NestedCompleter.from_nested_dict({
         '/help': None, '/?': None, '/bye': None, '/exit': None, '/clear': None,
         '/save': None, '/load': None, '/sessions': None, '/forget': None,
+        '/image': None, '/images': None, '/unimage': {'all': None},
         '/show': {'model': None, 'parameters': None, 'system': None},
         '/set': {'parameter': None, 'system': None, 'think': None, 'format': None, 'keep_alive': None,
                  'verbose': None, 'quiet': None},
@@ -67,7 +73,25 @@ async def command(client, session, text):
         print(HELP, end='', file=sys.stderr)
     elif name == '/clear' and not argument:
         session.messages.clear()
+        session.pending_images.clear()
         print('Conversation cleared.', file=sys.stderr)
+    elif name == '/image':
+        paths = shlex.split(argument)
+        if len(paths) != 1:
+            raise ClientError('Use /image FILE; quote paths containing spaces.')
+        session.attach_image(paths[0])
+        print(f'Image queued ({len(session.pending_images)}): {session.pending_images[-1].path!r}', file=sys.stderr)
+    elif name == '/images' and not argument:
+        print('\n'.join(f'{index}: {image.path!r}' for index, image in enumerate(session.pending_images, 1))
+              or 'No queued images.', file=sys.stderr)
+    elif name == '/unimage':
+        if argument == 'all':
+            session.pending_images.clear()
+        elif argument.isascii() and argument.isdecimal() and 1 <= int(argument) <= len(session.pending_images):
+            del session.pending_images[int(argument) - 1]
+        else:
+            raise ClientError('Use /unimage INDEX (from /images) or /unimage all.')
+        print('Queued images updated.', file=sys.stderr)
     elif name in {'/save', '/load', '/forget', '/sessions'}:
         from tllama.cli_sessions import SessionStore
         store = SessionStore(getattr(client, 'url', None), session.model, session.mode)
@@ -118,6 +142,7 @@ async def command(client, session, text):
         elif setting == 'system':
             session.system = value
             session.messages.clear()
+            session.pending_images.clear()
         elif setting == 'think':
             session.controls['think'] = think_value(value)
         elif setting == 'format':
@@ -182,7 +207,7 @@ async def repl(client, session, *, reader=None):
             return 0
         except KeyboardInterrupt:
             continue
-        if not text.strip():
+        if not text.strip() and not session.pending_images:
             continue
         try:
             if text.startswith('//'):

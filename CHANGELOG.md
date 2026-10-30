@@ -7,6 +7,13 @@ are independent of the separately packaged `tllama-server` native runtime.
 
 ## Unreleased
 
+### Added
+
+- `tllama run --image FILE` and REPL `/image`, `/images`, `/unimage` attach
+  ordered client-local images to vision chat prompts. Completed image turns
+  persist in explicit conversation saves; failures/cancellation retain queued
+  attachments for retry. Existing save-size limits include encoded images.
+
 ### Fixed
 
 - The root URL now displays `TLlama compatible Ollama is running` as plain

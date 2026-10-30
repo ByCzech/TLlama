@@ -64,6 +64,8 @@ def add_run_options(parser):
                         default=argparse.SUPPRESS, help='Persist REPL input history (default); --no-history keeps it in memory.')
     parser.add_argument('--clear-history', action='store_true', help='Clear this server/model input history before opening the REPL.')
     parser.add_argument('prompt', nargs='*', help='Prompt text (stdin is prepended when piped).')
+    parser.add_argument('--image', action='append', default=[], metavar='FILE',
+                        help='Attach a client-local image to the next prompt; repeatable. Requires a vision completion model.')
     parser.add_argument('--system', help='Session system prompt; does not change the model definition.')
     parser.add_argument('--option', action='append', type=option, default=[], metavar='KEY=VALUE',
                         help='Set a request option before loading; repeatable. VALUE uses JSON syntax, '
@@ -92,6 +94,8 @@ class RunSession:
     history_enabled: bool = True
     clear_history: bool = False
     notifier: object = field(default=None, repr=False, compare=False)
+    vision: bool = False
+    pending_images: list = field(default_factory=list, repr=False)
 
     @classmethod
     async def create(cls, client, args, *, notifier=None):
@@ -111,11 +115,21 @@ class RunSession:
             raise ClientError('System, thinking and format controls require a completion model.')
         if mode == 'decision' and controls:
             raise ClientError('Decision models do not accept generation or residence controls.')
-        return cls(args.model, mode, controls, args.system, as_json=getattr(args, 'json', False),
+        session = cls(args.model, mode, controls, args.system, as_json=getattr(args, 'json', False),
                    hide_thinking=mode == 'completion' and getattr(args, 'hide_thinking', False),
                    verbose=getattr(args, 'verbose', False),
                    history_enabled=getattr(args, 'history_enabled', True),
-                   clear_history=getattr(args, 'clear_history', False), notifier=notifier)
+                   clear_history=getattr(args, 'clear_history', False), notifier=notifier,
+                   vision='vision' in capabilities)
+        for path in getattr(args, 'image', []):
+            session.attach_image(path)
+        return session
+
+    def attach_image(self, path):
+        from tllama.cli_images import read_image
+        if self.mode != 'completion' or not self.vision:
+            raise ClientError('Image attachments require a completion model advertising vision; check its projector configuration.')
+        self.pending_images.append(read_image(path))
 
     async def submit(self, client, text):
         started = time.perf_counter()
@@ -139,8 +153,11 @@ class RunSession:
             self._statistics(data, started)
             self._notify('response_finished')
             return
+        user = {'role': 'user', 'content': text}
+        if self.pending_images:
+            user['images'] = [image.data for image in self.pending_images]
         request = ([{'role': 'system', 'content': self.system}] if self.system is not None else [])
-        request += self.messages + [{'role': 'user', 'content': text}]
+        request += self.messages + [user]
         reply = {'role': 'assistant', 'content': ''}
         renderer = ReplyText()
         terminal = None
@@ -173,7 +190,8 @@ class RunSession:
             renderer.close()
         # Commit only a completed turn. Failed/cancelled replies must not
         # silently become context for the next interactive request.
-        self.messages.extend([{'role': 'user', 'content': text}, reply])
+        self.messages.extend([user, reply])
+        self.pending_images.clear()
         self._statistics(terminal or {}, started, first_text=first_text)
         self._notify('response_finished')
 
