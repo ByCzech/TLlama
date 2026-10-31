@@ -86,10 +86,10 @@ Hugging Face support is installed as a runtime dependency so pull works.
   debuild -us -uc -b
 
 For a source build, supply the matching tllama_<upstream>.orig.tar.gz alongside
-the checkout, then use debuild -us -uc. After creating the v1.3.0 release tag:
+the checkout, then use debuild -us -uc. After creating the v1.3.1 release tag:
 
-  git archive --format=tar --prefix=tllama-1.3.0/ v1.3.0 |
-    gzip -n > ../tllama_1.3.0.orig.tar.gz
+  git archive --format=tar --prefix=tllama-1.3.1/ v1.3.1 |
+    gzip -n > ../tllama_1.3.1.orig.tar.gz
   debuild -us -uc
 
 The package uses source format 3.0 (quilt). debian/changelog owns the Debian
