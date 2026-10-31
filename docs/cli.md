@@ -60,6 +60,34 @@ GGUF shards, its projector and any configured LoRA adapter. A shared file counts
 once within a definition and contributes to each definition that needs it.
 This is separate from the running RAM/VRAM accounting shown by `ps`.
 
+The displayed `ID` is the first 12 hexadecimal characters of the API `digest`:
+
+| Definition | Identity |
+| --- | --- |
+| Single GGUF, no effective TOML changes | Its existing file SHA-256 |
+| LLM with projector | SHA-256 combining their content hashes |
+| LLM with changed parameters | SHA-256 combining LLM and parameter hashes |
+| LLM with projector and changed parameters | SHA-256 combining all three |
+
+The parameter baseline is TLlama's built-in defaults, overlaid by GGUF values.
+Only differing TOML settings enter the parameter hash, including sampling,
+runtime, system/template, FIM and projector settings. Keys and values are
+serialized canonically; comments, TOML key order and equivalent typed values
+do not change the ID. Native float32 settings use their native precision for
+comparison with GGUF values. Explicit default values have no effect on ID.
+Names, file paths, mtimes, server TOML, environment and request options are
+excluded. Aliases with identical content/settings share an ID across hosts.
+LoRA references use adapter content hashes instead of paths. A split GGUF's
+component hash covers the ordered content hashes of all its shards.
+
+`ps` uses the ID captured for that generation before it loads. Editing files or
+TOML can change the current listing ID while an existing generation continues
+to report its original ID; polling `ps` never rereads or rehashes files.
+Metadata/digest caches rebuild automatically after schema changes. Computing
+missing file hashes reads the file once, so the first listing or admission can
+take longer. Subsequent calls reuse the validated per-file hashes; composing
+the model ID is cheap. An unreadable component leaves the ID unavailable.
+
 `--config PATH` instead reads only that file over built-in defaults, excluding
 both automatic files. A missing explicit file is an error. Files are read only
 by the CLI; constructing the Python HTTP client does not discover configuration.

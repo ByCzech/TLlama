@@ -94,7 +94,7 @@ async def test_previous_header_cache_is_rebuilt_for_license_without_touching_wei
     manager._invalidate_metadata_cache_entry('info')
     response = await client.post('/api/show', json={'model': 'info'})
     assert response.status_code == 200 and response.json()['license'] == 'apache-2.0'
-    assert json.loads(path.read_text())['schema_version'] == 8
+    assert json.loads(path.read_text())['schema_version'] == 9
 
 
 async def test_missing_license_is_not_fabricated(information):

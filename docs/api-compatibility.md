@@ -91,6 +91,13 @@ conflict, staging and deletion contracts are in [cli.md](cli.md).
 
 ## Memory and capabilities
 
+The `/api/tags` `size` is the total required file size, including all GGUF
+shards, projector and configured LoRA adapter. Its `digest` identifies the
+model variant: an unchanged single-file LLM retains its file SHA-256;
+projectors and TOML changes against TLlama/GGUF defaults produce a composite
+SHA-256. Global server/environment configuration and request overrides are
+excluded. See [model ID rules](cli.md#http-client-basics).
+
 `GET /api/ps` returns a compact model summary by default: name/model, digest,
 size/size_vram, context_length, expires_at, details and runner.
 `GET /api/ps?detailed=true` (also `detailed=1`) adds generation, state, pid,

@@ -13,6 +13,18 @@ are independent of the separately packaged `tllama-server` native runtime.
   any configured LoRA file. Shared files count once within each definition;
   incomplete shard sets do not produce a misleading partial size.
 
+### Changed
+
+- Public model IDs now combine the main GGUF, any projector and only the
+  model TOML parameters differing from TLlama/GGUF defaults. An unchanged
+  single-file LLM retains its original content SHA-256. Names, paths,
+  server/environment settings and request overrides do not enter the ID.
+  Running generations retain the ID captured before loading.
+- Metadata cache schema 9 includes GGUF RoPE defaults for ID comparison;
+  digest cache schema 2 verifies that files stay unchanged while hashing.
+  Existing caches regenerate automatically; the first listing or model
+  admission can therefore take longer while file SHA-256 values are rebuilt.
+
 ## 1.3.0 — 2026-10-31
 
 ### Added

@@ -267,7 +267,9 @@ def _build_metadata_key_set(reader: Any) -> tuple[str, ...]:
         if isinstance(arch, str) and arch:
             keys.add(f"{arch}.context_length")
             keys.update(f"{arch}.{suffix}" for suffix in (
-                "pooling_type", "embedding_length", "embedding_length_out", "block_count"))
+                "pooling_type", "embedding_length", "embedding_length_out", "block_count",
+                "rope.freq_base", "rope.scale_linear", "rope.scaling.type",
+                "rope.scaling.factor", "rope.scaling.original_context_length"))
             keys.update(key for key in reader.fields if key.startswith(f"{arch}.decision."))
 
     return tuple(sorted(keys))

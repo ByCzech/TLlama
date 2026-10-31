@@ -240,7 +240,7 @@ def ollama_processes(generations, *, detailed=False):
         models.append({
             'name':entry['model'], 'model':entry['model'], 'runner':RUNNER,
             'size':size, 'size_vram':size_vram,
-            'digest':entry['file_info'].get('content_sha256', ''),
+            'digest':entry['file_info'].get('model_digest', entry['file_info'].get('content_sha256', '')),
             'context_length':entry['context_length'], 'expires_at':entry['expires_at'],
             'details':{'parent_model':'', 'format':'gguf', 'family':family, 'families':[family],
                        'parameter_size':parameter_size, 'quantization_level':metadata.get('bits', 'unknown')},

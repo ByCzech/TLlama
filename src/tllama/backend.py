@@ -29,6 +29,7 @@ from tllama.helpers.sampling_params import coerce_sampling_overrides
 from tllama.native_config import resolve_worker_config
 from tllama.native_params import freeze_values
 from tllama.model_artifacts import ModelArtifacts, gguf_files
+from tllama.model_identity import file_group_digest, model_digest, parameter_changes
 from tllama.residency import NativeResidency, ModelDefinition, ResidencyClosed, _settle_owned
 from tllama.worker import NativeWorker
 from tllama.helpers.metadata_cache import (
@@ -230,9 +231,6 @@ class ModelManager:
             info = self._build_model_file_info_from_path(model)
             if info is None:
                 raise FileNotFoundError(f"Model '{model_name}' does not point at an existing GGUF")
-            # Listing does not hash a potentially changed GGUF behind a live
-            # generation. Retain only a content digest already cached for it.
-            info['content_sha256'] = (load_digest_cache(self.metadata_cache_dir, model) or {}).get('content_sha256', '')
             metadata_scanned = False
             try:
                 metadata = load_metadata_cache(self.metadata_cache_dir, model)
@@ -245,15 +243,22 @@ class ModelManager:
                 # Missing optional header recommendations must not invent defaults.
                 logger.warning("Native metadata scan failed for %s: %s", model_name, exc)
                 metadata = {}
-            after = self._toml_fingerprint_for_reference(model_name)
-            file_after = {"model": build_model_file_fingerprint(model),
-                          "projector": build_model_file_fingerprint(mmproj) if mmproj else None}
-            if before != after or file_before != file_after:
-                continue
+            # Reject incompatible load settings before reading large files
+            # merely to compute their public identity.
             resolved = resolve_worker_config(self.config, model.resolve(), spec, num_ctx=num_ctx,
                                              mmproj=mmproj.resolve() if mmproj else None,
                                              metadata=metadata, runtime_overrides=runtime_overrides,
                                              **self._native_launch_options)
+            artifacts = self._model_artifacts(spec, model, model_name, metadata=metadata)
+            identity_before = tuple(build_model_file_fingerprint(path) for path in artifacts.files)
+            info['model_digest'] = self._artifact_digest(spec, artifacts, metadata)
+            info['content_sha256'] = (load_digest_cache(self.metadata_cache_dir, model) or {}).get('content_sha256', '')
+            after = self._toml_fingerprint_for_reference(model_name)
+            file_after = {"model": build_model_file_fingerprint(model),
+                          "projector": build_model_file_fingerprint(mmproj) if mmproj else None}
+            identity_after = tuple(build_model_file_fingerprint(path) for path in artifacts.files)
+            if before != after or file_before != file_after or identity_before != identity_after:
+                continue
             if metadata_scanned:
                 # Admission must warm the same header cache as /api/show.
                 # Otherwise every request rescans a cold GGUF, even while its
@@ -554,36 +559,65 @@ class ModelManager:
 
         Returns None only when the file itself cannot be read.
         """
-        file_path = Path(model_path)
+        return await asyncio.to_thread(self._get_content_digest_sync, Path(model_path))
 
-        cached = await asyncio.to_thread(
-            load_digest_cache,
-            self.metadata_cache_dir,
-            file_path,
-        )
-        if cached is not None:
-            return cached
-
+    def _get_content_digest_sync(self, file_path):
         try:
-            digest = await asyncio.to_thread(self._build_model_digest_sync, file_path)
+            for _ in range(3):
+                before = build_model_file_fingerprint(file_path)
+                cached = load_digest_cache(self.metadata_cache_dir, file_path)
+                if cached is not None:
+                    return cached
+                digest = self._build_model_digest_sync(file_path)
+                if before != build_model_file_fingerprint(file_path):
+                    continue
+                try:
+                    name = self._build_model_ref_from_path(file_path)
+                except ValueError:
+                    name = str(file_path)
+                save_digest_cache(self.metadata_cache_dir, name, file_path, digest, fingerprint=before)
+                return digest
         except Exception as exc:
-            logger.warning("Digest computation failed for %s: %s", file_path, exc)
-            return None
+            logger.warning('Digest computation failed for %s: %s', file_path, exc)
+        return None
 
-        try:
-            model_name = self._build_model_ref_from_path(file_path)
-        except ValueError:
-            model_name = str(file_path)
+    def _artifact_digest(self, spec, artifacts, metadata):
+        digests = {path: (self._get_content_digest_sync(path) or {}).get('content_sha256', '')
+                   for path in artifacts.files}
+        # Hard links still have separate roles, but need only one file hash.
+        def group(paths):
+            values = []
+            for path in paths:
+                if path not in digests:
+                    same = next(item for item in artifacts.files if item.samefile(path))
+                    digests[path] = digests[same]
+                values.append(digests[path])
+            return file_group_digest(values)
+        llm = group(artifacts.llm)
+        projector = group(artifacts.projector) if artifacts.projector else ''
+        adapter = group(artifacts.adapter) if artifacts.adapter else None
+        if (artifacts.projector and not projector) or (artifacts.adapter and not adapter):
+            return ''
+        return model_digest(llm, projector, parameter_changes(spec, metadata, adapter_digest=adapter))
 
-        await asyncio.to_thread(
-            save_digest_cache,
-            self.metadata_cache_dir,
-            model_name,
-            file_path,
-            digest,
-        )
-
-        return digest
+    def _listing_identity(self, model_name):
+        for _ in range(3):
+            before = self._toml_fingerprint_for_reference(model_name)
+            spec = self._resolve_virtual_model_spec(model_name)
+            if spec is None or spec.llm_model is None:
+                raise TomlModelError(f'{model_name}: model is not imported')
+            path = resolve_repo_relative_path(spec.llm_model, self.models_dir)
+            artifacts = self._model_artifacts(spec, path, model_name)
+            files_before = tuple(build_model_file_fingerprint(file) for file in artifacts.files)
+            try:
+                metadata = self._read_metadata_for_path(path)
+            except (ValueError, OSError):
+                metadata = {}
+            digest = self._artifact_digest(spec, artifacts, metadata)
+            if (before == self._toml_fingerprint_for_reference(model_name)
+                    and files_before == tuple(build_model_file_fingerprint(file) for file in artifacts.files)):
+                return digest, artifacts.size
+        raise TomlModelError(f'{model_name}: definition changed during identity computation')
 
     def _get_model_metadata_sync(self, model_path: str) -> Optional[Dict[str, Any]]:
         started = time.monotonic()
@@ -1147,7 +1181,7 @@ class ModelManager:
             self._ensure_virtual_model_toml_sync, model_path, metadata
         )
 
-    def _model_artifacts(self, spec, target_path, source):
+    def _model_artifacts(self, spec, target_path, source, *, metadata=None):
         projector = self.resolve_mmproj_path(spec, str(source))
         adapter = ()
         if 'lora_path' in spec.runtime:
@@ -1157,8 +1191,10 @@ class ModelManager:
             if not path.resolve().is_relative_to(self.models_dir.resolve()) or not path.is_file():
                 raise TomlModelError(f'{source}: lora_path must name a file inside the model store')
             adapter = (path,)
+        def read(path):
+            return metadata if metadata is not None and path == target_path else self._read_metadata_for_path(path)
         return ModelArtifacts(
-            gguf_files(target_path, self._read_metadata_for_path, self.models_dir),
+            gguf_files(target_path, read, self.models_dir),
             gguf_files(projector, self._read_metadata_for_path, self.models_dir) if projector else (),
             adapter,
         )
@@ -1255,8 +1291,11 @@ class ModelManager:
             if metadata:
                 item.update(metadata)
 
-            digest_info = await self.get_model_digest(model["path"]) or {}
-            item["digest"] = digest_info.get("content_sha256", "")
+            try:
+                item['digest'], item['size'] = await asyncio.to_thread(self._listing_identity, model['id'])
+            except (TomlModelError, OSError, ValueError) as exc:
+                logger.warning('Ignoring %s: %s', model['id'], exc)
+                continue
 
             enriched.append(item)
 
