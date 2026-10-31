@@ -164,6 +164,46 @@ def test_usage_is_exact_even_with_large_probability_tolerance():
     assert rows == []
 
 
+async def test_cancel_timeout_identifies_source_residency_and_pending_tasks(monkeypatch):
+    import asyncio
+    rows = []
+    async def stuck_call(body):
+        await asyncio.Event().wait()
+    async def deadline(*args):
+        raise TimeoutError
+    monkeypatch.setattr(smoke, 'wait_until', deadline)
+    manager = SimpleNamespace(native_snapshot=lambda: [{'model':'test', 'leases':1}])
+    args = SimpleNamespace(cancel_after_ms=1, request_timeout=5)
+    with pytest.raises(WorkerError, match='public cancellation.*5 seconds'):
+        await smoke.cancel_request(stuck_call, manager, args,
+                                   lambda stage, **data: rows.append(dict(stage=stage, **data)),
+                                   'clef', 'public', lambda *args: None)
+    timeout = rows[-1]
+    assert timeout['stage'] == 'transport-cancel-timeout' and timeout['source'] == 'public'
+    assert timeout['residency'] == [{'model':'test', 'leases':1}]
+    assert timeout['timeout_seconds'] == 5 and isinstance(timeout['pending_tasks'], list)
+
+
+async def test_pending_task_diagnostic_includes_inner_await_without_locals():
+    import asyncio
+    async def inner_transport():
+        private_request_value = 'do not include payloads'
+        await asyncio.Event().wait()
+    async def outer_request():
+        await inner_transport()
+    task = asyncio.create_task(outer_request(), name='owned-diagnostic-probe')
+    try:
+        await asyncio.sleep(0)
+        state = smoke.pending_task_state(task)
+        assert state['name'] == 'owned-diagnostic-probe' and state['cancelling'] == 0
+        assert [frame['function'] for frame in state['stack']][:2] == ['outer_request','inner_transport']
+        assert all(set(frame) == {'file','function','line'} for frame in state['stack'])
+        assert 'do not include payloads' not in json.dumps(state)
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
 def test_launch_comparison_ignores_only_listener_and_owned_credential_file():
     a = ['native', '--model', 'a.gguf', '--host', '/private/a/worker.sock',
          '--port', '12', '--api-key-file', '/private/a', '--ctx-size', '1024']

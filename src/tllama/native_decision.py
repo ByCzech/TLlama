@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import anyio
 
 from fastapi import HTTPException
 from pydantic import ValidationError
@@ -67,13 +68,22 @@ async def decision_response(http_request, manager):
         while (await http_request.receive())['type'] != 'http.disconnect':
             pass
 
-    work = asyncio.create_task(serve_decision(manager, request))
+    scope = anyio.CancelScope()
+
+    async def decision_work():
+        # Keep the owner's stop intent active at transport checkpoints even
+        # if an inner AnyIO/HTTPX operation consumes one cancellation.
+        with scope:
+            return await serve_decision(manager, request)
+        raise asyncio.CancelledError
+
+    work = asyncio.create_task(decision_work())
     watcher = asyncio.create_task(disconnected())
 
     async def cleanup():
-        for task in (work, watcher):
-            if not task.done():
-                task.cancel()
+        scope.cancel()
+        if not watcher.done():
+            watcher.cancel()
         await asyncio.gather(work, watcher, return_exceptions=True)
 
     try:

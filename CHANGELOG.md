@@ -9,6 +9,10 @@ are independent of the separately packaged `tllama-server` native runtime.
 
 ### Fixed
 
+- Public text Decision cancellation keeps its stop intent active through
+  AnyIO/HTTPX transport checkpoints so an absorbed single cancellation
+  cannot retain a model lease. Decision smoke reports pending tasks and
+  residency explicitly if cancellation fails to drain within its deadline.
 - Model listing sizes include every main-model and projector GGUF shard and
   any configured LoRA file. Shared files count once within each definition;
   incomplete shard sets do not produce a misleading partial size.

@@ -1,6 +1,7 @@
 """Public text Decision through ASGI, TCP disconnects and owned native workers."""
 
 import asyncio
+import anyio
 import json
 import socket
 
@@ -283,6 +284,67 @@ async def test_public_queued_cancellation_preserves_other_request_and_owned_unlo
         await asyncio.gather(*tasks, return_exceptions=True)
     await manager.wait_native_closed(1)
     assert not worker.runtime_directory.exists() and manager.native_snapshot() == []
+
+
+@pytest.mark.parametrize('abort', ['disconnect', 'cancel-handler'])
+async def test_public_cancellation_survives_a_consumed_transport_cancel(decisions, monkeypatch, abort):
+    """A transient transport boundary must not consume the owner's stop intent."""
+    from starlette.requests import Request
+    from tllama.native_decision import decision_response
+    manager, _, name, _, _ = decisions
+    await manager.preload_native_model(name, keep_alive=-1)
+    worker = manager.test.ledger[0]
+    entered, consumed, released = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    disconnect = asyncio.Event()
+    transport_task = None
+    async def transport_boundary(payload):
+        nonlocal transport_task
+        transport_task = asyncio.current_task()
+        try:
+            entered.set()
+            try:
+                await anyio.sleep_forever()
+            except asyncio.CancelledError:
+                # Reproduce an inner transport scope absorbing one cancel.
+                consumed.set()
+            await anyio.sleep_forever()
+        finally:
+            released.set()
+    monkeypatch.setattr(worker, 'decision', transport_boundary)
+    wire = json.dumps(body(name)).encode()
+    delivered = False
+    async def receive():
+        nonlocal delivered
+        if not delivered:
+            delivered = True
+            return {'type':'http.request', 'body':wire, 'more_body':False}
+        await disconnect.wait()
+        return {'type':'http.disconnect'}
+    request = Request({'type':'http', 'method':'POST', 'path':PATH,
+                       'headers':[(b'content-type', b'application/json')]}, receive)
+    task = asyncio.create_task(decision_response(request, manager))
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        assert manager.native_snapshot()[0]['leases'] == 1
+        if abort == 'disconnect':
+            disconnect.set()
+        else:
+            task.cancel()
+        await asyncio.wait_for(consumed.wait(), 2)
+        # asyncio.wait observes completion without injecting a second cancel,
+        # which would hide the exact regression being exercised.
+        done, _ = await asyncio.wait({task}, timeout=1)
+        assert done, 'Public cleanup stalled after one transport cancellation was consumed'
+        with pytest.raises(ClientDisconnect if abort == 'disconnect' else asyncio.CancelledError):
+            await task
+        assert released.is_set() and manager.native_snapshot()[0]['leases'] == 0
+    finally:
+        # A second cancellation is only test cleanup after a failed assertion.
+        task.cancel()
+        if transport_task is not None:
+            transport_task.cancel()
+        await asyncio.gather(*(item for item in (task, transport_task) if item is not None),
+                             return_exceptions=True)
 
 
 async def test_real_tcp_disconnect_releases_native_response_and_public_lease(decisions):
