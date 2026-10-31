@@ -29,6 +29,11 @@ _DEFAULTS = {"n_gpu_layers": -1, "flash_attn": False, "n_batch": 512, "n_ubatch"
              "context_shift": False}
 
 
+def builtin_runtime_defaults():
+    """Copy TLlama's fixed launch defaults, without server/environment layers."""
+    return dict(_DEFAULTS, n_ctx=BackendConfig.__dataclass_fields__['context_length'].default)
+
+
 @dataclass(frozen=True)
 class ResolvedWorkerConfig:
     launch: WorkerLaunchSpec

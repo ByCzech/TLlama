@@ -5,6 +5,45 @@ identify the source; the complete history retains tests, refactoring and
 intermediate development steps. TLlama application versions
 are independent of the separately packaged `tllama-server` native runtime.
 
+## 1.3.1 — 2026-10-31
+
+### Fixed
+
+- Public text Decision cancellation keeps its stop intent active through
+  AnyIO/HTTPX transport checkpoints so an absorbed single cancellation
+  cannot retain a model lease. Decision smoke reports pending tasks and
+  residency explicitly if cancellation fails to drain within its deadline.
+- Model listing sizes include every main-model and projector GGUF shard and
+  any configured LoRA file. Shared files count once within each definition;
+  incomplete shard sets do not produce a misleading partial size.
+
+### Changed
+
+- Public model IDs now combine the main GGUF, any projector and only the
+  model TOML parameters differing from TLlama/GGUF defaults. An unchanged
+  single-file LLM retains its original content SHA-256. Names, paths,
+  server/environment settings and request overrides do not enter the ID.
+  Running generations retain the ID captured before loading.
+- Metadata cache schema 9 includes GGUF RoPE defaults for ID comparison;
+  digest cache schema 2 verifies that files stay unchanged while hashing.
+  Existing caches regenerate automatically; the first listing or model
+  admission can therefore take longer while file SHA-256 values are rebuilt.
+
+### Upgrade notes
+
+- Model IDs for definitions with projectors or non-default TOML parameters
+  can change after upgrading. An unchanged single-file LLM keeps its SHA-256;
+  aliases and the same definition on different servers keep the same ID.
+- Metadata cache 8 and digest cache 1 are regenerated as schemas 9 and 2.
+  The first listing or load can take longer while file hashes are rebuilt.
+  No manual cache removal is required.
+- Restart the upgraded daemon to use the corrected reporting and Decision
+  cancellation behavior. The native runtime version is unchanged.
+
+Source baseline: [v1.3.0](https://github.com/ByCzech/TLlama/tree/v1.3.0).
+The complete release range is
+[v1.3.0...v1.3.1](https://github.com/ByCzech/TLlama/compare/v1.3.0...v1.3.1).
+
 ## 1.3.0 — 2026-10-31
 
 ### Added

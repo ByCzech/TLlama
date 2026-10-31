@@ -78,7 +78,11 @@ async def test_toml_and_weight_changes_cannot_rewrite_live_reporting_snapshot(pu
     save_digest_cache(manager.metadata_cache_dir, name, weights, {'content_sha256':digest, 'source':'local'})
     await manager.preload_native_model(name, keep_alive=-1)
     [before] = await ps(client)
-    assert before['digest'] == digest and before['details']['parameter_size'] == '35b'
+    # This fixture overrides its template/system/sampling, so its public ID
+    # describes the variant rather than just the underlying weight bytes.
+    reported_digest = before['digest']
+    assert len(reported_digest) == 64 and reported_digest != digest
+    assert before['details']['parameter_size'] == '35b'
     toml.write_text('invalid [toml')
     weights.write_bytes(b'new different weights')
     def forbidden(*args, **kwargs):
@@ -87,11 +91,11 @@ async def test_toml_and_weight_changes_cannot_rewrite_live_reporting_snapshot(pu
                    '_build_model_file_info', '_resolve_virtual_model_spec', 'list_local_models'):
         monkeypatch.setattr(manager, method, forbidden)
     [after] = await ps(client)
-    assert after['details'] == before['details'] and after['digest'] == digest
+    assert after['details'] == before['details'] and after['digest'] == reported_digest
     assert after['size'] == before['size'] and after['generation'] == before['generation']
     weights.unlink()
     toml.unlink()
-    assert (await ps(client))[0]['digest'] == digest
+    assert (await ps(client))[0]['digest'] == reported_digest
 
 
 async def test_ps_reads_cannot_extend_idle_ttl(public):

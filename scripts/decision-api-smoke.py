@@ -196,6 +196,22 @@ async def native_error(worker, emit, label, body, status):
         raise WorkerError(label + ': native accepted invalid/unsupported input')
 
 
+def pending_task_state(task):
+    """Bounded await chain without request data, locals or credentials."""
+    frames, coroutine = [], task.get_coro()
+    for _ in range(16):
+        frame = (getattr(coroutine, 'cr_frame', None) or getattr(coroutine, 'gi_frame', None)
+                 or getattr(coroutine, 'ag_frame', None))
+        if frame is not None:
+            frames.append({'file': Path(frame.f_code.co_filename).name,
+                           'function': frame.f_code.co_name, 'line': frame.f_lineno})
+        coroutine = (getattr(coroutine, 'cr_await', None) or getattr(coroutine, 'gi_yieldfrom', None)
+                     or getattr(coroutine, 'ag_await', None))
+        if coroutine is None:
+            break
+    return {'name': task.get_name(), 'cancelling': task.cancelling(), 'stack': frames}
+
+
 async def cancel_request(call, manager, args, emit, kind, source, validate_completed):
     body = {'state': reference.STATE, 'questions': {f'q{i}': reference.QUESTIONS['route']
                                                   for i in range(32 if kind == 'laya' else 2)}}
@@ -209,7 +225,20 @@ async def cancel_request(call, manager, args, emit, kind, source, validate_compl
         else:
             task.cancel()
         await asyncio.gather(task, return_exceptions=True)
-        await wait_until(lambda: all(row['leases'] == 0 for row in manager.native_snapshot()), args.request_timeout)
+        try:
+            await wait_until(lambda: all(row['leases'] == 0 for row in manager.native_snapshot()), args.request_timeout)
+        except TimeoutError as exc:
+            pending = []
+            current = asyncio.current_task()
+            for waiting in asyncio.all_tasks():
+                if waiting is current or waiting.done():
+                    continue
+                pending.append(pending_task_state(waiting))
+            emit('transport-cancel-timeout', source=source,
+                 timeout_seconds=args.request_timeout, residency=manager.native_snapshot(),
+                 pending_tasks=pending[:32])
+            raise WorkerError(f'{source} cancellation did not release model leases within '
+                              f'{args.request_timeout:g} seconds') from exc
         emit('transport-cancel', source=source, pending_at_cancel=not bool(done), leases_at_cancel=leases,
              inference_started_observed=None, native_early_stop_observed=None)
     finally:

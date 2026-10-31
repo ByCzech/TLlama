@@ -10,8 +10,10 @@ from typing import Any, Dict, Optional
 from tllama.helpers.repository_files import repository_tempfile
 
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 """Layout version of the GGUF metadata cache document.
+
+Bumped to 9 for portable ID comparison against GGUF RoPE defaults.
 
 Bumped to 8 for GGUF license metadata; content digest caches remain valid.
 Bumped to 7 for Decision templates, head limits, token IDs and calibration.
@@ -27,8 +29,11 @@ change (the .gguf itself is untouched), so without a bump the new keys
 would silently never appear for any model already scanned.
 """
 
-DIGEST_SCHEMA_VERSION = 1
+DIGEST_SCHEMA_VERSION = 2
 """Layout version of the content digest cache document.
+
+Version 2 requires a stable before/after file fingerprint during hashing.
+Version 1 could label old bytes with a file's post-hash replacement timestamp.
 
 Kept separate from SCHEMA_VERSION on purpose. Metadata is cheap to rebuild
 from a GGUF header, the content digest costs a full read of a multi-gigabyte
