@@ -7,7 +7,9 @@ export PYBUILD_SYSTEM = pyproject
 export PYBUILD_DESTDIR = debian/tllama
 # Debian's epoch/revision are excluded by pkg-info.mk. Remove the prerelease
 # tilde so setuptools receives a PEP 440 version, also in Git-less source builds.
-export SETUPTOOLS_SCM_PRETEND_VERSION_FOR_TLLAMA = $(subst ~,,$(DEB_VERSION_UPSTREAM))
+# Resolve before export: pkg-info.mk uses shell/eval, which must not re-enter
+# environment expansion when make prepares a recipe or a shell function.
+export SETUPTOOLS_SCM_PRETEND_VERSION_FOR_TLLAMA := $(subst ~,,$(DEB_VERSION_UPSTREAM))
 
 %:
 	dh $@ --buildsystem=pybuild
