@@ -57,9 +57,10 @@ generation, vision, embedding and Decision models.
 Start with the [documentation index](TOC.md), the detailed
 [features and comparison](docs/features.md), [hardware support](docs/hardware.md)
 and [packages and platform roadmap](docs/distribution.md).
-TLlama 1.2.0 includes scoped
-REPL history/conversation saves, compact process reports, native device listing
-and optional terminal notifications. See the [changelog](CHANGELOG.md)
+TLlama 1.3.0 adds client image attachments for vision chat, image-aware
+conversation saves and configurable image/session size limits. The daemon's
+root status text also supports JetBrains AI Assistant's Ollama connection
+check. See the [CLI guide](docs/cli.md#attach-images) and [changelog](CHANGELOG.md)
 for release changes and upgrade notes.
 These pages distinguish implemented features, tested configurations and planned
 distribution work.
