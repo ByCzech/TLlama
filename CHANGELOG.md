@@ -5,7 +5,7 @@ identify the source; the complete history retains tests, refactoring and
 intermediate development steps. TLlama application versions
 are independent of the separately packaged `tllama-server` native runtime.
 
-## Unreleased
+## 1.3.0 — 2026-10-31
 
 ### Added
 
@@ -25,6 +25,25 @@ are independent of the separately packaged `tllama-server` native runtime.
   text, retaining the substring required by JetBrains AI Assistant's
   connection check. `HEAD /` remains a body-free HTTP 200 probe for Ollama
   clients.
+
+### Upgrade notes
+
+- Client image input requires a completion model advertising vision and its
+  configured projector. Upgrade the client to use `run --image` or the REPL
+  image commands; the existing daemon image API remains unchanged.
+- Saved conversations include image bytes as base64 and can be restored
+  without the original files. Older clients reject image-bearing saves and
+  saves exceeding their 16 MiB complete-file limit. The new default is
+  256 MiB for the complete JSON and 16 MiB per image before encoding.
+  Configure `[sessions] max_file_mib` and `[images] max_file_mib` locally on
+  each client that saves or loads larger conversations. Saved sessions do
+  not change these limits; server and model limits still apply.
+- Restart the upgraded daemon to expose the root status text required by
+  JetBrains AI Assistant's Ollama connection check.
+
+Source baseline: [v1.2.0](https://github.com/ByCzech/TLlama/tree/v1.2.0).
+The complete release range is
+[v1.2.0...v1.3.0](https://github.com/ByCzech/TLlama/compare/v1.2.0...v1.3.0).
 
 ## 1.2.0 — 2026-10-29
 
