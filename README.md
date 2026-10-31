@@ -57,11 +57,11 @@ generation, vision, embedding and Decision models.
 Start with the [documentation index](TOC.md), the detailed
 [features and comparison](docs/features.md), [hardware support](docs/hardware.md)
 and [packages and platform roadmap](docs/distribution.md).
-TLlama 1.3.0 adds client image attachments for vision chat, image-aware
-conversation saves and configurable image/session size limits. The daemon's
-root status text also supports JetBrains AI Assistant's Ollama connection
-check. See the [CLI guide](docs/cli.md#attach-images) and [changelog](CHANGELOG.md)
-for release changes and upgrade notes.
+TLlama 1.3.1 corrects complete model-file sizes, portable model-variant IDs
+and public Decision request cancellation. It retains 1.3.0's client image
+attachments, image-aware conversation saves and configurable size limits.
+See the [CLI guide](docs/cli.md#attach-images) and [changelog](CHANGELOG.md)
+for release changes, automatic cache regeneration and upgrade notes.
 These pages distinguish implemented features, tested configurations and planned
 distribution work.
 

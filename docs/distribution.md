@@ -7,8 +7,8 @@ source installation and [hardware](hardware.md) for selecting a backend.
 
 ## Debian packages
 
-TLlama 1.3.0 builds as Python wheel/source archives and separate Debian
-application/documentation packages (`1.3.0-1`). The maintainer's APT archive
+TLlama 1.3.1 builds as Python wheel/source archives and separate Debian
+application/documentation packages (`1.3.1-1`). The maintainer's APT archive
 supplies published Debian releases. See the [changelog](../CHANGELOG.md) for
 changes and upgrade notes. Application and native runtime versions are
 independent.

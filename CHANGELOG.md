@@ -5,7 +5,7 @@ identify the source; the complete history retains tests, refactoring and
 intermediate development steps. TLlama application versions
 are independent of the separately packaged `tllama-server` native runtime.
 
-## Unreleased
+## 1.3.1 — 2026-10-31
 
 ### Fixed
 
@@ -28,6 +28,21 @@ are independent of the separately packaged `tllama-server` native runtime.
   digest cache schema 2 verifies that files stay unchanged while hashing.
   Existing caches regenerate automatically; the first listing or model
   admission can therefore take longer while file SHA-256 values are rebuilt.
+
+### Upgrade notes
+
+- Model IDs for definitions with projectors or non-default TOML parameters
+  can change after upgrading. An unchanged single-file LLM keeps its SHA-256;
+  aliases and the same definition on different servers keep the same ID.
+- Metadata cache 8 and digest cache 1 are regenerated as schemas 9 and 2.
+  The first listing or load can take longer while file hashes are rebuilt.
+  No manual cache removal is required.
+- Restart the upgraded daemon to use the corrected reporting and Decision
+  cancellation behavior. The native runtime version is unchanged.
+
+Source baseline: [v1.3.0](https://github.com/ByCzech/TLlama/tree/v1.3.0).
+The complete release range is
+[v1.3.0...v1.3.1](https://github.com/ByCzech/TLlama/compare/v1.3.0...v1.3.1).
 
 ## 1.3.0 — 2026-10-31
 
