@@ -160,7 +160,7 @@ async def _execute(args):
                         print(json.dumps({'model': model, 'response': data}, ensure_ascii=False))
                     else:
                         suffix = ' (weights kept)' if data.get('kept_model_file') else ''
-                        print(f'deleted definition: {model}{suffix}')
+                        print(f'deleted: {model}{suffix}')
             return 1 if failed else 0
         if args.operation == 'stop':
             data = await client.stop(args.model)

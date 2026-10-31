@@ -8,6 +8,7 @@ from ipaddress import IPv6Address
 import json
 import math
 import os
+import sys
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
@@ -87,6 +88,7 @@ class TLlamaClient:
         if timeout is not None and (isinstance(timeout, bool) or not math.isfinite(timeout) or timeout <= 0):
             raise ClientConfigError('Client timeout must be a finite number greater than zero.')
         self.timeout = timeout
+        self._empty_delete_warned = False
         try:
             self._http = httpx.AsyncClient(base_url=self.url, transport=transport,
                                            timeout=self._request_timeout())
@@ -148,13 +150,15 @@ class TLlamaClient:
             raise ClientError(str(data['error']))
         return data
 
-    async def _request(self, method, path, *, wait_for_server_work=False, **kwargs):
+    async def _request(self, method, path, *, wait_for_server_work=False, accept_empty=False, **kwargs):
         try:
             response = await self._http.request(method, path, timeout=self._request_timeout(
                 wait_for_server_work=wait_for_server_work), **kwargs)
         except httpx.HTTPError as exc:
             raise self._transport_error(exc) from None
         self._check_status(response)
+        if accept_empty and not response.content:
+            return None
         return self._decode(response)
 
     @staticmethod
@@ -186,7 +190,16 @@ class TLlamaClient:
         return data['version']
 
     async def remove(self, model):
-        data = await self._request('DELETE', 'api/delete', json={'model': model})
+        data = await self._request('DELETE', 'api/delete', accept_empty=True, json={'model': model})
+        if data is None:
+            # Ollama's successful DELETE has no body. Keep other endpoints'
+            # JSON contracts strict and never use this clue to identify a
+            # server conclusively. One client is shared by a multi-model rm.
+            if not self._empty_delete_warned:
+                print('Upozornění: Server potvrdil odstranění bez těla odpovědi.\n'
+                      'Pravděpodobně používáte Ollama daemon.', file=sys.stderr, flush=True)
+                self._empty_delete_warned = True
+            return {'status': 'success'}
         if data.get('status') != 'success':
             raise ClientError('Server did not confirm model definition deletion.')
         return data

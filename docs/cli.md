@@ -210,6 +210,12 @@ The client completes cleanup of the HTTP decoding chain before returning,
 including success, malformed progress and early termination.
 
 `rm` deletes definitions on the selected server and leaves weight files on disk.
+It also accepts Ollama's successful empty DELETE response. In that case the
+client warns once per command on stderr that the server is probably Ollama;
+it still exits successfully and `--json` prints a normalized
+`{"status":"success"}` response for each removed model. This is a response
+compatibility rule, not definitive server detection. HTTP errors and nonempty
+invalid or unconfirmed responses remain errors.
 All supplied names are attempted even if one fails; any failure makes the exit
 status 1. `--json` emits one record per name, with `model` and either the original
 `response` object or an `error`. Errors also go to stderr. No operation is
