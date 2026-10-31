@@ -57,6 +57,38 @@ rewrite the relative `model.path`, rename the path-hashed cache entry and
 preserve its file mtime matching the GGUF. Drop invalid entries individually.
 Changing paths alone does not require a cache schema bump or rehashing.
 Missing content digests require reading the weights once to address the group.
+Migration must also accept repositories from releases older than 1.3.1;
+upgrading through 1.3.1 first is not required. Reuse only independently valid,
+recognized cache documents. Old/unknown schemas, legacy absolute-path or JSON
+mtime formats, corrupt JSON and stale timestamps are cache misses, not reasons
+to abort migration. Drop obsolete cache entries rather than carrying old cache
+reader compatibility into the new runtime. A remotely claimed digest (source
+`hf`) requires local measurement before content-addressed publication.
+
+## Implemented data publication layer
+
+`repository_store.prepare_group` validates complete ordered GGUF headers,
+captures source signatures, and obtains actual local content hashes. Current
+metadata payloads and locally measured digests may be reused from cache;
+unrecognized caches are ignored. Preparation is read-only, including caches.
+
+`RepositoryStore.publish` stages a whole group and atomically renames its
+directory under `data/`. By default it copies into independent files and
+verifies their bytes while copying. Trusted immutable repository-owned upload
+or offline migration inputs may instead use `link_owned=True` to preserve
+hard links without copying gigabytes. Inputs are not removed by publication:
+the offline migration journal must own any subsequent source removal.
+Source changes and incomplete, corrupt or symlinked existing groups are errors;
+existing groups are verified and reused, never overwritten. Successful
+publication warms the current metadata/digest caches at the final file paths.
+
+The store uses an exclusive OS-backed `.tllama/repository.lock`, reentrant
+within one store/thread and released on process exit. Windows uses a byte-range
+lock; POSIX uses flock. The backing shared filesystem must honor locks across
+all participating hosts. Locking a publication does not by itself implement
+worker pins, definition transactions or garbage collection: those are required
+before runtime physical deletion is enabled. These primitives do not yet change
+the active daemon layout or write a repository-format marker.
 
 ## Removal and maintenance
 
