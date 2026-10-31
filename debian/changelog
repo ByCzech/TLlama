@@ -1,3 +1,16 @@
+tllama (1.3.0-1) unstable; urgency=medium
+
+  * New upstream release:
+    - Attach client-local images to vision chat from the CLI and REPL.
+    - Preserve images in explicit conversation saves.
+    - Configure per-image and complete-session size limits in client TOML;
+      default to 16 MiB per image and 256 MiB per saved session.
+    - Restore the root status text and retain the Ollama substring required
+      by JetBrains AI Assistant's connection check.
+  * Document image input and size settings in the client manual page.
+
+ -- NemaChybu team APT archive <maintainers@nemachybu.cz>  Sat, 31 Oct 2026 02:12:31 +0100
+
 tllama (1.2.0-1) unstable; urgency=medium
 
   * New upstream release:

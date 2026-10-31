@@ -73,6 +73,11 @@ VALUE uses JSON syntax, for example num_ctx=32768 or temperature=0.7.
 Load-time options are included in the first interactive preload, avoiding
 a default-context load followed by a reload merely to change the context.
 .TP
+.B run MODEL --image FILE
+Attach a client-local image to a vision chat prompt; repeat for multiple
+images in order. Without a prompt, queue the images for the first interactive
+turn. Files are read and sent as base64 data, not server-local paths.
+.TP
 .B --help
 Show help. Each command has its own --help.
 .TP
@@ -91,6 +96,12 @@ CLI options override environment
 settings, which override file settings. Missing automatic files are ignored;
 invalid or unreadable files and missing explicit files are errors.
 .PP
+The [images] table accepts max_file_mib (positive integer, default 16),
+limiting each image before base64 encoding. The [sessions] table accepts
+max_file_mib (positive integer, default 256), limiting the complete saved JSON.
+Both limits apply when saving and loading, are local client preferences and
+are not restored from a saved session. Server and model limits still apply.
+.PP
 .I /usr/share/doc/tllama/docs/cli.md
 .SH TERMINAL NOTIFICATIONS
 Notifications are off by default. [notifications] bell=true enables BEL on
@@ -107,5 +118,15 @@ REPL inputs persist separately per server and model in XDG_STATE_HOME/tllama/his
 Use [history] enabled=false in client.toml or run --no-history to disable
 persistence. run --clear-history removes saved inputs for this scope before
 opening the REPL. Input history does not restore conversation messages.
+.SH INTERACTIVE IMAGES AND SAVES
+/image FILE queues an image for the next prompt; quote paths containing spaces.
+/images lists queued images and /unimage INDEX or /unimage all removes them.
+An empty prompt sends queued images alone. Completed turns retain their images;
+failed or cancelled turns keep the queue for retry. /clear clears the queue
+and active conversation.
+.PP
+/save NAME writes a private conversation save, including completed image turns.
+/load NAME restores it without the original image files. Pending images are
+not saved. Older clients reject image-bearing saves.
 .SH SEE ALSO
 .BR tllamad (1)
