@@ -157,6 +157,24 @@ def test_requests_without_a_body_are_untouched(client, path):
     assert client.get(path).status_code == 200
 
 
+def test_root_identifies_the_running_daemon(client):
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "text/plain; charset=utf-8"
+    assert response.text == "TLlama compatible Ollama is running"
+
+
+def test_root_head_probe_has_get_headers_without_a_body(client):
+    response = client.head("/")
+    get = client.get("/")
+
+    assert response.status_code == 200
+    assert response.content == b""
+    assert response.headers["content-type"] == get.headers["content-type"]
+    assert response.headers["content-length"] == str(len(get.content))
+
+
 @pytest.mark.parametrize(
     "relative_path, expected_reference",
     [

@@ -1,5 +1,6 @@
 from copy import deepcopy
 import json
+import base64
 from types import SimpleNamespace
 
 import pytest
@@ -79,3 +80,76 @@ def test_duplicate_json_and_symlinks_are_rejected(tmp_path):
     store.path('demo').symlink_to(target)
     with pytest.raises(ClientError):
         store.load('demo', session)
+
+
+def test_default_limit_saves_full_size_image_and_additional_image_without_source_paths():
+    from test_client_images import PNG, GIF
+    from tllama.client_config import DEFAULT_IMAGE_MAX_FILE_MIB
+    # Include one image at the client limit: base64 alone exceeds the old
+    # 16 MiB session limit. Trailing bytes do not affect header sniffing.
+    image = base64.b64encode(PNG + bytes(DEFAULT_IMAGE_MAX_FILE_MIB * 1024 * 1024 - len(PNG))).decode('ascii')
+    session = RunSession('model', 'completion', vision=True, messages=[
+        {'role': 'user', 'content': 'two pictures', 'images': [image, base64.b64encode(GIF).decode('ascii')]},
+        {'role': 'assistant', 'content': 'answer'}])
+    store = SessionStore(None, session.model, session.mode)
+    store.save('images', session)
+    assert 16 * 1024 * 1024 < store.path('images').stat().st_size < 256 * 1024 * 1024
+    restored = RunSession('model', 'completion', vision=True, session_max_file_mib=128)
+    store.load('images', restored)
+    assert restored.messages == session.messages
+    # This client preference is not part of the saved conversation.
+    assert restored.session_max_file_mib == 128
+
+
+def test_smaller_load_limit_keeps_live_messages_controls_and_pending_images():
+    from tllama.cli_images import PendingImage
+    writer = SessionStore(None, 'model', 'completion', max_file_mib=2)
+    saved = RunSession('model', 'completion', messages=[{'role': 'user', 'content': 'x' * (1024 * 1024)}])
+    writer.save('large', saved)
+    live = conversation()
+    live.pending_images = [PendingImage('local', 'pending')]
+    before = deepcopy(live)
+    with pytest.raises(ClientError, match='1 MiB'):
+        SessionStore(None, 'model', 'completion', max_file_mib=1).load('large', live)
+    assert live == before
+
+
+async def test_image_limit_applies_to_repl_save_and_load_without_replacing_state():
+    from test_client_images import PNG
+    from tllama.cli_images import PendingImage
+    image = base64.b64encode(PNG + bytes(1024 * 1024 + 1 - len(PNG))).decode('ascii')
+    source = RunSession('model', 'completion', vision=True, image_max_file_mib=2,
+                        messages=[{'role': 'user', 'content': '', 'images': [image]}])
+    await command(None, source, '/save picture')
+    store = SessionStore(None, 'model', 'completion')
+    original = store.path('picture').read_bytes()
+    source.image_max_file_mib = 1
+    with pytest.raises(ClientError, match='1 MiB'):
+        await command(None, source, '/save picture')
+    assert store.path('picture').read_bytes() == original
+    live = RunSession('model', 'completion', system='keep', vision=True, image_max_file_mib=1,
+                      pending_images=[PendingImage('local', 'pending')])
+    before = deepcopy(live)
+    with pytest.raises(ClientError, match='1 MiB'):
+        await command(None, live, '/load picture')
+    assert live == before
+    live.image_max_file_mib = 2
+    await command(None, live, '/load picture')
+    assert live.messages == source.messages and live.pending_images == []
+    assert live.image_max_file_mib == 2
+
+
+async def test_repl_uses_configured_limit_for_save_and_load():
+    live = RunSession('model', 'completion', session_max_file_mib=1)
+    await command(None, live, '/save demo')
+    store = SessionStore(None, 'model', 'completion')
+    original = store.path('demo').read_bytes()
+    live.messages = [{'role': 'user', 'content': 'x' * (1024 * 1024)}]
+    with pytest.raises(ClientError, match='1 MiB'):
+        await command(None, live, '/save demo')
+    assert store.path('demo').read_bytes() == original
+    store.save('large', live)
+    before = deepcopy(live)
+    with pytest.raises(ClientError, match='1 MiB'):
+        await command(None, live, '/load large')
+    assert live == before

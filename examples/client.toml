@@ -14,6 +14,12 @@
 [history]
 # enabled = true # Persist REPL input history separately for each server/model.
 
+[sessions]
+# max_file_mib = 256 # Maximum complete JSON save/load size, including base64 images.
+
+[images]
+# max_file_mib = 16 # Maximum bytes per image before base64, including saved images.
+
 [notifications]
 # bell = false # BEL on stderr only when stderr is a terminal.
 # bell_events = ["model_ready", "response_finished"]

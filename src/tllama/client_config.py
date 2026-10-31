@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import math
 import os
 from pathlib import Path
+import sys
 
 import tomlkit
 
@@ -11,11 +12,25 @@ from tllama.client import ClientConfigError, DEFAULT_HOST, server_url
 from tllama.client_notifications import DEFAULT_EVENTS, EVENTS
 
 
+DEFAULT_SESSION_MAX_FILE_MIB = 256
+DEFAULT_IMAGE_MAX_FILE_MIB = 16
+
+
+def validate_size_limit_mib(value):
+    # Bounded reads use limit + 1 to detect a file that grew after fstat.
+    maximum = (sys.maxsize - 1) // (1024 * 1024)
+    if type(value) is not int or not 1 <= value <= maximum:
+        raise ValueError(f'must be a positive integer in MiB, at most {maximum}')
+    return value
+
+
 SETTINGS = {'client.host': ('host', str), 'client.timeout': ('timeout', float),
             'display.decimal_units': ('decimal_units', bool),
             'display.hide_thinking': ('hide_thinking', bool),
             'display.verbose': ('verbose', bool),
             'history.enabled': ('history_enabled', bool),
+            'sessions.max_file_mib': ('session_max_file_mib', int),
+            'images.max_file_mib': ('image_max_file_mib', int),
             'notifications.bell': ('bell', bool),
             'notifications.bell_events': ('bell_events', list)}
 
@@ -28,6 +43,8 @@ class ClientConfig:
     hide_thinking: bool = False
     verbose: bool = False
     history_enabled: bool = True
+    session_max_file_mib: int = DEFAULT_SESSION_MAX_FILE_MIB
+    image_max_file_mib: int = DEFAULT_IMAGE_MAX_FILE_MIB
     bell: bool = False
     bell_events: tuple[str, ...] = DEFAULT_EVENTS
 
@@ -41,6 +58,11 @@ def default_config_paths(environ):
 
 def _validate(key, value, origin):
     expected = SETTINGS[key][1]
+    if expected is int:
+        try:
+            return validate_size_limit_mib(value)
+        except ValueError as exc:
+            raise ClientConfigError(f'{origin}: {key} {exc}.') from None
     if expected is list:
         if (not isinstance(value, (list, tuple)) or any(not isinstance(v, str) or v not in EVENTS for v in value)
                 or len(value) != len(set(value))):

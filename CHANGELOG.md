@@ -5,6 +5,46 @@ identify the source; the complete history retains tests, refactoring and
 intermediate development steps. TLlama application versions
 are independent of the separately packaged `tllama-server` native runtime.
 
+## 1.3.0 — 2026-10-31
+
+### Added
+
+- `tllama run --image FILE` and REPL `/image`, `/images`, `/unimage` attach
+  ordered client-local images to vision chat prompts. Completed image turns
+  persist in explicit conversation saves; failures/cancellation retain queued
+  attachments for retry. Existing save-size limits include encoded images.
+- Saved conversations now default to a 256 MiB complete JSON limit,
+  configurable with `[sessions] max_file_mib` in the client TOML. The same
+  limit applies to save and load. Individual images default to 16 MiB before
+  base64 encoding, configurable through `[images] max_file_mib`; image saves
+  use the same per-image limit without restoring it from the saved session.
+
+### Fixed
+
+- The root URL now displays `TLlama compatible Ollama is running` as plain
+  text, retaining the substring required by JetBrains AI Assistant's
+  connection check. `HEAD /` remains a body-free HTTP 200 probe for Ollama
+  clients.
+
+### Upgrade notes
+
+- Client image input requires a completion model advertising vision and its
+  configured projector. Upgrade the client to use `run --image` or the REPL
+  image commands; the existing daemon image API remains unchanged.
+- Saved conversations include image bytes as base64 and can be restored
+  without the original files. Older clients reject image-bearing saves and
+  saves exceeding their 16 MiB complete-file limit. The new default is
+  256 MiB for the complete JSON and 16 MiB per image before encoding.
+  Configure `[sessions] max_file_mib` and `[images] max_file_mib` locally on
+  each client that saves or loads larger conversations. Saved sessions do
+  not change these limits; server and model limits still apply.
+- Restart the upgraded daemon to expose the root status text required by
+  JetBrains AI Assistant's Ollama connection check.
+
+Source baseline: [v1.2.0](https://github.com/ByCzech/TLlama/tree/v1.2.0).
+The complete release range is
+[v1.2.0...v1.3.0](https://github.com/ByCzech/TLlama/compare/v1.2.0...v1.3.0).
+
 ## 1.2.0 — 2026-10-29
 
 ### Added

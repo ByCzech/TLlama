@@ -69,6 +69,12 @@ host = "http://127.0.0.1:54800"
 decimal_units = false
 hide_thinking = false
 verbose = false
+
+[sessions]
+max_file_mib = 256
+
+[images]
+max_file_mib = 16
 ```
 
 See `examples/client.toml`. Unknown sections/settings and wrong value types are
@@ -252,6 +258,72 @@ embedding/Decision output is already JSON. Errors may follow partial streamed
 output and make the exit status nonzero; requests are never automatically retried.
 Ctrl+C closes the request and exits with status 130 in one-shot mode.
 
+### Attach images
+
+```sh
+tllama run VISION_MODEL 'Describe this picture.' --image photo.png
+tllama run VISION_MODEL 'Compare these pictures.' --image first.jpg --image second.png
+printf 'Read the text in this picture.' | tllama run VISION_MODEL --image scan.png
+tllama run VISION_MODEL --image 'photo with spaces.jpg'
+```
+
+`--image FILE` is repeatable and preserves attachment order. Files are read on
+the client machine, including when `--host` points to a remote server. Their
+base64 contents are sent in the next user message's `images` array; paths are
+never sent as attachments or copied into the server's model repository. Text
+and stdin handling otherwise stay the same. Supply an explicit empty prompt
+(`''`) for a one-shot image-only request. With terminal stdin and no prompt,
+images are queued for the first REPL input instead.
+
+This interface requires a completion model advertising `vision` in `/api/show`,
+normally a model configured with its projector. Text-only, embedding and
+Decision models are refused before preload/inference. File type is checked
+from its bytes rather than its extension, using the existing server validator;
+the native worker still decides whether it can decode the image. Missing,
+unreadable, empty and non-regular files are refused. Each file is limited to
+16 MiB before base64 encoding by default; set `[images] max_file_mib` to a
+positive integer in the client TOML to change it. The same limit validates
+each image in a saved conversation during save/load. This is a client-side
+size limit; server/model input and decoder limits still apply.
+Images are read when attached, so later edits
+or removal of the original file do not change the queued attachment.
+
+In the REPL:
+
+```text
+/image "photo with spaces.jpg"
+/image second.png
+/images
+/unimage 2
+Describe the remaining picture.
+What colour is the object?
+```
+
+`/image FILE` queues one image; quote paths containing spaces. `/images` lists
+queued paths with 1-based indices. `/unimage INDEX` removes one queued image;
+`/unimage all` removes all queued images. These commands never send a request
+and their messages stay on stderr. Pressing Enter alone with queued images
+sends an image-only prompt. `/clear` and `/set system` clear both conversation
+messages and queued attachments.
+
+After a completed response, queued images become part of that user turn and
+the queue is emptied. Follow-up prompts retain those images in conversation
+history without attaching them to every new user message. Failed/cancelled
+turns do not enter the conversation and retain their queue for an explicit
+retry or removal. There is no automatic retry.
+
+`/save` embeds images from completed turns in the saved conversation, so
+`/load` works without the original files. It does not save unsent attachments;
+a successful `/load` clears the current queue. The session file limit defaults
+to 256 MiB and applies to the complete JSON save, including base64 expansion
+and all messages. Set `[sessions] max_file_mib` in the client TOML to a positive
+integer to change the limit for both saving and loading. The independent
+per-image limit defaults to 16 MiB before encoding (`[images] max_file_mib`);
+a 16 MiB image takes about 21.3 MiB in base64.
+An oversized save fails without replacing an existing file; text-only saves
+remain readable. Old clients cannot load saves containing image messages.
+Input history records typed text and commands, not encoded image bytes.
+
 ## Interactive run
 
 ### Choose the context before loading
@@ -315,7 +387,7 @@ messages go to stderr, including when `--json` is selected.
 
 - `/help` or `/?`: list commands and key bindings.
 - `/bye` or `/exit`: end the session. Ctrl+D also exits at an empty prompt.
-- `/clear`: forget conversation messages, retaining session settings and input
+- `/clear`: forget conversation messages and queued images, retaining session settings and input
   history. This does not unload the model or clear the server's KV cache.
 - `/save NAME`: explicitly save completed conversation messages, system prompt,
   request controls and verbose/thinking display settings. Replaces that save.
@@ -324,6 +396,8 @@ messages go to stderr, including when `--json` is selected.
   restored controls and may reload the worker if load settings differ.
 - `/sessions`: list saves for this normalized server URL and model.
 - `/forget NAME`: remove a save; the active conversation is retained.
+- `/image FILE`, `/images`, `/unimage INDEX|all`: manage images for the next
+  prompt; see [Attach images](#attach-images).
 - `/show model`: fetch model information from the server.
 - `/show parameters`: display explicit session request controls, not merged
   model/server defaults. `/show system` shows the session system override, or
@@ -341,8 +415,26 @@ Use `//text` to send a prompt beginning with `/text`. Other ordinary prompt text
 is passed literally, without shell parsing. Named saves live under
 `$XDG_STATE_HOME/tllama/sessions/` (normally `~/.local/state/tllama/sessions/`),
 separate from input history. Names are 1..64 ASCII letters/digits/dots/underscores/
-hyphens, starting with a letter/digit. Files are versioned JSON, at most 16 MiB,
-written atomically with mode `0600` in a private `0700` scope directory.
+hyphens, starting with a letter/digit. Files are versioned JSON, limited to
+256 MiB by default (`[sessions] max_file_mib`), written atomically with mode
+`0600` in a private `0700` scope directory. The limit is a local client preference
+and is not restored from the saved conversation. Set it in
+`~/.config/tllama/client.toml` (or the file chosen by `--config`), for example:
+
+```toml
+[sessions]
+max_file_mib = 512
+
+[images]
+max_file_mib = 32
+```
+
+The configured limit applies equally to save and load, including text, metadata
+and encoded image contents. Exceeding it does not overwrite an existing save
+or change the active session during load. Smaller old saves need no conversion.
+The separate image limit applies to each decoded image and is also a local
+preference, never restored from a save. Loading a conversation saved with a
+higher image limit requires raising the local image limit accordingly.
 They contain plaintext conversation data and are written only by `/save`;
 there is no automatic conversation save/restore. Server, model and capability
 mode must match before a save can be loaded. Invalid files leave the active

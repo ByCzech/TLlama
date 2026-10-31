@@ -211,6 +211,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.decimal_units = config.decimal_units
         args.hide_thinking, args.verbose = config.hide_thinking, config.verbose
         args.history_enabled = config.history_enabled
+        args.session_max_file_mib = config.session_max_file_mib
+        args.image_max_file_mib = config.image_max_file_mib
         args.bell, args.bell_events = config.bell, config.bell_events
         return asyncio.run(_execute(args))
     except ClientConfigError as exc:

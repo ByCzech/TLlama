@@ -37,6 +37,9 @@ def isolated_formatting_locale(monkeypatch):
 @pytest.fixture(autouse=True)
 def isolated_client_config_files(monkeypatch, tmp_path):
     """CLI tests must not inherit a developer's installed client preferences."""
+    # An inherited host overrides the test TOML and can contact a real daemon.
+    # Tests of environment precedence set their own host after this fixture.
+    monkeypatch.delenv('TLLAMA_HOST', raising=False)
     monkeypatch.setattr('tllama.client_config.default_config_paths',
                         lambda environ: (tmp_path / 'system-client.toml', tmp_path / 'user-client.toml'))
     monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'client-state'))
