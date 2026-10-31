@@ -1,10 +1,11 @@
 # Repository format 2: implementation contract
 
-This document describes the agreed repository transition. The name codec and
-data-group path calculation are implemented first as shared primitives; they
-do not yet switch the daemon's storage format. Do not rename a live repository
-by hand. Existing repositories will use the external migration tool introduced
-with the storage switch.
+This document describes the agreed repository transition. The name codec,
+data-group publication layer and offline converter are implemented; the
+ordinary daemon still uses the legacy layout. Do not rename a live repository
+by hand. Inspect it using [the tool](../tools/README.md), and wait for the
+format-2 runtime switch before converting a repository needed for service.
+The current startup guard refuses converted or partially converted stores.
 
 ## Definitions and data
 
@@ -45,8 +46,9 @@ migrate an old store on startup. Local files enter through `create`; remote
 files through `pull`. Remove `rebuildrepo` and old layout fallback code when
 the storage switch is delivered.
 
-The one-time converter belongs in `tools/`, outside the Python wheel, and in
-the Debian documentation package. It must preflight definitions/collisions,
+The one-time converter is `tools/migrate-repository-v2.py`, outside the Python
+wheel. Its Debian documentation installation is a separate packaging patch.
+It preflights definitions/collisions,
 default to a read-only plan, and apply only on explicit request with daemons
 stopped. Preserve TOML comments, backups, file times and hard links; record a
 recoverable migration journal. Move unreferenced weights without registering

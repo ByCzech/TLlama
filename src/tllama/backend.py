@@ -317,6 +317,8 @@ class ModelManager:
 
         Called from start(), so a running server behaves exactly as before.
         """
+        from tllama.repository_transition import require_legacy_repository
+        require_legacy_repository(self.models_dir)
         for directory in (
             self.models_dir,
             self.metadata_cache_dir,
