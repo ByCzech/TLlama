@@ -9,6 +9,7 @@ import sys
 import time
 
 from tllama.client import ClientError
+from tllama.client_config import DEFAULT_SESSION_MAX_FILE_MIB
 from tllama.cli_status import WaitStatus
 from tllama.cli_reply import ReplyText
 from tllama.cli_metrics import statistics
@@ -96,6 +97,7 @@ class RunSession:
     notifier: object = field(default=None, repr=False, compare=False)
     vision: bool = False
     pending_images: list = field(default_factory=list, repr=False)
+    session_max_file_mib: int = DEFAULT_SESSION_MAX_FILE_MIB
 
     @classmethod
     async def create(cls, client, args, *, notifier=None):
@@ -120,7 +122,8 @@ class RunSession:
                    verbose=getattr(args, 'verbose', False),
                    history_enabled=getattr(args, 'history_enabled', True),
                    clear_history=getattr(args, 'clear_history', False), notifier=notifier,
-                   vision='vision' in capabilities)
+                   vision='vision' in capabilities,
+                   session_max_file_mib=getattr(args, 'session_max_file_mib', DEFAULT_SESSION_MAX_FILE_MIB))
         for path in getattr(args, 'image', []):
             session.attach_image(path)
         return session

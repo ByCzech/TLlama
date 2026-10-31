@@ -21,6 +21,26 @@ def files(tmp_path, monkeypatch):
 def test_unset_values_keep_built_in_defaults(files):
     config = load_client_config(environ={})
     assert config.host == DEFAULT_HOST and config.timeout is None
+    assert config.session_max_file_mib == 256
+
+
+def test_session_limit_layers_and_explicit_file_selection(files, tmp_path):
+    system, user = files
+    system.write_text('[sessions]\nmax_file_mib=512\n')
+    user.write_text('[history]\nenabled=false\n')
+    assert load_client_config(environ={}).session_max_file_mib == 512
+    user.write_text('[sessions]\nmax_file_mib=128\n')
+    assert load_client_config(environ={}).session_max_file_mib == 128
+    explicit = tmp_path / 'explicit.toml'
+    explicit.write_text('[sessions]\nmax_file_mib=64\n')
+    assert load_client_config(explicit, environ={}).session_max_file_mib == 64
+
+
+@pytest.mark.parametrize('value', ['0', '-1', 'true', '256.0', '"256"', '[]', 'nan', '9223372036854775807'])
+def test_session_limit_requires_positive_representable_integer_mib(files, value):
+    files[0].write_text('[sessions]\nmax_file_mib=' + value + '\n')
+    with pytest.raises(ClientConfigError, match='sessions.max_file_mib.*positive integer'):
+        load_client_config(environ={})
 
 
 def test_user_overrides_individual_settings_without_discarding_section(files):
@@ -116,6 +136,24 @@ def test_cli_uses_config_host_and_reports_config_errors_without_network(files, c
     output = capsys.readouterr()
     assert 'client.timeout' in output.err and 'Traceback' not in output.err and output.out == ''
     assert len(cli_server['calls']) == 1
+
+
+def test_cli_session_limit_reaches_repl_storage(files, cli_server, monkeypatch, capsys):
+    from test_client_run import Input
+    from tllama.cli_repl import command
+    monkeypatch.setattr('sys.stdin', Input(tty=True))
+    files[1].write_text('[sessions]\nmax_file_mib=1\n')
+    cli_server['responses']['/api/show'] = (200, {'capabilities': ['completion']})
+    cli_server['responses']['/api/generate'] = (200, {'done': True, 'done_reason': 'load'})
+    async def shell(client, session):
+        assert session.session_max_file_mib == 1
+        session.messages = [{'role': 'user', 'content': 'x' * (1024 * 1024)}]
+        await command(client, session, '/save too-large')
+        return 0
+    monkeypatch.setattr('tllama.cli_repl.repl', shell)
+    assert main(['run', 'model', '--host', cli_server['url']]) == 1
+    output = capsys.readouterr()
+    assert '1 MiB' in output.err and not output.out
 
 
 @pytest.mark.parametrize('flag', ['--help', '--version'])

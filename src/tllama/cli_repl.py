@@ -94,7 +94,8 @@ async def command(client, session, text):
         print('Queued images updated.', file=sys.stderr)
     elif name in {'/save', '/load', '/forget', '/sessions'}:
         from tllama.cli_sessions import SessionStore
-        store = SessionStore(getattr(client, 'url', None), session.model, session.mode)
+        store = SessionStore(getattr(client, 'url', None), session.model, session.mode,
+                             max_file_mib=session.session_max_file_mib)
         if name == '/sessions' and not argument:
             print('\n'.join(store.names()) or 'No saved sessions.', file=sys.stderr)
         elif name == '/save' and argument:

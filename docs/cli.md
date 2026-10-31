@@ -69,6 +69,9 @@ host = "http://127.0.0.1:54800"
 decimal_units = false
 hide_thinking = false
 verbose = false
+
+[sessions]
+max_file_mib = 256
 ```
 
 See `examples/client.toml`. Unknown sections/settings and wrong value types are
@@ -304,8 +307,11 @@ retry or removal. There is no automatic retry.
 
 `/save` embeds images from completed turns in the saved conversation, so
 `/load` works without the original files. It does not save unsent attachments;
-a successful `/load` clears the current queue. The existing 16 MiB limit
-applies to the complete JSON save, including base64 expansion and all messages.
+a successful `/load` clears the current queue. The session file limit defaults
+to 256 MiB and applies to the complete JSON save, including base64 expansion
+and all messages. Set `[sessions] max_file_mib` in the client TOML to a positive
+integer to change the limit for both saving and loading. The per-image limit
+remains 16 MiB before encoding; a 16 MiB image takes about 21.3 MiB in base64.
 An oversized save fails without replacing an existing file; text-only saves
 remain readable. Old clients cannot load saves containing image messages.
 Input history records typed text and commands, not encoded image bytes.
@@ -401,8 +407,20 @@ Use `//text` to send a prompt beginning with `/text`. Other ordinary prompt text
 is passed literally, without shell parsing. Named saves live under
 `$XDG_STATE_HOME/tllama/sessions/` (normally `~/.local/state/tllama/sessions/`),
 separate from input history. Names are 1..64 ASCII letters/digits/dots/underscores/
-hyphens, starting with a letter/digit. Files are versioned JSON, at most 16 MiB,
-written atomically with mode `0600` in a private `0700` scope directory.
+hyphens, starting with a letter/digit. Files are versioned JSON, limited to
+256 MiB by default (`[sessions] max_file_mib`), written atomically with mode
+`0600` in a private `0700` scope directory. The limit is a local client preference
+and is not restored from the saved conversation. Set it in
+`~/.config/tllama/client.toml` (or the file chosen by `--config`), for example:
+
+```toml
+[sessions]
+max_file_mib = 512
+```
+
+The configured limit applies equally to save and load, including text, metadata
+and encoded image contents. Exceeding it does not overwrite an existing save
+or change the active session during load. Smaller old saves need no conversion.
 They contain plaintext conversation data and are written only by `/save`;
 there is no automatic conversation save/restore. Server, model and capability
 mode must match before a save can be loaded. Invalid files leave the active

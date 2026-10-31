@@ -238,14 +238,13 @@ def test_invalid_saved_images_leave_conversation_and_queue_unchanged(pictures, c
     assert session == before
 
 
-def test_large_image_save_does_not_replace_existing_save(pictures, monkeypatch):
-    store = SessionStore(None, 'm', 'completion')
+def test_large_image_save_does_not_replace_existing_save(pictures):
+    store = SessionStore(None, 'm', 'completion', max_file_mib=1)
     session = RunSession('m', 'completion', vision=True)
     store.save('demo', session)
     original = store.path('demo').read_bytes()
-    session.messages = [{'role': 'user', 'content': '', 'images': [base64.b64encode(PNG).decode()]}]
-    monkeypatch.setattr('tllama.cli_sessions.MAX_SESSION_BYTES', len(original))
-    with pytest.raises(ClientError, match='16 MiB'):
+    session.messages = [{'role': 'user', 'content': 'x' * (1024 * 1024), 'images': [base64.b64encode(PNG).decode()]}]
+    with pytest.raises(ClientError, match='1 MiB'):
         store.save('demo', session)
     assert store.path('demo').read_bytes() == original
 

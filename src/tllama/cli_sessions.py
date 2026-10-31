@@ -9,13 +9,16 @@ import stat
 import tempfile
 
 from tllama.client import ClientError, server_url
+from tllama.client_config import DEFAULT_SESSION_MAX_FILE_MIB, validate_session_limit_mib
 from tllama.client_state import private_directory, state_directory
 
-MAX_SESSION_BYTES = 16 * 1024 * 1024
-
-
 class SessionStore:
-    def __init__(self, server, model, mode):
+    def __init__(self, server, model, mode, *, max_file_mib=DEFAULT_SESSION_MAX_FILE_MIB):
+        try:
+            self.max_file_mib = validate_session_limit_mib(max_file_mib)
+        except ValueError as exc:
+            raise ClientError(f'Session file limit {exc}.') from None
+        self.max_bytes = self.max_file_mib * 1024 * 1024
         self.server, self.model, self.mode = server_url(server), model, mode
         self.directory = state_directory(server, model, 'sessions')
 
@@ -33,8 +36,8 @@ class SessionStore:
         temporary = None
         try:
             encoded = (json.dumps(data, ensure_ascii=False, allow_nan=False) + '\n').encode('utf-8')
-            if len(encoded) > MAX_SESSION_BYTES:
-                raise ClientError('Session exceeds the 16 MiB file limit.')
+            if len(encoded) > self.max_bytes:
+                raise ClientError(f'Session exceeds the {self.max_file_mib} MiB file limit.')
             private_directory(self.directory)
             fd, temporary = tempfile.mkstemp(prefix='.session-', dir=self.directory)
             with os.fdopen(fd, 'wb') as stream:
@@ -99,11 +102,14 @@ class SessionStore:
         try:
             fd = os.open(self.path(name), os.O_RDONLY | os.O_NONBLOCK | getattr(os, 'O_NOFOLLOW', 0))
             with os.fdopen(fd, 'rb') as stream:
-                if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                info = os.fstat(stream.fileno())
+                if not stat.S_ISREG(info.st_mode):
                     raise ClientError('Session must be a regular file.')
-                raw = stream.read(MAX_SESSION_BYTES + 1)
-            if len(raw) > MAX_SESSION_BYTES:
-                raise ClientError('Session exceeds the 16 MiB file limit.')
+                if info.st_size > self.max_bytes:
+                    raise ClientError(f'Session exceeds the {self.max_file_mib} MiB file limit.')
+                raw = stream.read(self.max_bytes + 1)
+            if len(raw) > self.max_bytes:
+                raise ClientError(f'Session exceeds the {self.max_file_mib} MiB file limit.')
             data = load_json(raw.decode('utf-8'))
         except (OSError, ValueError, UnicodeError, RecursionError) as exc:
             raise ClientError(f'Cannot load session: {exc}') from None

@@ -13,6 +13,9 @@ are independent of the separately packaged `tllama-server` native runtime.
   ordered client-local images to vision chat prompts. Completed image turns
   persist in explicit conversation saves; failures/cancellation retain queued
   attachments for retry. Existing save-size limits include encoded images.
+- Saved conversations now default to a 256 MiB complete JSON limit,
+  configurable with `[sessions] max_file_mib` in the client TOML. The same
+  limit applies to save and load; individual images remain limited to 16 MiB.
 
 ### Fixed
 
