@@ -5,6 +5,14 @@ identify the source; the complete history retains tests, refactoring and
 intermediate development steps. TLlama application versions
 are independent of the separately packaged `tllama-server` native runtime.
 
+## Unreleased
+
+### Fixed
+
+- Model listing sizes include every main-model and projector GGUF shard and
+  any configured LoRA file. Shared files count once within each definition;
+  incomplete shard sets do not produce a misleading partial size.
+
 ## 1.3.0 — 2026-10-31
 
 ### Added

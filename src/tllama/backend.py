@@ -28,6 +28,7 @@ from tllama.helpers.runtime_params import coerce_runtime_overrides
 from tllama.helpers.sampling_params import coerce_sampling_overrides
 from tllama.native_config import resolve_worker_config
 from tllama.native_params import freeze_values
+from tllama.model_artifacts import ModelArtifacts, gguf_files
 from tllama.residency import NativeResidency, ModelDefinition, ResidencyClosed, _settle_owned
 from tllama.worker import NativeWorker
 from tllama.helpers.metadata_cache import (
@@ -1146,6 +1147,22 @@ class ModelManager:
             self._ensure_virtual_model_toml_sync, model_path, metadata
         )
 
+    def _model_artifacts(self, spec, target_path, source):
+        projector = self.resolve_mmproj_path(spec, str(source))
+        adapter = ()
+        if 'lora_path' in spec.runtime:
+            path = Path(spec.runtime['lora_path'])
+            if not path.is_absolute():
+                path = self.models_dir / path
+            if not path.resolve().is_relative_to(self.models_dir.resolve()) or not path.is_file():
+                raise TomlModelError(f'{source}: lora_path must name a file inside the model store')
+            adapter = (path,)
+        return ModelArtifacts(
+            gguf_files(target_path, self._read_metadata_for_path, self.models_dir),
+            gguf_files(projector, self._read_metadata_for_path, self.models_dir) if projector else (),
+            adapter,
+        )
+
     def _list_local_models_sync(self) -> List[Dict[str, Any]]:
         """
         Scan all known repositories for virtual model .toml files.
@@ -1169,6 +1186,8 @@ class ModelManager:
                 model_info = self._build_model_file_info_from_path(target_path)
                 if model_info is None:
                     continue
+
+                model_info['size'] = self._model_artifacts(spec, target_path, toml_path).size
 
                 model_info["id"] = self._build_virtual_model_ref_from_toml_path(toml_path)
 

@@ -55,6 +55,11 @@ Later explicit values override earlier values individually; an omitted setting
 inherits its previous value, even within the same table. Missing automatic files
 are ignored. Invalid or unreadable files are errors.
 
+`list` reports the total file size required by each definition, including all
+GGUF shards, its projector and any configured LoRA adapter. A shared file counts
+once within a definition and contributes to each definition that needs it.
+This is separate from the running RAM/VRAM accounting shown by `ps`.
+
 `--config PATH` instead reads only that file over built-in defaults, excluding
 both automatic files. A missing explicit file is an error. Files are read only
 by the CLI; constructing the Python HTTP client does not discover configuration.
