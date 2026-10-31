@@ -22,6 +22,7 @@ def test_unset_values_keep_built_in_defaults(files):
     config = load_client_config(environ={})
     assert config.host == DEFAULT_HOST and config.timeout is None
     assert config.session_max_file_mib == 256
+    assert config.image_max_file_mib == 16
 
 
 def test_session_limit_layers_and_explicit_file_selection(files, tmp_path):
@@ -36,11 +37,23 @@ def test_session_limit_layers_and_explicit_file_selection(files, tmp_path):
     assert load_client_config(explicit, environ={}).session_max_file_mib == 64
 
 
+@pytest.mark.parametrize('section', ['sessions', 'images'])
 @pytest.mark.parametrize('value', ['0', '-1', 'true', '256.0', '"256"', '[]', 'nan', '9223372036854775807'])
-def test_session_limit_requires_positive_representable_integer_mib(files, value):
-    files[0].write_text('[sessions]\nmax_file_mib=' + value + '\n')
-    with pytest.raises(ClientConfigError, match='sessions.max_file_mib.*positive integer'):
+def test_file_limits_require_positive_representable_integer_mib(files, value, section):
+    files[0].write_text('[' + section + ']\nmax_file_mib=' + value + '\n')
+    with pytest.raises(ClientConfigError, match=section + '.max_file_mib.*positive integer'):
         load_client_config(environ={})
+
+
+def test_image_limit_layers_independently_from_session_limit(files, tmp_path):
+    files[0].write_text('[images]\nmax_file_mib=32\n[sessions]\nmax_file_mib=512\n')
+    files[1].write_text('[images]\nmax_file_mib=8\n')
+    config = load_client_config(environ={})
+    assert (config.image_max_file_mib, config.session_max_file_mib) == (8, 512)
+    explicit = tmp_path / 'limits.toml'
+    explicit.write_text('[images]\nmax_file_mib=4\n')
+    config = load_client_config(explicit, environ={})
+    assert (config.image_max_file_mib, config.session_max_file_mib) == (4, 256)
 
 
 def test_user_overrides_individual_settings_without_discarding_section(files):

@@ -13,9 +13,10 @@ from tllama.client_notifications import DEFAULT_EVENTS, EVENTS
 
 
 DEFAULT_SESSION_MAX_FILE_MIB = 256
+DEFAULT_IMAGE_MAX_FILE_MIB = 16
 
 
-def validate_session_limit_mib(value):
+def validate_size_limit_mib(value):
     # Bounded reads use limit + 1 to detect a file that grew after fstat.
     maximum = (sys.maxsize - 1) // (1024 * 1024)
     if type(value) is not int or not 1 <= value <= maximum:
@@ -29,6 +30,7 @@ SETTINGS = {'client.host': ('host', str), 'client.timeout': ('timeout', float),
             'display.verbose': ('verbose', bool),
             'history.enabled': ('history_enabled', bool),
             'sessions.max_file_mib': ('session_max_file_mib', int),
+            'images.max_file_mib': ('image_max_file_mib', int),
             'notifications.bell': ('bell', bool),
             'notifications.bell_events': ('bell_events', list)}
 
@@ -42,6 +44,7 @@ class ClientConfig:
     verbose: bool = False
     history_enabled: bool = True
     session_max_file_mib: int = DEFAULT_SESSION_MAX_FILE_MIB
+    image_max_file_mib: int = DEFAULT_IMAGE_MAX_FILE_MIB
     bell: bool = False
     bell_events: tuple[str, ...] = DEFAULT_EVENTS
 
@@ -57,7 +60,7 @@ def _validate(key, value, origin):
     expected = SETTINGS[key][1]
     if expected is int:
         try:
-            return validate_session_limit_mib(value)
+            return validate_size_limit_mib(value)
         except ValueError as exc:
             raise ClientConfigError(f'{origin}: {key} {exc}.') from None
     if expected is list:

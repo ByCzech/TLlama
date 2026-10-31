@@ -9,15 +9,21 @@ import stat
 import tempfile
 
 from tllama.client import ClientError, server_url
-from tllama.client_config import DEFAULT_SESSION_MAX_FILE_MIB, validate_session_limit_mib
+from tllama.client_config import DEFAULT_SESSION_MAX_FILE_MIB, DEFAULT_IMAGE_MAX_FILE_MIB, validate_size_limit_mib
 from tllama.client_state import private_directory, state_directory
 
+
 class SessionStore:
-    def __init__(self, server, model, mode, *, max_file_mib=DEFAULT_SESSION_MAX_FILE_MIB):
+    def __init__(self, server, model, mode, *, max_file_mib=DEFAULT_SESSION_MAX_FILE_MIB,
+                 max_image_file_mib=DEFAULT_IMAGE_MAX_FILE_MIB):
         try:
-            self.max_file_mib = validate_session_limit_mib(max_file_mib)
+            self.max_file_mib = validate_size_limit_mib(max_file_mib)
         except ValueError as exc:
             raise ClientError(f'Session file limit {exc}.') from None
+        try:
+            self.max_image_file_mib = validate_size_limit_mib(max_image_file_mib)
+        except ValueError as exc:
+            raise ClientError(f'Image file limit {exc}.') from None
         self.max_bytes = self.max_file_mib * 1024 * 1024
         self.server, self.model, self.mode = server_url(server), model, mode
         self.directory = state_directory(server, model, 'sessions')
@@ -81,7 +87,10 @@ class SessionStore:
                     from tllama.cli_images import validate_image
                     require(message['role'] == 'user' and isinstance(message['images'], list) and bool(message['images']))
                     for image in message['images']:
-                        validate_image(image)
+                        try:
+                            validate_image(image, max_file_mib=self.max_image_file_mib)
+                        except ValueError as exc:
+                            raise ClientError(f'Invalid session image: {exc}') from None
                 if 'thinking' in message:
                     require(isinstance(message['thinking'], str))
                 if 'tool_calls' in message:

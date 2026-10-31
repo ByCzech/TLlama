@@ -98,6 +98,26 @@ def test_bad_file_is_reported_before_preload_and_without_stdout(cli_server, monk
     assert not output.out and 'Cannot attach image' in output.err
 
 
+@pytest.mark.parametrize('limit,success', [(1, False), (2, True)])
+def test_configured_image_limit_reaches_cli_file_reader(cli_server, monkeypatch, tmp_path, capsys, limit, success):
+    monkeypatch.setattr('sys.stdin', Input(tty=True))
+    image = tmp_path / 'picture.png'
+    image.write_bytes(PNG + bytes(1024 * 1024 + 1 - len(PNG)))
+    config = tmp_path / 'client.toml'
+    config.write_text(f'[images]\nmax_file_mib={limit}\n')
+    cli_server['responses']['/api/show'] = (200, {'capabilities': ['completion', 'vision']})
+    cli_server['responses']['/api/chat'] = (200, (json.dumps(finished()) + '\n').encode())
+    code = cli.main(['--config', str(config), 'run', 'm', 'look', '--image', str(image), '--host', cli_server['url']])
+    assert code == (0 if success else 1)
+    assert [call[1] for call in cli_server['calls']] == (['/api/show', '/api/chat'] if success else ['/api/show'])
+    output = capsys.readouterr()
+    if success:
+        assert base64.b64decode(cli_server['calls'][-1][2]['messages'][0]['images'][0]) == image.read_bytes()
+        assert output.out == 'answer\n'
+    else:
+        assert not output.out and '1 MiB' in output.err
+
+
 @pytest.mark.parametrize('capabilities', [['completion'], ['embedding'], ['decision']])
 def test_nonvision_modes_refuse_images_before_preload_or_inference(cli_server, monkeypatch, pictures, capabilities, capsys):
     monkeypatch.setattr('sys.stdin', Input(tty=True))
@@ -132,7 +152,9 @@ def test_bad_local_files_leave_existing_queue_unchanged(kind, pictures, tmp_path
         path.write_bytes(b'' if kind == 'empty' else b'not an image')
     elif kind == 'oversize':
         path.write_bytes(PNG)
-        monkeypatch.setattr('tllama.cli_images.MAX_IMAGE_BYTES', len(PNG) - 1)
+        with path.open('ab') as file:
+            file.truncate(1024 * 1024 + 1)
+        session.image_max_file_mib = 1
     elif kind == 'denied':
         def denied(*args, **kwargs):
             raise PermissionError('denied')

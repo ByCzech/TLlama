@@ -15,7 +15,9 @@ are independent of the separately packaged `tllama-server` native runtime.
   attachments for retry. Existing save-size limits include encoded images.
 - Saved conversations now default to a 256 MiB complete JSON limit,
   configurable with `[sessions] max_file_mib` in the client TOML. The same
-  limit applies to save and load; individual images remain limited to 16 MiB.
+  limit applies to save and load. Individual images default to 16 MiB before
+  base64 encoding, configurable through `[images] max_file_mib`; image saves
+  use the same per-image limit without restoring it from the saved session.
 
 ### Fixed
 

@@ -72,6 +72,9 @@ verbose = false
 
 [sessions]
 max_file_mib = 256
+
+[images]
+max_file_mib = 16
 ```
 
 See `examples/client.toml`. Unknown sections/settings and wrong value types are
@@ -278,7 +281,11 @@ Decision models are refused before preload/inference. File type is checked
 from its bytes rather than its extension, using the existing server validator;
 the native worker still decides whether it can decode the image. Missing,
 unreadable, empty and non-regular files are refused. Each file is limited to
-16 MiB before base64 encoding. Images are read when attached, so later edits
+16 MiB before base64 encoding by default; set `[images] max_file_mib` to a
+positive integer in the client TOML to change it. The same limit validates
+each image in a saved conversation during save/load. This is a client-side
+size limit; server/model input and decoder limits still apply.
+Images are read when attached, so later edits
 or removal of the original file do not change the queued attachment.
 
 In the REPL:
@@ -310,8 +317,9 @@ retry or removal. There is no automatic retry.
 a successful `/load` clears the current queue. The session file limit defaults
 to 256 MiB and applies to the complete JSON save, including base64 expansion
 and all messages. Set `[sessions] max_file_mib` in the client TOML to a positive
-integer to change the limit for both saving and loading. The per-image limit
-remains 16 MiB before encoding; a 16 MiB image takes about 21.3 MiB in base64.
+integer to change the limit for both saving and loading. The independent
+per-image limit defaults to 16 MiB before encoding (`[images] max_file_mib`);
+a 16 MiB image takes about 21.3 MiB in base64.
 An oversized save fails without replacing an existing file; text-only saves
 remain readable. Old clients cannot load saves containing image messages.
 Input history records typed text and commands, not encoded image bytes.
@@ -416,11 +424,17 @@ and is not restored from the saved conversation. Set it in
 ```toml
 [sessions]
 max_file_mib = 512
+
+[images]
+max_file_mib = 32
 ```
 
 The configured limit applies equally to save and load, including text, metadata
 and encoded image contents. Exceeding it does not overwrite an existing save
 or change the active session during load. Smaller old saves need no conversion.
+The separate image limit applies to each decoded image and is also a local
+preference, never restored from a save. Loading a conversation saved with a
+higher image limit requires raising the local image limit accordingly.
 They contain plaintext conversation data and are written only by `/save`;
 there is no automatic conversation save/restore. Server, model and capability
 mode must match before a save can be loaded. Invalid files leave the active

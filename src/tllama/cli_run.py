@@ -9,7 +9,7 @@ import sys
 import time
 
 from tllama.client import ClientError
-from tllama.client_config import DEFAULT_SESSION_MAX_FILE_MIB
+from tllama.client_config import DEFAULT_SESSION_MAX_FILE_MIB, DEFAULT_IMAGE_MAX_FILE_MIB
 from tllama.cli_status import WaitStatus
 from tllama.cli_reply import ReplyText
 from tllama.cli_metrics import statistics
@@ -98,6 +98,7 @@ class RunSession:
     vision: bool = False
     pending_images: list = field(default_factory=list, repr=False)
     session_max_file_mib: int = DEFAULT_SESSION_MAX_FILE_MIB
+    image_max_file_mib: int = DEFAULT_IMAGE_MAX_FILE_MIB
 
     @classmethod
     async def create(cls, client, args, *, notifier=None):
@@ -123,7 +124,8 @@ class RunSession:
                    history_enabled=getattr(args, 'history_enabled', True),
                    clear_history=getattr(args, 'clear_history', False), notifier=notifier,
                    vision='vision' in capabilities,
-                   session_max_file_mib=getattr(args, 'session_max_file_mib', DEFAULT_SESSION_MAX_FILE_MIB))
+                   session_max_file_mib=getattr(args, 'session_max_file_mib', DEFAULT_SESSION_MAX_FILE_MIB),
+                   image_max_file_mib=getattr(args, 'image_max_file_mib', DEFAULT_IMAGE_MAX_FILE_MIB))
         for path in getattr(args, 'image', []):
             session.attach_image(path)
         return session
@@ -132,7 +134,7 @@ class RunSession:
         from tllama.cli_images import read_image
         if self.mode != 'completion' or not self.vision:
             raise ClientError('Image attachments require a completion model advertising vision; check its projector configuration.')
-        self.pending_images.append(read_image(path))
+        self.pending_images.append(read_image(path, max_file_mib=self.image_max_file_mib))
 
     async def submit(self, client, text):
         started = time.perf_counter()
