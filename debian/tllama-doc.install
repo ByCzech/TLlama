@@ -1,0 +1,2 @@
+tools/migrate-repository-v2.py usr/share/doc/tllama-doc/tools/
+tools/README.md usr/share/doc/tllama-doc/tools/

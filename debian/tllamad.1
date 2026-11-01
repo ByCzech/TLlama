@@ -1,4 +1,4 @@
-.TH TLLAMAD 1 "October 2026" "TLlama" "User Commands"
+.TH TLLAMAD 1 "November 2026" "TLlama" "User Commands"
 .SH NAME
 tllamad \- foreground TLlama inference daemon
 .SH SYNOPSIS
@@ -6,7 +6,7 @@ tllamad \- foreground TLlama inference daemon
 .RI [ options ]
 .br
 .B tllamad
-.RI [ options ] " rebuildrepo " [ options ]
+.RI [ options ] " repo check|prune|inspect|stats " [ options ]
 .SH DESCRIPTION
 .B tllamad
 serves model APIs and supervises private native tllama-server workers.
@@ -16,7 +16,7 @@ It stays in the foreground. The Debian package supplies tllamad.service.
 .B --list-devices
 Forward the selected native runtime's device table and exit without starting
 the server or loading a model. Cannot be combined with configuration inspection
-or rebuildrepo. Normal configuration/runtime-path selection still applies.
+or repository commands. Normal configuration/runtime-path selection still applies.
 .TP
 .B --config FILE
 Select a server TOML configuration file explicitly.
@@ -53,6 +53,38 @@ Show all options and corresponding environment variables.
 .TP
 .B --version
 Show the installed daemon version.
+.SH LOCAL REPOSITORY COMMANDS
+These one-shot commands run on the repository filesystem as its intended
+service account. They do not start/contact HTTP or load native workers.
+Normal storage configuration applies; --models-dir is an optional override.
+--config, --no-config and --models-dir work before repo or after the operation.
+.TP
+.B repo check [--hashes] [--json]
+Read-only integrity check. --hashes independently verifies weight content
+addresses. Missing/legacy stores are reported, not initialized or repaired.
+.TP
+.B repo prune [--apply] [--json]
+Preview complete unreferenced and unreserved groups and their owned
+cache/upload aliases. --apply performs fresh checks under the repository lock
+through deletion. Interrupted work remains in the durable cleanup retry queue.
+Independent caches and staging/download leftovers are not swept.
+.TP
+.B repo inspect MODEL [--json]
+Explain all component groups, shards, sharing and protection for a definition.
+.TP
+.B repo inspect --group SHA256 [--json]
+Inspect a data group by its lowercase SHA-256 identifier instead of a model.
+.TP
+.B repo stats [--json]
+Read-only group/sharing counts and managed weight byte accounting.
+Candidate weight bytes are not guaranteed freed disk space.
+.PP
+Exit status is 0 for success, 1 for findings/incomplete inspection or deletion
+errors, 2 for CLI/configuration errors and 130 for Ctrl+C.
+All daemons sharing a repository must use the current reservation protocol
+before physical reclamation. Old/external readers cannot be detected.
+Existing unmarked repositories require offline conversion with writers stopped;
+the converter is in the optional tllama-doc package.
 .SH CONFIGURATION
 Global precedence is command line, environment, server TOML, built-in defaults.
 File selection is --config, TLLAMA_CONFIG, the user's tllama/server.toml under
@@ -81,4 +113,4 @@ Native runtime supplied by the separate tllama-server package.
 .br
 /usr/share/doc/tllama/README.Debian
 .br
-/usr/share/doc/tllama/docs/daemon.md
+/usr/share/doc/tllama-doc/docs/daemon.md

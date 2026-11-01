@@ -23,7 +23,9 @@ List loaded models.
 Download a model through the selected server.
 .TP
 .B rm MODEL...
-Remove model definitions.
+Remove model definitions and reclaim managed weights/cache no longer referenced
+or reserved. Shared or busy groups remain protected. Against an Ollama daemon,
+an empty successful response is accepted with a compatibility warning on stderr.
 .TP
 .B stop MODEL
 Unload a model.
@@ -102,7 +104,7 @@ max_file_mib (positive integer, default 256), limiting the complete saved JSON.
 Both limits apply when saving and loading, are local client preferences and
 are not restored from a saved session. Server and model limits still apply.
 .PP
-.I /usr/share/doc/tllama/docs/cli.md
+.I /usr/share/doc/tllama-doc/docs/cli.md
 .SH TERMINAL NOTIFICATIONS
 Notifications are off by default. [notifications] bell=true enables BEL on
 terminal stderr for bell_events (default model_ready and response_finished).

@@ -1,3 +1,20 @@
+tllama (1.4.0-1) unstable; urgency=medium
+
+  * New upstream release:
+    - Store portable model definitions separately from content-addressed GGUF
+      groups, with resumable offline conversion of existing repositories.
+    - Protect shared weights across daemons and reclaim unused groups through
+      reference/reservation checks and durable deferred cleanup.
+    - Add local tllamad repo check, prune, inspect and stats commands.
+    - Disable framework documentation endpoints and validate model management
+      requests before filesystem or network operations.
+  * Install the one-shot converter in the optional tllama-doc package and
+    keep its Python script uncompressed. Never migrate from maintainer scripts.
+  * Update manual pages and the source-build example for 1.4.0.
+  * Extend the package smoke with disabled-docs and local repository commands.
+
+ -- NemaChybu team APT archive <maintainers@nemachybu.cz>  Sun, 01 Nov 2026 12:00:00 +0100
+
 tllama (1.3.1-1) unstable; urgency=medium
 
   * New upstream bugfix release:
