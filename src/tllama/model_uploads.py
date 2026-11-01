@@ -1,4 +1,4 @@
-"""Verified streaming GGUF staging; only create publishes files into Local."""
+"""Verified streaming GGUF staging; create publishes complete managed groups."""
 
 import asyncio
 from hashlib import sha256
@@ -8,14 +8,16 @@ import re
 from tllama.residency import _settle_owned
 from tllama.helpers.metadata_cache import build_model_file_fingerprint, load_digest_cache, save_digest_cache
 from tllama.helpers.repository_files import repository_tempfile
+from tllama.repository_pins import Reservation
 
 
 def blob_path(manager, digest):
     if not re.fullmatch(r'sha256:[0-9a-f]{64}', digest):
         raise ValueError('Expected sha256: followed by 64 lowercase hexadecimal characters.')
-    directory = manager.local_models_dir / '.uploads'
+    directory = manager.repository.root / '.tllama' / 'uploads'
     path = directory / digest[7:]
-    if path.is_symlink() or not path.resolve().is_relative_to(manager.models_dir.resolve()):
+    if (directory.is_symlink() or directory.parent.is_symlink() or path.is_symlink()
+            or not path.resolve().is_relative_to(manager.repository.root)):
         raise ValueError('Upload staging must stay inside the model repository.')
     return path
 
@@ -28,11 +30,19 @@ def verified_blob(manager, digest):
         cached = manager._build_model_digest_sync(path)
     if cached.get('content_sha256') != digest[7:] or before != build_model_file_fingerprint(path):
         raise ValueError('An uploaded blob changed or does not match its digest.')
-    save_digest_cache(manager.metadata_cache_dir, str(path), path, cached, fingerprint=before)
+    save_digest_cache(manager.metadata_cache_dir, str(path), path, cached,
+                      fingerprint=before, repository=manager.repository)
     return path, before
 
 
 async def receive_blob(manager, digest, request):
+    from tllama.repository_runtime import ensure_format
+    await _settle_owned(asyncio.create_task(asyncio.to_thread(ensure_format, manager.repository)))
+    async with Reservation(manager.repository, 'upload', paths=['.tllama/uploads']):
+        return await _receive_blob(manager, digest, request)
+
+
+async def _receive_blob(manager, digest, request):
     target = blob_path(manager, digest)
     length = request.headers.get('content-length')
     if length is not None:
@@ -42,7 +52,7 @@ async def receive_blob(manager, digest, request):
                 raise ValueError
         except ValueError:
             raise ValueError('Invalid upload Content-Length.') from None
-    target.parent.mkdir(parents=True, exist_ok=True)
+    manager.repository._directory('.tllama/uploads')
     descriptor, temporary = repository_tempfile(prefix='.upload-', directory=target.parent)
     digest_state = sha256()
     prefix = bytearray()
@@ -85,6 +95,7 @@ async def receive_blob(manager, digest, request):
             # file, so create/list do not read many gigabytes again to hash.
             await _settle_owned(asyncio.create_task(asyncio.to_thread(
                 save_digest_cache, manager.metadata_cache_dir, str(target), target,
-                {'content_sha256': digest[7:], 'source': 'local'}, fingerprint=fingerprint)))
+                {'content_sha256': digest[7:], 'source': 'local'}, fingerprint=fingerprint,
+                repository=manager.repository)))
     finally:
         temporary.unlink(missing_ok=True)

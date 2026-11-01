@@ -81,9 +81,9 @@ tllama show my-model
 tllama run my-model "Say hello."
 ```
 
-For an existing host-side repository, preview `tllamad rebuildrepo --dryrun`
-and then run without `--dryrun` to add missing definitions. Rebuild force/backup
-semantics are described in [model-repositories.md](model-repositories.md).
+Existing repositories require the stopped, offline
+[format-2 converter](../tools/README.md). Local additions use `create`; raw GGUF
+files in branches are no longer an import. See [model repositories](model-repositories.md).
 
 To evaluate metadata caching, compare the first and repeated `tllama list`,
 then repeat after a daemon restart. Use an isolated development model store

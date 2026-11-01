@@ -24,6 +24,8 @@ from test_native_memory_locality import extended
 from test_native_weight_storage import weights
 from test_native_tensor_diagnostics import diagnosed
 from test_native_fim import write_vocab
+from test_model_create import gguf_file
+from repository_fixtures import register_model, repository_snapshot
 
 
 SCRIPT = Path(__file__).parents[1] / 'scripts' / 'functional-qualification-smoke.py'
@@ -45,9 +47,7 @@ def setup_files(tmp_path, diagnosed, profile):
     for interval in report['weight_storage']['intervals']:
         interval['assignment']['device_ids'] = ['cpu']
     (root / 'memory-report').write_text(json.dumps(report))
-    models = tmp_path / 'models' / 'Local'
-    models.mkdir(parents=True)
-    model = models / 'a.gguf'
+    model = tmp_path / 'input.gguf'
     if profile.startswith('fim'):
         write_vocab(model, 'negative' if profile == 'fim-unsupported' else 'codegemma')
     elif profile == 'embeddings':
@@ -60,9 +60,10 @@ def setup_files(tmp_path, diagnosed, profile):
         writer.write_kv_data_to_file()
         writer.close()
     else:
-        model.write_bytes(b'fake test weights')
-    definition = '[llm]\nmodel="Local/a.gguf"\n[runtime]\ndevice="Vulkan99"\nn_ctx=8192\n'
-    (models / 'a.toml').write_text(definition)
+        gguf_file(model)
+    path, definition = register_model(tmp_path / 'models', model,
+        extra='[runtime]\ndevice="Vulkan99"\nn_ctx=8192\n')
+    models = path.parent
     executable = tmp_path / 'native-stub'
     executable.write_text(f'#!{sys.executable}\n' + SCRIPT.parents[1].joinpath('tests/native_worker_stub.py').read_text())
     executable.chmod(0o700)
@@ -82,6 +83,7 @@ def setup_files(tmp_path, diagnosed, profile):
                                        ('fim', False), ('fim-unsupported', False), ('embeddings', False)])
 def test_public_reference_profiles_owned_cleanup_and_unmodified_store(tmp_path, diagnosed, profile, mtp):
     root, models, executable, env, definition = setup_files(tmp_path, diagnosed, profile)
+    before = repository_snapshot(models.parent)
     if mtp:
         env['STUB_PUBLIC_MTP'] = '1'
     command = [sys.executable, str(SCRIPT), *arguments(tmp_path, profile, '--executable', str(executable),
@@ -101,7 +103,7 @@ def test_public_reference_profiles_owned_cleanup_and_unmodified_store(tmp_path, 
         assert recovery['request_timeout'] == 5
     assert len([r for r in rows if r['stage'] == 'worker-cleanup']) == 1
     assert (models / 'a.toml').read_text() == definition
-    assert not (models.parent / '.tllama').exists()
+    assert repository_snapshot(models.parent) == before
     launches = [json.loads(line) for line in (root / 'launch').read_text().splitlines()]
     assert len(launches) == 1 and all(not Path(r['cwd']).exists() for r in launches)
     launch = launches[0]['argv']
@@ -126,6 +128,7 @@ def test_public_reference_profiles_owned_cleanup_and_unmodified_store(tmp_path, 
 ])
 def test_failures_and_semantic_review_cannot_pass(tmp_path, diagnosed, profile, fault, protocol_ok):
     root, models, executable, env, definition = setup_files(tmp_path, diagnosed, profile)
+    before = repository_snapshot(models.parent)
     if fault == 'wrong-build':
         env['STUB_BUILD'] = 'wrong'
     elif fault == 'no-memory':
@@ -150,12 +153,13 @@ def test_failures_and_semantic_review_cannot_pass(tmp_path, diagnosed, profile, 
     assert all(check['ok'] for check in result['checks'] if check['stage'] == 'worker-cleanup')
     launches = [json.loads(line) for line in (root / 'launch').read_text().splitlines()]
     assert launches and all(not Path(r['cwd']).exists() for r in launches)
-    assert (models / 'a.toml').read_text() == definition and not (models.parent / '.tllama').exists()
+    assert (models / 'a.toml').read_text() == definition and repository_snapshot(models.parent) == before
 
 
 @pytest.mark.parametrize('profile', ['text', 'embeddings'])
 def test_preview_is_exact_ignores_global_overrides_and_writes_no_capture_or_store_cache(tmp_path, diagnosed, profile):
     root, models, executable, env, _ = setup_files(tmp_path, diagnosed, profile)
+    before = repository_snapshot(models.parent)
     env.update(TLLAMA_RUNTIME_DEVICE='ROCm99', TLLAMA_RUNTIME_SPEC_TYPE='draft-mtp',
                TLLAMA_RUNTIME_DRAFT_N_MAX='7')
     run = subprocess.run([sys.executable, str(SCRIPT), *arguments(tmp_path, profile,
@@ -169,7 +173,7 @@ def test_preview_is_exact_ignores_global_overrides_and_writes_no_capture_or_stor
     assert result['expected_fingerprint'] == BUILD
     assert ('--embeddings' in argv) is (profile == 'embeddings')
     assert not (root / 'launch').exists() and not (tmp_path / 'capture').exists()
-    assert not (models.parent / '.tllama').exists()
+    assert repository_snapshot(models.parent) == before
 
 
 @pytest.mark.parametrize('extra', [['--expected-fingerprint', ' '], ['--ctx', '0'],
@@ -213,6 +217,7 @@ def test_candidate_pin_does_not_admit_decision_or_change_global_policy(tmp_path)
 
 def test_external_model_headers_scanned_once_without_store_cache(tmp_path, diagnosed, monkeypatch):
     root, models, executable, env, definition = setup_files(tmp_path, diagnosed, 'embeddings')
+    before = repository_snapshot(models.parent)
     args = smoke['parser']().parse_args(arguments(tmp_path, 'embeddings',
         '--output', str(tmp_path / 'isolated' / 'capture')))
     smoke['validate'](args)
@@ -232,7 +237,7 @@ def test_external_model_headers_scanned_once_without_store_cache(tmp_path, diagn
     assert first == second and len(scans) == 1
     assert first.metadata['arch'] == 'bert'
     assert not list(manager.metadata_cache_dir.glob('*'))
-    assert not (models.parent / '.tllama').exists()
+    assert repository_snapshot(models.parent) == before
     assert (models / 'a.toml').read_text() == definition
 
 
@@ -292,6 +297,7 @@ def test_header_cache_retries_changed_or_unsuccessful_scans(tmp_path, monkeypatc
 @pytest.mark.parametrize('profile', ['text', 'tools'])
 def test_startup_error_survives_cleanup_with_reaped_nonzero_process(tmp_path, diagnosed, profile):
     root, models, executable, env, definition = setup_files(tmp_path, diagnosed, profile)
+    before = repository_snapshot(models.parent)
     env['STUB_DEVICE_FAILURES'] = json.dumps({'none': 'invalid device: CUDA0'})
     run = subprocess.run([sys.executable, str(SCRIPT), *arguments(tmp_path, profile,
         '--executable', str(executable), '--transport', 'tcp', '--load-timeout', '5', '--request-timeout', '5')],
@@ -304,6 +310,7 @@ def test_startup_error_survives_cleanup_with_reaped_nonzero_process(tmp_path, di
     assert not any(c['stage'] == 'worker-exit' for c in result['checks'])
     if profile == 'text':
         assert 'invalid device: CUDA0' in result['error']
+    assert repository_snapshot(models.parent) == before
 
 
 async def test_cleanup_failure_keeps_primary_error_and_restores_managers(tmp_path):
@@ -357,6 +364,7 @@ async def test_cancel_recovery_uses_requested_deadline_and_reports_expiry(monkey
 @pytest.mark.parametrize('stream', [False, True])
 def test_fim_reference_mismatch_retains_both_values_requests_and_final_memory(tmp_path, diagnosed, stream):
     root, models, executable, env, definition = setup_files(tmp_path, diagnosed, 'fim')
+    before = repository_snapshot(models.parent)
     (root / 'fim-public-mismatch').write_text('stream' if stream else 'nonstream')
     run = subprocess.run([sys.executable, str(SCRIPT), *arguments(tmp_path, 'fim',
         '--executable', str(executable), '--transport', 'tcp', '--load-timeout', '5', '--request-timeout', '5')],
@@ -379,11 +387,13 @@ def test_fim_reference_mismatch_retains_both_values_requests_and_final_memory(tm
     assert any(check['stage'] == 'before-close:http' for check in result['checks'])
     assert any(row['stage'] == 'worker-cleanup' and row['ok'] for row in rows)
     assert (models / 'a.toml').read_text() == definition
+    assert repository_snapshot(models.parent) == before
 
 
 @pytest.mark.parametrize('fault', ['nonstream', 'stream', 'semantic-bad'])
 def test_fim_cache_intervention_reaches_both_paths_and_retains_full_checks(tmp_path, diagnosed, fault):
     root, models, executable, env, definition = setup_files(tmp_path, diagnosed, 'fim')
+    before = repository_snapshot(models.parent)
     # The native fixture reproduces a cache-dependent difference. Default
     # policy failure is covered above; this run changes only prompt reuse.
     if fault == 'semantic-bad':
@@ -410,6 +420,7 @@ def test_fim_cache_intervention_reaches_both_paths_and_retains_full_checks(tmp_p
     assert any(check['stage'] == 'before-close:http' for check in result['checks'])
     assert any(row['stage'] == 'worker-cleanup' and row['ok'] for row in rows)
     assert (models / 'a.toml').read_text() == definition
+    assert repository_snapshot(models.parent) == before
 
 
 @pytest.mark.parametrize('snapshot_error', [False, True])

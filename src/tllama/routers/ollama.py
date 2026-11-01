@@ -19,7 +19,7 @@ from tllama.embedding_contract import embedding_capable
 from tllama.decision_contract import has_decision_head, decision_capable
 from tllama.native_embeddings import embedding_response
 from tllama.schemas.embeddings import OllamaEmbedRequest, OllamaLegacyEmbeddingRequest
-from tllama.schemas.model_management import CopyRequest, CreateRequest
+from tllama.schemas.model_management import CopyRequest, CreateRequest, DeleteRequest, ShowRequest, PullRequest
 from tllama.model_definitions import copy_definition, create_definition
 from tllama.residency import _settle_owned
 from tllama.model_uploads import blob_path, receive_blob
@@ -102,9 +102,9 @@ async def ollama_embeddings(request: OllamaLegacyEmbeddingRequest, http_request:
 
 
 @router.post("/show")
-async def show_model_info(request: dict):
-    _validate_runner(request.get("runner"))
-    model_name = request.get("name", "") or request.get("model", "")
+async def show_model_info(request: ShowRequest):
+    _validate_runner(request.runner)
+    model_name = request.name or request.model or ""
     if not model_name:
         raise HTTPException(status_code=400, detail="Missing model name")
 
@@ -199,14 +199,12 @@ async def list_running_models(detailed: bool = False):
 
 
 @router.post("/pull")
-async def pull_model_ollama(request: Request):
-    payload = await request.json()
-    _validate_runner(payload.get("runner"))
+async def pull_model_ollama(request: PullRequest):
+    _validate_runner(request.runner)
 
-    model_ref = (payload.get("model") or payload.get("name") or "").strip()
-    username = (payload.get("username") or "").strip()
-    password = (payload.get("password") or "").strip()
-    stream = payload.get("stream", True)
+    model_ref = (request.model or request.name or "").strip()
+    password = (request.password or "").strip()
+    stream = request.stream
 
     if not model_ref:
         raise HTTPException(status_code=400, detail="Missing model name")
@@ -247,16 +245,10 @@ async def pull_model_ollama(request: Request):
             local_path = await model_manager.pull_hf_file(
                 repo_id=target_info["repo_id"],
                 filename=target_info["filename"],
-                token=hf_token,
+                token=hf_token, file_info=hf_file_info,
             )
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
-
-        if await model_manager.store_hf_digest(local_path, hf_file_info) is None:
-            await model_manager.get_model_digest(local_path)
-
-        metadata = await model_manager.ensure_metadata_cache_for_path(local_path)
-        await model_manager.ensure_virtual_model_toml(local_path, metadata)
 
         return JSONResponse({
             "status": "success",
@@ -276,7 +268,7 @@ async def pull_model_ollama(request: Request):
                 repo_id=target_info["repo_id"],
                 filename=target_info["filename"],
                 token=hf_token,
-                progress=progress,
+                progress=progress, file_info=hf_file_info,
             )
         )
 
@@ -302,37 +294,11 @@ async def pull_model_ollama(request: Request):
                 yield ollama_stream_error_line(str(e))
                 return
         finally:
-            # A client that disconnects mid-download (GeneratorExit) must not
-            # leave this task dangling and unretrieved. The underlying thread
-            # is not forcibly interrupted -- asyncio.to_thread offers no such
-            # thing -- but the task itself is cleaned up promptly instead of
-            # lingering until the transfer happens to finish on its own.
+            # The owned worker joins download/publication before cancellation
+            # returns, so shutdown cannot race a late write to the repository.
             if not download_task.done():
                 download_task.cancel()
-
-        if await model_manager.store_hf_digest(local_path, hf_file_info) is None:
-            # The published digest was unusable. Hash the file here, while it
-            # is still warm, rather than leaving the cost to a later listing.
-            yield json.dumps({"status": "computing sha256 digest"}) + "\n"
-
-            if await model_manager.get_model_digest(local_path) is None:
-                yield json.dumps({"status": "digest unavailable"}) + "\n"
-
-        yield json.dumps({"status": "creating metadata cache"}) + "\n"
-
-        metadata = await model_manager.ensure_metadata_cache_for_path(local_path)
-        if metadata is None:
-            yield json.dumps({"status": "metadata cache unavailable"}) + "\n"
-        else:
-            yield json.dumps({"status": "metadata cache ready"}) + "\n"
-
-        # Without this the bytes are on disk and nothing can see them: a
-        # .gguf no .toml points at is not a model as far as any listing or
-        # load is concerned.
-        if await model_manager.ensure_virtual_model_toml(local_path, metadata) is None:
-            yield json.dumps({"status": "no model definition written"}) + "\n"
-        else:
-            yield json.dumps({"status": "model definition ready"}) + "\n"
+            await asyncio.gather(download_task, return_exceptions=True)
 
         yield json.dumps({
             "status": "success",
@@ -343,10 +309,8 @@ async def pull_model_ollama(request: Request):
 
 
 @router.delete("/delete")
-async def delete_model_ollama(request: Request):
-    payload = await request.json()
-
-    model_ref = (payload.get("name") or payload.get("model") or "").strip()
+async def delete_model_ollama(request: DeleteRequest):
+    model_ref = (request.name or request.model or "").strip()
     if not model_ref:
         raise HTTPException(status_code=400, detail="Missing model name")
 
@@ -362,9 +326,9 @@ async def delete_model_ollama(request: Request):
     return {
         "status": "success",
         "deleted": result["deleted_path"],
-        # The weights stay on disk. Reported so a client is not left to
-        # infer from a bare success that several gigabytes just went away.
+        # Retained for clients predating structured cleanup results.
         "kept_model_file": result["kept_model_file"],
+        "cleanup": result["cleanup"],
     }
 
 

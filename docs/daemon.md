@@ -8,15 +8,18 @@ and exits without starting the server or loading a model. `--config`,
 `tllamad` runs the server in the foreground. `tllama` is the HTTP client.
 The source equivalents are `python -m tllama.daemon` and `python -m tllama`.
 
+Framework documentation routes (`/docs`, `/redoc`, `/openapi.json` and
+`/docs/oauth2-redirect`) are disabled. The daemon serves its application APIs
+without loading a browser documentation UI or its external assets.
+
 ```sh
 tllamad --config server.toml --check-config
 tllamad --config server.toml --print-config
 tllamad --config server.toml --device Vulkan0 --port 54801
 tllamad --no-config --models-dir ./models --log-level debug
-tllamad --config server.toml rebuildrepo --dryrun
 ```
 
-Daemon options precede the maintenance subcommand. `--help` and `--version`
+`--help` and `--version`
 do not read server configuration or import the application. Inspection exits
 without importing FastAPI, creating storage, discovering GPUs, or loading a
 model. `--print-config` emits JSON with each effective value and its source;
@@ -24,6 +27,110 @@ it includes schema-owned settings only, never Hugging Face tokens or the full
 process environment. Invalid configuration exits 2 with a diagnostic on stderr.
 `--check-config` checks the configuration contract; runtime availability and
 model/device compatibility are checked when actually used.
+
+## Local repository integrity check
+
+```sh
+tllamad repo check
+tllamad repo check --hashes --json
+tllamad repo check --models-dir /var/lib/tllama/models --hashes
+tllamad --config server.toml repo check --json
+```
+
+This is a one-shot **local filesystem command**, not a request to a running
+daemon. Run it on the machine/filesystem containing the model repository,
+with the intended repository account's permissions. It neither starts nor
+contacts an HTTP server and does not start a native worker. The ordinary
+server configuration selects `storage.models_dir`; `--models-dir` overrides
+it. `--config`/`--no-config` and `--models-dir` work before `repo` or after
+`check`. Configuration/device inspection modes cannot be combined with it.
+
+The default checks portable definitions and references, complete managed shard
+groups and GGUF headers, path-cache identities, reservations and the deferred
+cleanup queue. `--hashes` additionally reads every valid group's bytes and
+independently verifies its content address, ignoring digest caches. It holds
+a temporary reservation during long reads instead of the global repository
+lock. Concurrent definition/data changes make the report incomplete.
+
+The command performs no repair, cache refresh, pending cleanup, stale-record
+removal or storage initialization. Only full hashing's temporary coordination
+pin changes; it is released without triggering deferred GC. Immediate staging
+entries are inventoried without traversing active download jobs. A missing or
+unknown repository/control state is reported, never created or reinterpreted.
+
+Exit status is 0 for a complete report without integrity errors, 1 for errors
+or incomplete inspection, 2 for invalid CLI/configuration, and 130 for Ctrl+C.
+Regenerable caches, stale/retained records and valid orphan groups are warnings.
+Unknown protection prevents labeling groups as orphans. `--json` prints the
+complete version-1 report; human output lists issues. Ctrl+C is cooperative:
+chunked byte reads stop and pin release finishes before returning.
+
+Reports are diagnostic snapshots, not authorization for subsequent deletion.
+Local `prune --apply` performs fresh reference/pin checks under
+the repository lock through unlink. No `tllama repo` command or public
+`/api/repo/*` endpoint is installed. HTTP API expansion requires prior agreement
+with the maintainer; repository maintenance remains local.
+
+## Local repository pruning
+
+```sh
+tllamad repo prune
+tllamad repo prune --json
+tllamad repo prune --models-dir /var/lib/tllama/models --apply
+tllamad --config server.toml repo prune --apply --json
+```
+
+The default is a read-only preview of complete unreferenced, unreserved data
+groups and the exact weight, cache and matching upload-hardlink paths to remove.
+`--apply` makes a fresh inventory and keeps the repository lock through deletion;
+it does not accept a previous report as authorization. Referenced or reserved
+groups are preserved. An incomplete or invalid inventory blocks all deletion.
+
+Like `repo check`, this command runs locally without HTTP or native workers.
+`--models-dir` is optional and follows normal server configuration precedence;
+configuration selectors work before `repo` or after `prune`. `--hashes` belongs
+to `check`, not `prune`. Exit statuses are 0 for success, 1 for inspection or
+deletion errors, 2 for CLI/configuration errors, and 130 for Ctrl+C. Cancellation
+finishes the current group's deletion and reports partial progress; remaining
+scheduled groups stay in the durable retry queue.
+
+Independent caches, staging/download leftovers and stale reservation records
+are not swept. See [pruning details](repository-prune.md) for ownership,
+recovery and coordination requirements.
+
+## Local repository inspection and statistics
+
+```sh
+tllamad repo inspect my-model
+tllamad repo inspect --group GROUP_SHA256 --json
+tllamad repo stats
+tllamad repo stats --models-dir /var/lib/tllama/models --json
+```
+
+`inspect` selects either a public model name or a lowercase data-group SHA-256.
+It lists all component groups (including projector/LoRA), shard paths, current
+definition references, reservation state, weight bytes and whether the group
+is a current prune candidate. `stats` summarizes sharing, groups by usage and
+managed weight sizes. JSON includes the underlying inventory, reservation and
+cache/staging diagnostics. These commands only read local files under the
+repository lock. They never initialize/repair storage, drain the cleanup queue,
+refresh caches, start/contact HTTP or load a model.
+
+Group weight bytes count canonical files once per group, independently of the
+number of definitions sharing them; per-definition bytes include its unique
+component groups. Unique-inode bytes count each `(device, inode)` once across
+managed weights. Neither is an allocation/RSS measurement or guaranteed disk
+space savings. Cache/upload/staging bytes are excluded. Prune candidate weight
+bytes exclude live/retained pins and matching upload-path reservations and are
+only a snapshot, not deletion authorization. A later `prune --apply` rechecks.
+
+The structural inventory does not verify full content hashes; use `repo check
+--hashes` separately. Invalid/incomplete inventory gives exit 1, marks byte
+counts incomplete and reports candidate bytes as unknown rather than zero.
+Known valid-group byte counts can still be shown. Usage categories prioritize
+definition references over reservations; the separate `reserved` flag can be
+true for a referenced group. CLI/configuration errors exit 2, Ctrl+C exits 130.
+Normal storage/configuration selectors work before `repo` or after the command.
 
 ## Sources and file selection
 

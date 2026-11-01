@@ -24,7 +24,8 @@ See [native-residency.md](native-residency.md).
 Definitions freeze TOML, GGUF header metadata and file fingerprints at admission.
 Changes during resolution trigger bounded retry. A request does not reread mutable
 definitions after acquiring its lease. Storage/list/show remain independent of
-inference loading. Definition deletion retires workers and retains weight files.
+inference loading. Definition deletion retires workers and reclaims only its
+unused managed groups; shared references and active reservations protect data.
 
 ## Generate rendering and tokenization
 
@@ -52,7 +53,7 @@ public/native output parity.
 | Thinking | Native template controls; separate thinking/reasoning and answer channels |
 | Modern tools | Validated declarations/history and stream assembly; [tools](native-tools.md) |
 | Chat images | Validated inline images, configured projector and live capability; [vision](native-vision.md) |
-| Generate images | HTTP 501; no image silently converted into text |
+| Generate images | Configured inline images; raw mode and request template overrides are refused |
 | Nonempty generate context | HTTP 400; token-history input is not silently ignored |
 | Deprecated functions/function_call/history | HTTP 400; use modern tools |
 | Enabled logprobs/top_logprobs/debug render | HTTP 400 until integrated |

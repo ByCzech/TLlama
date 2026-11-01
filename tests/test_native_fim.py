@@ -279,12 +279,12 @@ def test_public_fim_smoke_cli_uses_owned_tcp_server_and_preserves_definition(tmp
     import os
     import subprocess
     import sys
-    models = tmp_path/'models'/'Local'
-    models.mkdir(parents=True)
-    weights = models/'a.gguf'
+    from repository_fixtures import register_model, repository_snapshot
+    weights = tmp_path/'input.gguf'
     write_vocab(weights, family)
-    definition = '[llm]\nmodel="Local/a.gguf"\n[runtime]\ndevice="none"\n'
-    (models/'a.toml').write_text(definition)
+    path, definition = register_model(tmp_path/'models', weights, extra='[runtime]\ndevice="none"\n')
+    models = path.parent
+    before = repository_snapshot(models.parent)
     stub = tmp_path/'native-stub'
     stub.write_text(f'#!{sys.executable}\n' + Path(__file__).with_name('native_worker_stub.py').read_text())
     stub.chmod(0o700)
@@ -305,4 +305,5 @@ def test_public_fim_smoke_cli_uses_owned_tcp_server_and_preserves_definition(tmp
     assert next(value for value in values if value['stage'] == 'worker-closed')['clean']
     assert (output/'results.jsonl').read_text() == result.stdout
     assert (models/'a.toml').read_text() == definition
+    assert repository_snapshot(models.parent) == before
     assert len(records(root,'launch')) == 1

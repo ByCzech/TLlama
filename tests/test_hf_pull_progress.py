@@ -1,5 +1,9 @@
 """HTTP/Xet progress must count file bytes once, without rendering a bar."""
 
+from pathlib import Path
+
+from test_model_create import gguf_file
+
 import logging
 import sys
 from types import SimpleNamespace
@@ -49,7 +53,7 @@ def test_download_signature_and_progress(manager, monkeypatch, with_progress):
         assert (repo_id, filename, revision, token) == (
             "owner/model", "weights.gguf", "revision", "token"
         )
-        assert local_dir == manager.hf_models_dir / "owner" / "model"
+        assert local_dir.parent == manager.models_dir / '.tllama/downloads'
         assert local_dir.is_dir()
         if with_progress:
             with tqdm_class(total=100) as bar:
@@ -57,14 +61,16 @@ def test_download_signature_and_progress(manager, monkeypatch, with_progress):
                 bar.set_postfix_str("speed", refresh=False)
         else:
             assert tqdm_class is None
-        return str(local_dir / filename)
+        return str(gguf_file(local_dir / filename))
 
     monkeypatch.setitem(sys.modules, "huggingface_hub", SimpleNamespace(hf_hub_download=download))
     progress = PullProgress() if with_progress else None
     result = manager._pull_hf_file_sync(
         "owner/model", "weights.gguf", token="token", revision="revision", progress=progress
     )
-    assert result == str(manager.hf_models_dir / "owner/model/weights.gguf")
+    assert Path(result).relative_to(manager.models_dir).parts[0] == 'data'
+    assert (manager.hf_models_dir / 'owner/model/weights.toml').is_file()
+    assert not list((manager.models_dir / '.tllama/downloads').iterdir())
     if progress is not None:
         assert progress.snapshot() == (100, 100)
 

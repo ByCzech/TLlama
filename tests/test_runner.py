@@ -65,10 +65,8 @@ def policy(manager, monkeypatch):
     monkeypatch.setattr(manager, "resolve_hf_pull_target", resolve)
     monkeypatch.setattr(manager, "fetch_hf_file_info", lookup)
     monkeypatch.setattr(manager, "pull_hf_file", download)
-    monkeypatch.setattr(manager, "store_hf_digest", digest)
     monkeypatch.setattr(manager, "get_model_digest", digest)
     monkeypatch.setattr(manager, "ensure_metadata_cache_for_path", noop)
-    monkeypatch.setattr(manager, "ensure_virtual_model_toml", noop)
     return configure
 
 

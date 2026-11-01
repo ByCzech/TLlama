@@ -1,13 +1,8 @@
-"""Deleting a model deletes its definition, and only that.
+"""Definition deletion and conservative handling of unmanaged test inputs.
 
-The .toml is the manifest and the .gguf is the blob. Real Ollama's `rm`
-works the same way and for the same reason: it removes the manifest and
-leaves the blob alone for as long as anything else refers to it.
-
-Here the reason is sharper still. More than one virtual model naming one
-physical file is not an accident to tolerate but a stated purpose of the
-indirection -- sharing weights instead of copying gigabytes -- so removing
-the weights along with one of the names would quietly break the others.
+These isolated physical-file fixtures are not valid format-2 publications;
+they must never become physical cleanup targets. Managed group reclamation,
+sharing and worker ownership are exercised in test_repository_cleanup.py.
 """
 
 import pytest
@@ -51,7 +46,7 @@ class TestWhatIsRemoved:
 
 
 class TestWhatIsKept:
-    def test_the_weights_stay_on_disk(self, manager, defined_model):
+    def test_unmanaged_physical_inputs_stay_on_disk(self, manager, defined_model):
         _, gguf = defined_model("Local/model.toml", "Local/model.gguf")
 
         manager.delete_model_definition("model")

@@ -33,11 +33,8 @@ class TomlModelError(ValueError):
 
 
 def validate_definition_name(name):
-    if (not isinstance(name, str) or not name or name != name.strip() or '\\' in name or '\0' in name
-            or any(part in {'', '.', '..'} for part in name.split('/'))):
-        raise ValueError('Invalid model name.')
-    if len(name.split('/')) > 3:
-        raise ValueError('Model names support one to three path components.')
+    from tllama.repository_names import definition_path
+    definition_path(name)
 
 
 @dataclass
@@ -453,12 +450,11 @@ def render_model_toml(
     *,
     metadata: Optional[Dict[str, Any]] = None,
     mmproj_path: Optional[str] = None,
-    suggested_mmproj: Optional[str] = None,
 ) -> str:
     """Render a new virtual-model .toml naming an existing repo file.
 
-    `model_path` and `mmproj_path` are repo-relative, including the
-    category prefix ("HuggingFace/ns/repo/file.gguf") -- the same values
+    `model_path` and `mmproj_path` are physical repo-relative data paths
+    ("data/<group-sha256>/weights.gguf") -- the same values
     parse_model_toml reads back out of [llm]/[mmproj].
 
     Only [llm] is active. Everything the GGUF itself has an opinion about
@@ -499,19 +495,6 @@ def render_model_toml(
             "",
             "[mmproj]",
             f"model = {_toml_string(mmproj_path)}",
-        ]
-    elif suggested_mmproj is not None:
-        # A real projector found in this model's own repository, named
-        # rather than guessed at. Whether it belongs to this model is not
-        # something the files say, so it is offered commented out for a
-        # person to decide -- an empty placeholder would be inventing a
-        # section, which nothing else here does.
-        lines += [
-            "",
-            "# A projector sits in this repository. Uncomment both lines",
-            "# below if it belongs to this model.",
-            "# [mmproj]",
-            _commented(f"model = {_toml_string(suggested_mmproj)}"),
         ]
 
     context_length = metadata.get("context_length") or 0
@@ -617,6 +600,10 @@ def write_model_toml(path: Path, text: str, *, overwrite: bool = False) -> Path:
             # clobbering a concurrent writer's newly created definition.
             os.link(temporary, path)
             temporary.unlink()
+        # Reclamation may remove the previous definition's weights next.
+        # Commit this directory entry before any such irreversible cleanup.
+        from tllama.repository_store import sync_directory
+        sync_directory(path.parent)
     except BaseException:
         temporary.unlink(missing_ok=True)
         raise

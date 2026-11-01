@@ -5,6 +5,73 @@ identify the source; the complete history retains tests, refactoring and
 intermediate development steps. TLlama application versions
 are independent of the separately packaged `tllama-server` native runtime.
 
+## 1.4.0 — 2026-11-01
+
+### Added
+
+- Managed format-2 model repositories: portable selectively percent-encoded
+  definition names and immutable content-addressed `data/<sha256>/` groups.
+  Complete GGUF shard sets stay together; projectors and LoRA adapters can be
+  shared independently. Local additions use `create`, remote additions use
+  `pull`, and copies share existing groups instead of duplicating weights.
+- A resumable, one-time offline converter in `tools/`, outside the Python
+  wheel. It previews by default, preserves TOML comments/settings and valid
+  current caches, and supports repositories older than 1.3.1. Debian ships
+  the converter in the optional `tllama-doc` package.
+- Local `tllamad repo check`, `prune`, `inspect` and `stats` commands for
+  integrity, explicit orphan cleanup, sharing and managed weight accounting.
+  These commands do not start/contact HTTP or load native workers. Prune
+  previews by default and requires `--apply` for a freshly checked deletion.
+
+### Changed
+
+- Removing or replacing a definition reclaims its unused managed groups,
+  matching repository-owned upload hardlinks and path caches. Shared
+  definitions, worker generations and publications are protected across
+  cooperating daemons by OS-backed reservations and a repository lock.
+  Deferred cleanup has a durable retry queue and checks current protection
+  again before every attempt.
+- The obsolete `rebuildrepo` command and automatic definition generation
+  from arbitrary GGUF locations have been removed. Nonempty unmarked stores
+  require explicit offline conversion; the daemon does not guess a format.
+- Framework documentation routes `/docs`, `/redoc`, `/openapi.json` and
+  `/docs/oauth2-redirect` are disabled.
+
+### Fixed
+
+- `tllama rm` accepts an empty successful response from an Ollama daemon,
+  prints a compatibility warning on stderr and retains a successful status.
+- Delete, show and pull validate request bodies and field types before
+  accessing models or the network. Invalid bodies use the existing HTTP 400
+  Ollama error envelope instead of unhandled type errors. Existing aliases,
+  valid requests and response formats remain supported.
+- Public subprocess smoke fixtures register current repository definitions
+  and handle concurrent lifecycle events without premature cleanup.
+
+### Upgrade notes
+
+- Back up existing repositories and stop **all daemons and writers sharing
+  them**, including on other hosts. Convert using the matching new source
+  or installed TLlama: first run the read-only preview, then `--apply`.
+  See [conversion instructions](tools/README.md). Keep writers stopped after
+  an interruption and use the documented `--resume` procedure.
+- Upgrade/restart every daemon sharing a format-2 store before physical
+  reclamation is used. Old daemons and external readers bypassing the
+  reservation protocol cannot be detected. The shared filesystem must honor
+  OS locks across participating hosts. Review service-account ownership/ACLs
+  after conversion; package upgrade does not migrate the repository for you.
+- Empty stores initialize automatically. Old/unknown caches are regenerable;
+  conversion can reuse independently valid current caches. Renaming paths
+  alone does not change model identity. No native runtime upgrade is implied
+  by this Python application release.
+- Repository commands are local daemon commands with normal storage/config
+  precedence; `--models-dir` is optional. Whole-store prune does not sweep
+  independent cache entries or old staging/download jobs.
+
+Source baseline: [v1.3.1](https://github.com/ByCzech/TLlama/tree/v1.3.1).
+The complete release range is
+[v1.3.1...v1.4.0](https://github.com/ByCzech/TLlama/compare/v1.3.1...v1.4.0).
+
 ## 1.3.1 — 2026-10-31
 
 ### Fixed

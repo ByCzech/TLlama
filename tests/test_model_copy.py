@@ -10,17 +10,20 @@ import pytest
 from tllama.main import app
 from tllama.routers import ollama
 from tllama.model_definitions import copy_definition
-from tllama.helpers.model_toml import write_model_toml
+from tllama.helpers.model_toml import write_model_toml, parse_model_toml
+from tllama.repository_store import prepare_group
+from test_model_create import gguf_file
 from tllama.cli import main
 from test_client_cli import cli_server, isolated_proxy_environment
 
 
 @pytest.fixture
-def definition(manager):
-    manager.ensure_storage()
-    (manager.local_models_dir / 'weights.gguf').write_bytes(b'weights')
-    (manager.local_models_dir / 'projector.gguf').write_bytes(b'projector')
-    text = '# Keep comments\n[llm]\nmodel = "Local/weights.gguf"\n[mmproj]\nmodel="Local/projector.gguf"\n[system]\nprompt="Czech"\n'
+def definition(manager, tmp_path):
+    weight, = manager.repository.publish(prepare_group([gguf_file(tmp_path / 'weights.gguf')]))
+    projector, = manager.repository.publish(prepare_group([gguf_file(tmp_path / 'projector.gguf', arch='clip')]))
+    text = ('# Keep comments\n[llm]\nmodel = ' + json.dumps(weight.relative_to(manager.models_dir).as_posix())
+            + '\n[mmproj]\nmodel=' + json.dumps(projector.relative_to(manager.models_dir).as_posix())
+            + '\n[system]\nprompt="Czech"\n')
     (manager.local_models_dir / 'original.toml').write_text(text)
     return text
 
@@ -32,12 +35,13 @@ async def test_copy_preserves_definition_and_weight_inodes(manager, definition, 
     if force:
         target.parent.mkdir(parents=True)
         target.write_text('previous definition')
-    inode = (manager.local_models_dir / 'weights.gguf').stat().st_ino
+    weight = manager.models_dir / parse_model_toml(definition).llm_model
+    inode = weight.stat().st_ino
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test') as client:
         response = await client.post('/api/copy', json={'source': 'original', 'destination': 'collection/copy', 'force': force})
     assert response.status_code == 200, response.text
     assert target.read_text() == definition
-    assert (manager.local_models_dir / 'weights.gguf').stat().st_ino == inode
+    assert weight.stat().st_ino == inode
     assert len(list(manager.models_dir.rglob('*.gguf'))) == 2
     assert manager.native_snapshot() == []
 

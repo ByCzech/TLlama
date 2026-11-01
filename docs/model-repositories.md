@@ -1,138 +1,190 @@
-# Model Repositories
+# Model repositories
 
-TLlama stores models in a structured repository directory.
+TLlama separates model definitions from shared weight data. The root is selected
+by `storage.models_dir`, `--models-dir`, or `TLLAMA_MODELS` (default
+`/var/lib/tllama/models`). All local additions use `tllama create`; Hugging Face
+files use `tllama pull`.
 
-The goal is to support three common sources of GGUF models while keeping public model names simple and predictable:
+## Layout and public names
 
-- models downloaded from Hugging Face,
-- models distributed specifically for TLlama,
-- manually copied local models.
+Definitions live at a fixed depth in three branches:
 
----
+| Public name | Definition path |
+| --- | --- |
+| `my-model` | `Local/my-model.toml` |
+| `ByCzech/my-model` | `TLlama/ByCzech/my-model.toml` |
+| `namespace/repository/my-model` | `HuggingFace/namespace/repository/my-model.toml` |
 
-## Repository Root
+The branches hold definitions. All managed GGUF files live in
+`data/<group-sha256>/`, regardless of the branch or source. A single-file group
+contains `weights.gguf`. A split group contains
+`weights-00001-of-NNNNN.gguf` and every continuation shard in the same directory;
+a definition references the first shard. Projectors and LoRA adapters have
+independent groups, allowing sharing across models and quantizations.
 
-The repository root is configured with:
+A single-file directory uses the file's SHA-256. A split directory uses the
+versioned hash of its ordered member digests. Original filenames, aliases and
+TOML parameters do not enter this address. Public model IDs remain separate:
+they include weights, projector/adapter and non-default parameters. Copying a
+definition shares files; identical uploads/downloads reuse complete groups.
+Published data is immutable and existing groups are verified before reuse.
 
-```bash
-export TLLAMA_MODELS=/var/lib/tllama/models
+### Portable definition names
+
+Public names keep their spelling. Physical definition components selectively
+escape `<>:"|?*%`, terminal dots/spaces and reserved Windows basenames using
+uppercase `%HH`. Ordinary Unicode and internal spaces stay readable. For
+example, `ByCzech/model:Q4%` lives in
+`TLlama/ByCzech/model%3AQ4%25.toml`. The daemon encodes on lookup and decodes
+physical names exactly once on listing. A literal `%3A` in a public name
+therefore differs from `:`. TOML paths are literal physical paths, not URL
+strings to decode.
+
+Names differing only by case or Unicode normalization are rejected on every
+OS, including Linux, to keep the repository portable. Component and full path
+lengths still obey filesystem limits. A bare GGUF is never discovered as a
+model; only a registered fixed-depth TOML defines a public name.
+
+## Add a local model
+
+Create a client-side TOML:
+
+```toml
+[llm]
+from = "./model.gguf"
+
+# Optional independent projector:
+# [mmproj]
+# from = "./projector.gguf"
 ```
 
-Typical structure:
+Then:
 
-```text
-/var/lib/tllama/models/
-  HuggingFace/
-    namespace/
-      repository/
-        model-file.gguf
-
-  TLlama/
-    collection/
-      model-file.gguf
-
-  Local/
-    manually-copied-model.gguf
-
-  .tllama/
-    metadata-cache/
-      <cache-key>.json
+```sh
+tllama create my-model -f model.toml
+tllama show my-model
+tllama cp my-model ByCzech/another-name
 ```
 
----
+Relative `from` paths use the client's current working directory, including
+when the TOML is elsewhere. The client validates and uploads the complete GGUF
+group. The server stages verified blobs under `.tllama/uploads/`, publishes
+canonical groups into `data/`, rewrites `from` to the final physical `model`
+path, and publishes the definition last. Comments and parameters survive. The
+client's files stay untouched; no arbitrary server-side `from` file is read.
 
-## Public Model Name Rules
+To reuse existing managed data without uploading, use its exact
+`data/<group-sha256>/weights.gguf` (or first-shard) path in `model`. Refer to
+`show --modelfile` for an existing definition. Default name conflicts require
+`--force`; force replaces only the definition. See [CLI import](cli.md#create-and-import-models).
 
-TLlama exposes model names without internal storage prefixes.
+## Pull from Hugging Face
 
-| Repository area | Public model name format | Example |
-|---|---|---|
-| HuggingFace | `namespace/repository/model-file` | `unsloth/Llama-3.1-8B-Instruct-GGUF/Llama-3.1-8B-Instruct-IQ4_NL` |
-| TLlama | `collection/model-file` | `official/example-model` |
-| Local | `model-file` | `DeepSeek-Coder-V2-Lite-Instruct-Q4_K_L` |
-
-Internal directory names such as `HuggingFace`, `TLlama`, and `Local` are not normally part of the public model name.
-
----
-
-## Hugging Face Models
-
-Hugging Face models are stored under:
-
-```text
-<TLLAMA_MODELS>/HuggingFace/<namespace>/<repository>/<model-file>.gguf
+```sh
+tllama pull namespace/repository/path/to/model.gguf
 ```
 
-Example on disk:
+`POST /api/pull` accepts the same reference in `model` or `name`, with optional
+`stream: false`; the default response is NDJSON progress. The `.gguf` suffix
+may be omitted. This is a repository file reference, not an Ollama registry
+tag or browser `blob/main`/`resolve/main` URL. The optional `huggingface` extra
+must be installed on the daemon.
 
-```text
-/var/lib/tllama/models/HuggingFace/unsloth/Llama-3.1-8B-Instruct-GGUF/Llama-3.1-8B-Instruct-IQ4_NL.gguf
+Downloads use a private temporary directory under `.tllama/downloads/`.
+TLlama reads the first GGUF header, fetches all declared sibling shards,
+validates and measures them, and atomically publishes the complete group.
+Interrupted/failed transfers leave no partial data group or model definition.
+Progress counts the whole group. Final path caches are warmed at publication.
+
+An ordinary model gets the public name `namespace/repository/model`, using the
+requested basename without `.gguf`. A conflicting existing definition is kept;
+another available numbered name is used. Source records under
+`.tllama/origins/` associate remote paths with chosen aliases and measured data.
+Subsequent pulls of an unchanged source reuse data only after checking the
+published digest of every remote member. If the source changes, TLlama updates
+its associated definition's weight pointer while preserving comments and user
+settings. Other aliases retain their original weights. A definition that the
+user repointed elsewhere is preserved and a new alias is chosen. Tokens are
+never stored in source records. Projector pulls publish data and return its
+path without registering a standalone language model or guessing attachments.
+
+## Upgrade an existing repository
+
+An empty repository is initialized automatically with
+`.tllama/repository.json`. A nonempty unmarked repository requires explicit
+offline conversion; the daemon refuses to reinterpret it. Unknown formats and
+incomplete conversions are refused too. The final format marker commits a
+complete conversion; private recovery records need not be readable by the
+service account afterward.
+
+Stop every daemon/writer using the repository, preview and apply:
+
+```sh
+python3 tools/migrate-repository-v2.py /var/lib/tllama/models
+python3 tools/migrate-repository-v2.py /var/lib/tllama/models --apply
 ```
 
-Public model name:
+Then start the upgraded daemon. See [conversion and recovery](../tools/README.md)
+for permissions, old caches and `--resume`. The tool supports repositories from
+versions older than 1.3.1. `rebuildrepo` and the old raw-file naming/discovery
+code have been removed; copying weights into a branch is no longer an import.
 
-```text
-unsloth/Llama-3.1-8B-Instruct-GGUF/Llama-3.1-8B-Instruct-IQ4_NL
-```
+## Removal and caches
 
-Example:
+`rm` removes the definition, retires local workers and reclaims only its
+now-unused managed groups, including every shard, their disk caches and
+matching repository-owned upload hardlinks. Other definitions keep shared
+groups. Loading/live/draining workers and active publications keep their
+reserved groups until release. `create --force`, `cp --force` and an updated
+HF definition use the same targeted cleanup for the previous groups.
+Unrelated orphan groups are left for separate whole-store maintenance.
 
-```bash
-OLLAMA_HOST=127.0.0.1:54800 ollama show unsloth/Llama-3.1-8B-Instruct-GGUF/Llama-3.1-8B-Instruct-IQ4_NL
-```
+Deletion responses include `cleanup` with removed/shared/deferred groups,
+removed paths and warnings. A broken definition or reservation blocks physical
+cleanup, while the requested definition removal still succeeds. Broken removed
+definitions cannot supply reliable group candidates; no paths are guessed.
+`kept_model_file` remains available and is null when the main weight is gone.
+Create/copy add cleanup details when there is cleanup activity to report.
+The CLI prints cleanup warnings and deferrals on stderr, including with
+`--json`; a successful definition mutation keeps exit status zero.
+See the [implementation contract](repository-v2.md#removal-and-maintenance).
 
-Equivalent API call:
+Deferred candidates live in `.tllama/reclaim.json`. Reservation release/narrowing,
+subsequent definition operations and daemon storage initialization retry
+them under the repository lock after checking the current definitions/pins.
+After a crashed owner disappears, retry occurs on one of these events;
+there is no background timer. Successfully published upload blobs without an
+active upload are reusable staging, not persistent model definitions: their
+matching hardlinks can be removed when the last model using a group is deleted.
+Clients can check/re-upload missing blobs before another create.
 
-```bash
-curl -s http://127.0.0.1:54800/api/show \
-  -H "Content-Type: application/json" \
-  -d '{"name":"unsloth/Llama-3.1-8B-Instruct-GGUF/Llama-3.1-8B-Instruct-IQ4_NL"}' | jq .
-```
+**Upgrade and restart all daemons sharing this repository before using
+physical reclamation.** A daemon predating the reservation protocol, or an
+external reader, cannot be detected by locks. The repository format marker is
+unchanged; this update does not require another migration.
+Uploads, download/publication jobs, worker snapshots and managed physical
+diagnostic launches use the shared [reservation layer](repository-reservations.md).
 
----
+Metadata and measured content digests live under `.tllama/metadata-cache/`.
+Keys use repository-relative physical file paths, validated against size and
+modification time. Moving the whole repository preserves valid caches. Missing
+or obsolete caches regenerate on demand; removing this cache directory is safe
+while daemons are stopped, but later hashing can read the full weights again.
+Source records are bookkeeping distinct from these regenerable caches.
+See [metadata-cache.md](metadata-cache.md).
 
-## Pulling Models from Hugging Face
+Run `tllamad repo check [--hashes] [--json]` locally on the repository machine
+to inspect integrity without repair or cleanup. This one-shot daemon command
+does not start/contact HTTP or load a model. It reads the configured local
+`storage.models_dir`, overridden by `--models-dir`. See
+[local integrity checks](daemon.md#local-repository-integrity-check).
 
-TLlama can download GGUF files from Hugging Face repositories.
-
-Use a repository reference, with optional subdirectories and `.gguf` suffix:
-
-```bash
-tllama pull namespace/repository/path/to/model-file.gguf
-```
-
-```json
-{"model":"namespace/repository/path/to/model-file.gguf","stream":false}
-```
-
-The JSON goes to `POST /api/pull`; `name` is also accepted. Omitted `stream`
-defaults to NDJSON progress. The server appends `.gguf` to a filename without
-that extension. This is not an Ollama registry tag or a Hugging Face browser
-`blob/main`/`resolve/main` URL. Downloaded files use the `HuggingFace` area and
-successful definition preparation makes them visible as registered models.
-The server needs the optional `huggingface` extra. Pull downloads the requested
-file; do not infer client import's complete split-shard upload behavior here.
-
-The daemon account needs suitable model-store and Hugging Face cache permissions,
-including parent traversal. Service and interactive accounts can differ; inspect
-the actual error path before changing ownership/ACLs. See
-[file permissions](#file-permissions) below and [systemd.md](systemd.md).
-
-After a successful pull, TLlama creates metadata cache for the downloaded model so later `ollama list` and `ollama show` calls can be fast.
-
-Example target layout after pull:
-
-```text
-/var/lib/tllama/models/HuggingFace/Qwen/Qwen2.5-3B-Instruct-GGUF/qwen2.5-3b-instruct-q8_0.gguf
-```
-
-Public model name:
-
-```text
-Qwen/Qwen2.5-3B-Instruct-GGUF/qwen2.5-3b-instruct-q8_0
-```
-
----
+`tllamad repo inspect MODEL` (or `--group SHA256`) explains component sharing,
+shards and protection; `tllamad repo stats` summarizes managed groups and bytes.
+These are read-only local commands. `tllamad repo prune` previews whole-store
+orphan cleanup and requires `--apply` for deletion. See
+[inspection/statistics](daemon.md#local-repository-inspection-and-statistics)
+and [pruning](repository-prune.md).
 
 ## File permissions
 
@@ -171,8 +223,7 @@ permissions. Cache refreshes create new files under the current mask.
 
 GGUF downloads and Hugging Face's internal cache/lock files remain managed by
 `huggingface_hub`; TLlama does not recursively chmod them or normalize third-party
-permissions. Files copied manually into a repository likewise retain their
-existing permissions. Windows access is governed by Windows ACLs; this POSIX
+permissions. Windows access is governed by Windows ACLs; this POSIX
 mode table is not an equivalent Windows security policy.
 
 Older TLlama versions created TOMLs, uploads and cache entries with `0600`.
@@ -183,224 +234,3 @@ ACLs can supply the intended group; umask alone does not choose one.
 
 Private worker sockets, IPC credentials and runtime directories keep their
 dedicated restrictive permissions; they do not use repository file modes.
-
-## Local Models
-
-Local models hold manually copied GGUF files and client-imported weights.
-Client imports use `Local/imports/`; their registered TOML remains independent
-of the physical weight path. See [cli.md](cli.md#create-and-import-models).
-
-They are stored under:
-
-```text
-<TLLAMA_MODELS>/Local/
-```
-
-Example on disk:
-
-```text
-/var/lib/tllama/models/Local/DeepSeek-Coder-V2-Lite-Instruct-Q4_K_L.gguf
-```
-
-Public model name:
-
-```text
-DeepSeek-Coder-V2-Lite-Instruct-Q4_K_L
-```
-
-Example:
-
-```bash
-OLLAMA_HOST=127.0.0.1:54800 ollama show DeepSeek-Coder-V2-Lite-Instruct-Q4_K_L
-```
-
-This keeps the local repository simple and close to the early flat-directory model layout.
-
-### Adding a Local Model Manually
-
-Copy a GGUF file into the `Local` directory:
-
-```bash
-sudo cp ./model.gguf /var/lib/tllama/models/Local/my-local-model.gguf
-```
-
-Register the missing definition, then list models:
-
-```bash
-tllamad rebuildrepo --dryrun
-tllamad rebuildrepo
-OLLAMA_HOST=127.0.0.1:54800 ollama list
-```
-
-A bare GGUF is not listed until a TOML definition points at it. Use the same
-server configuration/model store for `rebuildrepo` and the running daemon;
-global daemon flags precede the maintenance subcommand. Alternatively,
-`tllama create MODEL -f FILE` uploads client-side `from` files and writes the
-definition through HTTP; see [CLI create/import](cli.md#create-and-import-models).
-If metadata cache does not exist yet, listing/show creates it lazily.
-
----
-
-## Writing the Missing `.toml` Definitions
-
-A `.gguf` that no `.toml` points at is not a model: it is not listed and cannot be loaded. `tllamad rebuildrepo` writes the definitions that are missing, for a repository that predates them and equally for a file just copied into `Local/` by hand.
-
-```bash
-tllamad rebuildrepo --dryrun     # report only, writes nothing
-tllamad rebuildrepo              # add the definitions that are absent
-```
-
-Without `--force` it only adds; a `.toml` that already exists is left exactly as it is, so the command is safe to run at any time.
-
-### `--force` and the backup
-
-`--force` also replaces definitions that already exist. Whatever a person wrote into one — an uncommented `n_ctx`, a `[system].prompt`, their own comments — is copied to a `.toml.bak` beside it first, without being asked for: anyone reaching for `--force` is thinking about what they want to gain, not about what they are about to lose.
-
-A second `--force` therefore finds a `.toml.bak` already there. It **skips that file** rather than replacing the backup with a copy of the generated one, which would destroy the only thing protecting against the first run. The skip is per file: everything without a backup is still done, and each skipped file is named with the reason.
-
-Two ways forward from a skip. Move the `.toml.bak` somewhere else, which keeps it and lets the file be rebuilt; or say it is expendable:
-
-```bash
-tllamad rebuildrepo --force --overwrite-backups
-```
-
-That flag does nothing on its own and is refused without `--force`. `--dryrun` reports the skips exactly as the real run performs them.
-
-Note that `rebuildrepo` regenerates a definition whole rather than refreshing it in place, so `--force` is the wrong tool for keeping an edited `.toml` and updating the commented block around it.
-
----
-
-## TLlama Models
-
-The `TLlama` repository area is reserved for models or model bundles distributed specifically for TLlama.
-
-They are stored under:
-
-```text
-<TLLAMA_MODELS>/TLlama/<collection>/<model-file>.gguf
-```
-
-Example on disk:
-
-```text
-/var/lib/tllama/models/TLlama/official/example-model.gguf
-```
-
-Public model name:
-
-```text
-official/example-model
-```
-
-Example:
-
-```bash
-OLLAMA_HOST=127.0.0.1:54800 ollama show official/example-model
-```
-
-The TLlama repository area is intended for future workflows where models may be distributed directly for TLlama instead of downloaded from Hugging Face.
-
----
-
-## `model.gguf` Directory Form
-
-TLlama supports directory-style model references for repositories that use a fixed file name such as `model.gguf`.
-
-Example on disk:
-
-```text
-/var/lib/tllama/models/TLlama/official/example/model.gguf
-```
-
-Public model name:
-
-```text
-official/example
-```
-
-This is useful for model bundles where additional files may live next to the GGUF file in the future.
-
----
-
-## Metadata Cache
-
-TLlama stores persistent metadata cache under:
-
-```text
-<TLLAMA_MODELS>/.tllama/metadata-cache/
-```
-
-The cache is keyed by the absolute model path and validated using model file size and modification time.
-
-You normally do not need to manage these files manually.
-
-If needed, the cache can be removed safely:
-
-```bash
-rm -rf /var/lib/tllama/models/.tllama/metadata-cache
-```
-
-TLlama will recreate metadata cache files on demand.
-
-See `docs/metadata-cache.md` for details.
-
----
-
-## Name Collision Notes
-
-The public naming scheme is intentionally simple:
-
-```text
-Local:       one segment
-TLlama:      two segments
-HuggingFace: three or more segments
-```
-
-Examples:
-
-```text
-my-model
-official/my-model
-unsloth/Llama-3.1-8B-Instruct-GGUF/Llama-3.1-8B-Instruct-IQ4_NL
-```
-
-Avoid creating ambiguous names across repository areas.
-
-For example, do not use a TLlama collection/name pair that could be confused with a manually managed Local nested path.
-
----
-
-## Quick Checks
-
-List all models:
-
-```bash
-OLLAMA_HOST=127.0.0.1:54800 ollama list
-```
-
-Show one model:
-
-```bash
-OLLAMA_HOST=127.0.0.1:54800 ollama show MODEL
-```
-
-Generate with one model:
-
-```bash
-curl -s http://127.0.0.1:54800/api/generate \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "<model-name>",
-    "prompt": "Say hello from TLlama.",
-    "stream": false
-  }' | jq .
-```
-
----
-
-## Related Files
-
-- `README.md`
-- `docs/configuration.md`
-- `docs/metadata-cache.md`
-- `docs/api-compatibility.md`

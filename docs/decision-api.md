@@ -1,9 +1,10 @@
 # Public text Decision API
 
 `POST /v1/systemone` exposes the accepted text Decision contract through managed
-TLlama workers. It is a native-compatible **extension**, not a standard OpenAI
-Chat Completions or Ollama method. Use HTTP JSON; no high-level SDK method is
-claimed. Native/managed/public comparisons passed for Laya, Nimble and Clef
+TLlama workers. It is a native-compatible **extension to OpenAI**, not a
+standard OpenAI method. Current Ollama also exposes `/v1/systemone`; TLlama
+implements the explicit text-only subset below. Native/managed/public
+comparisons passed for Laya, Nimble and Clef
 on native 0.7.0, MI50/Vulkan, F16 K/V and FA off; see
 [runtime-audit-070.md](runtime-audit-070.md). Keep the independent references.
 

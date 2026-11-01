@@ -96,7 +96,7 @@ Sampling values are typed and must be finite. Disable modes such as `top_k <= 0`
 `mirostat_mode` is an enum: only `0`, `1` and `2` are accepted. Other values
 are refused by TLlama instead of falling through to another native sampler.
 
-A model's `.toml` works the same way: a key in `[runtime]` or `[sampling]` that TLlama will not act on is refused when the file is read, and that model is not listed and cannot be loaded until the file is corrected. `tllamad rebuildrepo --dryrun` reports which file and which key, and writes nothing.
+A model's `.toml` works the same way: a key in `[runtime]` or `[sampling]` that TLlama will not act on is refused when the file is read, and that model is not listed and cannot be loaded until the file is corrected. The daemon logs the rejected file/key; requesting that name with `tllama show MODEL` reports the error.
 
 Booleans accept `1`, `true`, `yes`, `on` and `0`, `false`, `no`, `off`, in any case. Anything else is refused.
 
@@ -186,7 +186,7 @@ Reload the application when its source changes. Default `false`. For development
 
 The repository root, holding `Local/`, `TLlama/` and `HuggingFace/`. Default `/var/lib/tllama/models`.
 
-A `.gguf` that no `.toml` points at is not a model: it is not listed and cannot be loaded. See `docs/model-repositories.md`; `tllamad rebuildrepo` writes the missing definitions.
+A `.gguf` that no `.toml` points at is not a model: it is not listed and cannot be loaded. Add local models through `tllama create`; see [model repositories](model-repositories.md).
 
 ### `TLLAMA_METADATA_CACHE_TTL`
 
@@ -352,7 +352,7 @@ A misspelt section name is the mistake this catches that the per-section checks 
 
 ### `[llm]` and `[mmproj]`
 
-`model` is a path relative to the repository root, including the category directory. `tllama create -f FILE` imports client-side `from` files into the server's `Local/imports/` storage and rewrites them to `model` in the stored TOML. Relative `from` paths are relative to the client's current working directory, regardless of FILE's location; the HTTP server does not read arbitrary server-side paths from this field. Exactly one of the two is required per section. A definition-only create with `model` reuses existing repository files without uploading them. See [CLI create/import](cli.md#create-and-import-models).
+`model` is a path relative to the repository root, under `data/<group-sha256>/`. `tllama create -f FILE` imports client-side `from` files into the server's shared `data/` storage and rewrites them to `model` in the stored TOML. Relative `from` paths are relative to the client's current working directory, regardless of FILE's location; the HTTP server does not read arbitrary server-side paths from this field. Exactly one of the two is required per section. A definition-only create with `model` reuses existing repository files without uploading them. See [CLI create/import](cli.md#create-and-import-models).
 
 A path escaping the repository root is refused. An `[mmproj]` is checked to be a projector.
 
@@ -533,10 +533,10 @@ tllamad: TLLAMA_HOST='0.0.0.0:http' is not valid: expected HOST:PORT with a nume
 Its `.toml` no longer parses, most likely because it carries a key TLlama will not act on. Nothing is deleted; the model is invisible until the file is fixed.
 
 ```bash
-tllamad rebuildrepo --dryrun
+tllama show MODEL
 ```
 
-That names the file and the key, and writes nothing. A common case is a setting in the wrong section: context length is `n_ctx` in `[runtime]`, not `num_ctx` in `[sampling]`.
+That reports the rejected definition without regenerating it. A common case is a setting in the wrong section: context length is `n_ctx` in `[runtime]`, not `num_ctx` in `[sampling]`.
 
 ### A setting appears to do nothing
 
@@ -558,11 +558,12 @@ A browser caches a preflight for ten minutes, so a corrected origin list can tak
 
 ```bash
 echo "$TLLAMA_MODELS"
-find "$TLLAMA_MODELS" -name '*.gguf' | head
-tllamad rebuildrepo --dryrun
+find "$TLLAMA_MODELS" -name '*.toml' | head
+tllama list
 ```
 
-A `.gguf` with no `.toml` is not a model. `rebuildrepo` writes the missing definitions.
+A `.gguf` with no definition is not a model. Use `create` for local imports;
+old repositories require the [offline converter](../tools/README.md).
 
 ### The first listing is slow
 

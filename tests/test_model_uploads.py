@@ -48,7 +48,7 @@ async def test_invalid_upload_never_publishes(manager, monkeypatch, payload, dig
                                      headers={'Content-Type': 'application/octet-stream'})
     assert response.status_code == status
     assert not list(manager.models_dir.rglob('.upload-*'))
-    assert not list((manager.local_models_dir / '.uploads').glob('[0-9a-f]' * 64))
+    assert not list((manager.models_dir / '.tllama/uploads').glob('[0-9a-f]' * 64))
 
 
 async def test_upload_cancellation_drains_disk_work_and_removes_temporary(manager):
@@ -68,7 +68,7 @@ async def test_upload_cancellation_drains_disk_work_and_removes_temporary(manage
     with pytest.raises(asyncio.CancelledError):
         await task
     assert not blob_path(manager, DIGEST).exists()
-    assert not list((manager.local_models_dir / '.uploads').glob('.upload-*'))
+    assert not list((manager.models_dir / '.tllama/uploads').glob('.upload-*'))
 
 
 async def test_upload_detects_disconnected_body(manager, monkeypatch):
@@ -89,7 +89,7 @@ async def test_upload_detects_disconnected_body(manager, monkeypatch):
 def test_staging_cannot_escape_by_symlink(manager, tmp_path):
     outside = tmp_path / 'outside'
     outside.mkdir()
-    (manager.local_models_dir / '.uploads').symlink_to(outside, target_is_directory=True)
+    (manager.models_dir / '.tllama/uploads').symlink_to(outside, target_is_directory=True)
     with pytest.raises(ValueError):
         blob_path(manager, DIGEST)
 

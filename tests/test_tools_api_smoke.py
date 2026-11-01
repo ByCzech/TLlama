@@ -7,6 +7,8 @@ import subprocess
 import sys
 
 import pytest
+from test_model_create import gguf_file
+from repository_fixtures import register_model, repository_snapshot
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'scripts/tools-api-smoke.py'
@@ -25,12 +27,12 @@ def test_public_cli_full_cycle_raw_frames_cancellation_and_cleanup(tmp_path, mon
         pytest.importorskip('openai')
         pytest.importorskip('ollama')
     root = tmp_path / 'stub'; root.mkdir()
-    models = tmp_path / 'models/Local'; models.mkdir(parents=True)
-    (models / 'a.gguf').write_bytes(b'fake weights')
-    definition = '[llm]\nmodel="Local/a.gguf"\n[runtime]\ndevice="none"\nn_ctx=8192\n'
+    extra = '[runtime]\ndevice="none"\nn_ctx=8192\n'
     if mtp:
-        definition += 'spec_type="draft-mtp"\ndraft_n_max=3\n'
-    (models / 'a.toml').write_text(definition)
+        extra += 'spec_type="draft-mtp"\ndraft_n_max=3\n'
+    path, definition = register_model(tmp_path / 'models', gguf_file(tmp_path / 'input.gguf'), extra=extra)
+    models = path.parent
+    before_repository = repository_snapshot(models.parent)
     executable = tmp_path / 'native-stub'
     executable.write_text(f'#!{sys.executable}\n' + Path(__file__).with_name('native_worker_stub.py').read_text())
     executable.chmod(0o700)
@@ -52,6 +54,7 @@ def test_public_cli_full_cycle_raw_frames_cancellation_and_cleanup(tmp_path, mon
     ready = next(r for r in raw if r['stage'] == 'ready')
     assert ready['argv'][ready['argv'].index('--ctx-size') + 1] == '4096'
     assert (models / 'a.toml').read_text() == definition
+    assert repository_snapshot(models.parent) == before_repository
     if mtp:
         assert ready['argv'][ready['argv'].index('--spec-type') + 1] == 'draft-mtp'
         assert ready['argv'][ready['argv'].index('--spec-draft-n-max') + 1] == '3'

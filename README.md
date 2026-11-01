@@ -57,11 +57,11 @@ generation, vision, embedding and Decision models.
 Start with the [documentation index](TOC.md), the detailed
 [features and comparison](docs/features.md), [hardware support](docs/hardware.md)
 and [packages and platform roadmap](docs/distribution.md).
-TLlama 1.3.1 corrects complete model-file sizes, portable model-variant IDs
-and public Decision request cancellation. It retains 1.3.0's client image
-attachments, image-aware conversation saves and configurable size limits.
-See the [CLI guide](docs/cli.md#attach-images) and [changelog](CHANGELOG.md)
-for release changes, automatic cache regeneration and upgrade notes.
+TLlama 1.4.0 introduces portable model definitions, content-addressed shared
+GGUF groups, protected physical reclamation and local repository maintenance.
+Existing repositories require the explicit [offline conversion](tools/README.md)
+with all writers stopped. See the [changelog](CHANGELOG.md) for migration,
+coordination requirements and other release changes.
 These pages distinguish implemented features, tested configurations and planned
 distribution work.
 
@@ -236,14 +236,17 @@ tllama create my-model -f model.toml
 
 Relative `from` paths use the client's **CWD**, including when the TOML is
 elsewhere. Model and optional projector files are uploaded into the server's
-`Local` storage. Complete split-GGUF groups are supported. Without `from`, use
-`model = "Local/existing.gguf"` to reference an existing repository file.
+shared `data/<group-sha256>/` storage. Complete split-GGUF groups are supported.
+Without `from`, use the exact managed data path from an existing definition.
 Creation writes the definition after validation; it does not load or convert
 the model. Copying definitions shares weights. Default conflicts require
-explicit `--force`. Removing a definition retains weight files.
+explicit `--force`. Removing a definition reclaims only its unused managed
+groups; other definitions and worker/publication reservations protect shared
+or busy weights. Use the local command `tllamad repo check` to check integrity
+without cleanup; `--hashes` independently verifies full weight content addresses.
 
-For manually copied weights, `tllamad rebuildrepo --dryrun` previews missing
-definitions. See [model-repositories.md](docs/model-repositories.md) and
+Existing repositories require the one-time offline [format-2 conversion](tools/README.md).
+Local additions use `create`; `rebuildrepo` has been removed. See [model-repositories.md](docs/model-repositories.md) and
 [configuration.md](docs/configuration.md).
 
 ## APIs and model modes

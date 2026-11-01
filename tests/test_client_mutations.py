@@ -73,6 +73,31 @@ def test_rm_success(cli_server, capsys):
     assert 'weights kept' in capsys.readouterr().out
 
 
+@pytest.mark.parametrize('operation', ['rm', 'cp', 'create'])
+@pytest.mark.parametrize('as_json', [False, True])
+def test_cleanup_diagnostics_use_stderr_without_failing_successful_mutation(
+        cli_server, capsys, monkeypatch, operation, as_json):
+    reply = {'status': 'success', 'cleanup': {
+        'warnings': ['Physical cleanup skipped: unreadable definition'],
+        'deferred_groups': ['a' * 64]}}
+    if operation == 'create':
+        async def create(*args, **kwargs):
+            return reply
+        monkeypatch.setattr('tllama.client_import.create_from_file', create)
+        arguments = ['create', 'a', '--file', 'unused-by-fake.toml']
+    else:
+        cli_server['responses']['/api/delete' if operation == 'rm' else '/api/copy'] = (200, reply)
+        arguments = ['rm', 'a'] if operation == 'rm' else ['cp', 'a', 'b', '--force']
+    assert main(arguments + ['--host', cli_server['url']] + (['--json'] if as_json else [])) == 0
+    output = capsys.readouterr()
+    assert 'unreadable definition' in output.err and 'cleanup deferred for 1 group' in output.err
+    if as_json:
+        data = json.loads(output.out)
+        assert (data['response'] if operation == 'rm' else data) == reply
+    else:
+        assert 'unreadable definition' not in output.out
+
+
 @pytest.mark.parametrize('as_json', [False, True])
 def test_stop_uses_empty_generate_unload(cli_server, capsys, as_json):
     reply = {'model': 'a', 'done': True, 'done_reason': 'unload', 'response': ''}
