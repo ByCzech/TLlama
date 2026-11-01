@@ -600,6 +600,10 @@ def write_model_toml(path: Path, text: str, *, overwrite: bool = False) -> Path:
             # clobbering a concurrent writer's newly created definition.
             os.link(temporary, path)
             temporary.unlink()
+        # Reclamation may remove the previous definition's weights next.
+        # Commit this directory entry before any such irreversible cleanup.
+        from tllama.repository_store import sync_directory
+        sync_directory(path.parent)
     except BaseException:
         temporary.unlink(missing_ok=True)
         raise

@@ -131,11 +131,37 @@ code have been removed; copying weights into a branch is no longer an import.
 
 ## Removal and caches
 
-At this stage `rm` removes the definition and retires its local workers; shared
-data and disk caches remain. Worker and publication reservations are now in
-place; physical reclamation is the next implementation step. The
-[implementation contract](repository-v2.md#removal-and-maintenance) describes
-that next step and the separate whole-store maintenance commands.
+`rm` removes the definition, retires local workers and reclaims only its
+now-unused managed groups, including every shard, their disk caches and
+matching repository-owned upload hardlinks. Other definitions keep shared
+groups. Loading/live/draining workers and active publications keep their
+reserved groups until release. `create --force`, `cp --force` and an updated
+HF definition use the same targeted cleanup for the previous groups.
+Unrelated orphan groups are left for separate whole-store maintenance.
+
+Deletion responses include `cleanup` with removed/shared/deferred groups,
+removed paths and warnings. A broken definition or reservation blocks physical
+cleanup, while the requested definition removal still succeeds. Broken removed
+definitions cannot supply reliable group candidates; no paths are guessed.
+`kept_model_file` remains available and is null when the main weight is gone.
+Create/copy add cleanup details when there is cleanup activity to report.
+The CLI prints cleanup warnings and deferrals on stderr, including with
+`--json`; a successful definition mutation keeps exit status zero.
+See the [implementation contract](repository-v2.md#removal-and-maintenance).
+
+Deferred candidates live in `.tllama/reclaim.json`. Reservation release/narrowing,
+subsequent definition operations and daemon storage initialization retry
+them under the repository lock after checking the current definitions/pins.
+After a crashed owner disappears, retry occurs on one of these events;
+there is no background timer. Successfully published upload blobs without an
+active upload are reusable staging, not persistent model definitions: their
+matching hardlinks can be removed when the last model using a group is deleted.
+Clients can check/re-upload missing blobs before another create.
+
+**Upgrade and restart all daemons sharing this repository before using
+physical reclamation.** A daemon predating the reservation protocol, or an
+external reader, cannot be detected by locks. The repository format marker is
+unchanged; this update does not require another migration.
 Uploads, download/publication jobs, worker snapshots and managed physical
 diagnostic launches use the shared [reservation layer](repository-reservations.md).
 

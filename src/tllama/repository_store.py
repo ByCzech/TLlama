@@ -276,6 +276,8 @@ class RepositoryStore:
                 fingerprint = build_model_file_fingerprint(path)
                 name = path.relative_to(self.root).as_posix()
                 save_digest_cache(self.cache_dir, name, path,
-                                  {'content_sha256': digest, 'source': 'local'}, fingerprint=fingerprint)
-                save_metadata_cache(self.cache_dir, name, path, metadata, fingerprint=fingerprint)
+                                  {'content_sha256': digest, 'source': 'local'}, fingerprint=fingerprint,
+                                  repository=self)
+                save_metadata_cache(self.cache_dir, name, path, metadata, fingerprint=fingerprint,
+                                    repository=self)
         return paths

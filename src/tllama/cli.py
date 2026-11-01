@@ -103,6 +103,20 @@ async def _wait_for_model_info(awaitable, *, notice):
         await asyncio.gather(task, return_exceptions=True)
 
 
+def _report_cleanup(data):
+    cleanup = data.get('cleanup')
+    if not isinstance(cleanup, dict):
+        return
+    warnings = cleanup.get('warnings')
+    if isinstance(warnings, list):
+        for warning in warnings:
+            if isinstance(warning, str):
+                print(f'tllama: {warning}', file=sys.stderr)
+    deferred = cleanup.get('deferred_groups')
+    if isinstance(deferred, list) and deferred:
+        print(f'tllama: physical cleanup deferred for {len(deferred)} group(s)', file=sys.stderr)
+
+
 async def _execute(args):
     from tllama.client import ClientError, TLlamaClient
     from tllama.cli_output import models_text, processes_text, show_text
@@ -116,12 +130,14 @@ async def _execute(args):
             return await run(client, args, notifier=notifier)
         if args.operation == 'cp':
             data = await client.copy(args.source, args.destination, force=args.force)
+            _report_cleanup(data)
             print(json.dumps(data, ensure_ascii=False) if as_json else f'copied: {args.source} -> {args.destination}')
             return 0
         if args.operation == 'create':
             from tllama.client_import import create_from_file
             data = await create_from_file(client, args.model, args.file, force=args.force, as_json=as_json,
                                           decimal_units=args.decimal_units)
+            _report_cleanup(data)
             print(json.dumps(data, ensure_ascii=False) if as_json else f'created: {args.model}')
             notifier.notify('create_finished')
             return 0
@@ -156,6 +172,7 @@ async def _execute(args):
                     if as_json:
                         print(json.dumps({'model': model, 'error': str(exc)}, ensure_ascii=False))
                 else:
+                    _report_cleanup(data)
                     if as_json:
                         print(json.dumps({'model': model, 'response': data}, ensure_ascii=False))
                     else:

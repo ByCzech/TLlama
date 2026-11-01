@@ -5,7 +5,8 @@ format-2 runtime are implemented. See [model-repositories.md](model-repositories
 for current usage and [the converter](../tools/README.md) for upgrades.
 The [reservation layer](repository-reservations.md) now protects uploads and
 download/publication jobs and worker generation snapshots across cooperating
-daemons. Physical reclamation and whole-store maintenance remain the next stages.
+daemons. Targeted physical reclamation is implemented; whole-store maintenance
+remains the next stage.
 
 ## Definitions and data
 
@@ -94,17 +95,33 @@ lock; POSIX uses flock. The backing shared filesystem must honor locks across
 all participating hosts. Locking a publication does not by itself implement
 garbage collection. Definition transactions use this lock too; downloads,
 uploads and worker snapshots hold OS-backed reservations. Physical deletion
-will consume both definition references and these reservations atomically.
+consumes both definition references and these reservations atomically.
 
 ## Removal and maintenance
 
-Ordinary `rm` will delete the definition and reclaim its now-unused groups,
+Ordinary `rm` deletes the definition and reclaims its now-unused groups,
 including their shards and caches, without an extra flag. Protect all other
 definitions, active/loading/retired workers and in-progress publications.
 Coordinate mutations across all daemons sharing a store, not only tasks in
 one Python process. If an unreadable definition prevents proving a group is
 unused, keep the group and report the skipped cleanup. Apply the same targeted
 cleanup after `create --force` or replacing a copy destination.
+
+Retired candidates are durably recorded before definition mutation in
+`.tllama/reclaim.json`. This is a retry queue, not an orphan inventory or a
+deletion authorization. Every attempt rechecks all current TOMLs and pins.
+Reserved groups remain queued; release and storage initialization retry them.
+An interrupted unlink resumes using the complete canonical file list.
+Groups still referenced by another definition leave the retry queue while
+their files stay untouched, and are reconsidered only when that definition
+is later removed/replaced.
+Matching repository-owned upload hardlinks and path caches are removed with
+the group. Independent upload copies, unrelated groups, download leftovers
+and third-party caches require the separate maintenance policy.
+
+Upgrade/restart every daemon sharing the repository before using a version
+with physical reclamation. Older daemons and external readers without the
+reservation protocol cannot be detected by filesystem locks.
 
 Whole-store `repo prune` is separate, with a preview and explicit apply.
 `repo check` checks definitions, groups and optionally full hashes;

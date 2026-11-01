@@ -1,10 +1,11 @@
 # Repository reservations
 
-Reservations are the shared protection layer for future physical reclamation.
-They describe resources in use; they do not delete weights or enable garbage
-collection. Integrations protect streaming uploads, complete HF
+Reservations are the shared protection layer for targeted physical reclamation.
+They describe resources in use; the collector checks them before deleting
+retired groups. Integrations protect streaming uploads, complete HF
 download/publication jobs and native worker generation snapshots.
-Ordinary `rm` still removes the definition and retires local workers.
+Ordinary `rm` removes the definition, retires local workers and reclaims its
+unused groups. Shared or reserved groups remain protected.
 
 ## Ownership and coordination
 
@@ -22,7 +23,7 @@ the payload after it. POSIX uses flock and Windows uses byte-range locking.
 The shared filesystem must honor these locks across every participating host.
 
 Creation, updates, snapshots and removal also take the existing repository
-lock. A future collector must keep that transaction locked from its final
+lock. The collector keeps that transaction locked from its final
 reservation/definition checks through unlink. It must never inspect a
 snapshot, release the repository lock and later delete based on that stale
 snapshot. Long downloads and uploads hold their reservation, not the global
@@ -63,6 +64,10 @@ through digest verification, publication and cache recording. This protects
 the temporary stream as well as its verified destination. Completed blobs
 without a live operation are separate from active reservations; a future
 staging cleanup policy must handle their reuse between HTTP requests.
+Targeted reclamation removes only completed upload entries that are hardlinks
+of a reclaimed group; a live upload path reservation defers that entire group.
+Unrelated blobs, independent copies and temporary job leftovers are not scanned
+by this targeted cleanup as whole-store orphans.
 
 HF pull creates its private download directory and reservation in one locked
 transaction. The pin covers the complete job, including shard fetches and
@@ -106,7 +111,16 @@ Temporary reservation records are legitimate runtime bookkeeping; model
 definitions, weight bytes and source caches keep their source-preservation
 checks. The model repository format and migration marker are unchanged.
 
-Before physical reclamation can be enabled, every daemon sharing the store must
-be upgraded/restarted. Filesystem locks cannot detect an older daemon or an
-external reader that does not use the reservation protocol. The worker
-integration does not itself turn on deletion; targeted cleanup is the next step.
+Before using this version's physical reclamation, every daemon sharing the
+store must be upgraded/restarted. Filesystem locks cannot detect an older
+daemon or an external reader that does not use the reservation protocol.
+
+The durable `.tllama/reclaim.json` queue records only groups retired by an
+explicit definition transaction. Normal release retries this queue after
+removing the owner's pin; narrowing a broad pin also retries it. Storage
+initialization and later mutations retry
+leftovers after a crash. Every attempt rechecks the full reference/pin set
+while holding the repository lock through unlink; stale records never grant
+permission by themselves. Malformed protection, unknown queue versions or
+unexpected group contents are reported and preserved. Failed collection does
+not turn successful worker reaping into a worker cleanup failure.

@@ -162,6 +162,7 @@ def _save_cache_document(
     section: str,
     payload: Dict[str, Any],
     fingerprint: Optional[Dict[str, Any]] = None,
+    repository=None,
 ) -> None:
     """
     Save one cache document using an atomic replace.
@@ -169,6 +170,20 @@ def _save_cache_document(
     Cache write failures are intentionally non-fatal for the application.
     """
     try:
+        if repository is not None:
+            from tllama.repository_runtime import read_format
+            relative = model_path.resolve().relative_to(repository.root)
+            if (read_format(repository) is not None
+                    and (relative.parts[:1] == ('data',)
+                         or relative.parts[:2] == ('.tllama', 'uploads'))):
+                # Serialize the final cache publication with physical GC.
+                # A completed, delayed scan must not resurrect an orphan's
+                # cache after its weights and previous cache were removed.
+                with repository.lock():
+                    if not model_path.is_file():
+                        return
+                    return _save_cache_document(cache_dir, model_name, model_path,
+                        schema_version, section, payload, fingerprint=fingerprint)
         path_for = get_digest_cache_path if section == _DIGEST_SECTION else get_metadata_cache_path
         cache_path = path_for(cache_dir, model_path)
 
@@ -250,6 +265,7 @@ def save_metadata_cache(
     metadata: Dict[str, Any],
     *,
     fingerprint: Optional[Dict[str, Any]] = None,
+    repository=None,
 ) -> None:
     """Save GGUF metadata with the fingerprint of the file actually scanned.
 
@@ -268,6 +284,7 @@ def save_metadata_cache(
         section=_METADATA_SECTION,
         payload=metadata,
         fingerprint=fingerprint,
+        repository=repository,
     )
 
 
@@ -294,6 +311,7 @@ def save_digest_cache(
     digest: Dict[str, Any],
     *,
     fingerprint: Optional[Dict[str, Any]] = None,
+    repository=None,
 ) -> None:
     """Save a model content digest to its JSON cache file."""
     cache_dir = Path(cache_dir)
@@ -307,4 +325,5 @@ def save_digest_cache(
         section=_DIGEST_SECTION,
         payload=digest,
         fingerprint=fingerprint,
+        repository=repository,
     )

@@ -81,6 +81,8 @@ def ensure_format(store):
             sync_directory(store.root)
         for directory in ('Local', 'TLlama', 'HuggingFace', 'data', '.tllama/metadata-cache', '.tllama/pins'):
             store._directory(directory)
+        from tllama.repository_cleanup import collect_pending
+        collect_pending(store)
 
 
 def repository_operation(function):
@@ -152,6 +154,7 @@ def register_pull(manager, repo_id, filename, paths, metadata, digests, source_f
     """Called with the repository lock, after whole-group publication."""
     relative = paths[0].relative_to(manager.repository.root).as_posix()
     index = read_origin(manager, repo_id, filename)
+    warnings = []
     name = None
     if not metadata.get('is_projector'):
         base = repo_id + '/' + Path(filename).name[:-5]
@@ -172,6 +175,8 @@ def register_pull(manager, repo_id, filename, paths, metadata, digests, source_f
                 name = candidate
                 break
             if candidate == previous and spec.llm_model == index.get('path'):
+                from tllama.repository_cleanup import remember_definition
+                warnings = remember_definition(manager.repository, target)
                 spec.document['llm']['model'] = relative
                 write_model_toml(target, spec.document.as_string(), overwrite=True)
                 name = candidate
@@ -182,6 +187,8 @@ def register_pull(manager, repo_id, filename, paths, metadata, digests, source_f
     write_json(manager.repository, origin_path(repo_id, filename),
                {'repo_id': repo_id, 'filename': filename, 'model': name, 'path': relative,
                 'digests': list(digests), 'files': source_files})
+    from tllama.repository_cleanup import collect_pending
+    collect_pending(manager.repository, warnings=warnings)
     return str(paths[0])
 
 

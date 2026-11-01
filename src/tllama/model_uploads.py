@@ -30,7 +30,8 @@ def verified_blob(manager, digest):
         cached = manager._build_model_digest_sync(path)
     if cached.get('content_sha256') != digest[7:] or before != build_model_file_fingerprint(path):
         raise ValueError('An uploaded blob changed or does not match its digest.')
-    save_digest_cache(manager.metadata_cache_dir, str(path), path, cached, fingerprint=before)
+    save_digest_cache(manager.metadata_cache_dir, str(path), path, cached,
+                      fingerprint=before, repository=manager.repository)
     return path, before
 
 
@@ -94,6 +95,7 @@ async def _receive_blob(manager, digest, request):
             # file, so create/list do not read many gigabytes again to hash.
             await _settle_owned(asyncio.create_task(asyncio.to_thread(
                 save_digest_cache, manager.metadata_cache_dir, str(target), target,
-                {'content_sha256': digest[7:], 'source': 'local'}, fingerprint=fingerprint)))
+                {'content_sha256': digest[7:], 'source': 'local'}, fingerprint=fingerprint,
+                repository=manager.repository)))
     finally:
         temporary.unlink(missing_ok=True)

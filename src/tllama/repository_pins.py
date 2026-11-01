@@ -2,7 +2,7 @@
 
 Publish/change/read/remove records under the repository lock. Each record's
 separate OS lock proves liveness; PIDs and wall-clock expiry are not evidence.
-Future GC must consume a snapshot under that same repository transaction.
+GC consumes a snapshot under that same repository transaction.
 """
 
 import asyncio
@@ -171,6 +171,10 @@ class Reservation:
             # descriptor. Readers use the repository lock during this write.
             _write(self._fd, document)
             self.document = document
+            # Narrowing a broad resolution pin can release unrelated retired
+            # groups even while this generation remains loaded indefinitely.
+            from tllama.repository_cleanup import collect_pending
+            collect_pending(self.store)
 
     def close(self):
         self._check_owner()
@@ -188,6 +192,10 @@ class Reservation:
                 os.close(fd)
             self.path.unlink()
             sync_directory(self.path.parent)
+            # A definition may have disappeared while this owner was still
+            # using its snapshot. Only durable targeted candidates are retried.
+            from tllama.repository_cleanup import collect_pending
+            collect_pending(self.store)
 
     def __enter__(self):
         return self.acquire()

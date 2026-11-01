@@ -294,7 +294,7 @@ class ModelManager:
                 # worker remains loaded. Preserve the scanned fingerprint if
                 # the weights change again during the optional cache write.
                 save_metadata_cache(self.metadata_cache_dir, model_name, model, metadata,
-                                    fingerprint=file_after['model'])
+                                    fingerprint=file_after['model'], repository=self.repository)
             fingerprint = {"toml": after, **file_after}
             return ModelDefinition(model_name, resolved, fingerprint, info, metadata)
         raise RuntimeError(f"Model definition '{model_name}' kept changing while it was resolved")
@@ -587,7 +587,8 @@ class ModelManager:
                 if before != build_model_file_fingerprint(file_path):
                     continue
                 name = str(file_path)
-                save_digest_cache(self.metadata_cache_dir, name, file_path, digest, fingerprint=before)
+                save_digest_cache(self.metadata_cache_dir, name, file_path, digest,
+                                  fingerprint=before, repository=self.repository)
                 return digest
         except Exception as exc:
             logger.warning('Digest computation failed for %s: %s', file_path, exc)
@@ -757,6 +758,7 @@ class ModelManager:
             model_name,
             model_info["path"],
             metadata,
+            repository=self.repository,
         )
 
         async with self._metadata_lock:
@@ -823,6 +825,7 @@ class ModelManager:
             model_name,
             model_info["path"],
             metadata,
+            repository=self.repository,
         )
 
         async with self._metadata_lock:
@@ -1138,27 +1141,13 @@ class ModelManager:
 
     @repository_operation
     def delete_model_definition(self, model_ref: str) -> Dict[str, Any]:
-        """Delete a model by deleting its definition, and only that.
+        """Remove a definition and reclaim only its unused managed groups.
 
-        The .toml is the manifest and the .gguf is the blob, and real
-        Ollama's `rm` works the same way for the same reason (verified,
-        not assumed): it removes the manifest and leaves the blob for as
-        long as anything else refers to it. Here more than one virtual
-        model can name one physical file deliberately, since sharing
-        weights instead of copying them is a stated purpose of the
-        indirection, so deleting the weights along with one name would
-        break the others silently.
-
-        The weights are never removed automatically; reclaiming disk space
-        is separate work with its own decisions to make about orphans.
-
-        The two on-disk caches stay too. They are keyed by the .gguf,
-        which has not changed, and the digest cache in particular cost a
-        full read of a multi-gigabyte file to build -- discarding it
-        because a name went away would mean paying that again for a file
-        that never moved. Only the in-memory entry keyed by the model's
-        name is dropped, because that name no longer refers to anything.
+        Other definitions and cross-daemon reservations protect whole groups.
+        Broken definitions remain removable; incomplete protection information
+        skips physical cleanup and is reported separately from model removal.
         """
+        from tllama.repository_cleanup import remember_definition, collect_pending
         toml_path = destination(self, model_ref)
 
         if not toml_path.is_file():
@@ -1175,16 +1164,23 @@ class ModelManager:
             # someone most wants to be able to delete it.
             pass
 
+        warnings = remember_definition(self.repository, toml_path)
         toml_path.unlink(missing_ok=True)
+        from tllama.repository_store import sync_directory
+        sync_directory(toml_path.parent)
         self._invalidate_metadata_cache_entry(model_ref)
 
         repo_root = self._get_repo_root_for_path(toml_path)
         self._remove_empty_parents(toml_path.parent, repo_root)
 
+        cleanup = collect_pending(self.repository, warnings=warnings)
+        if kept_file is not None and not (self.models_dir / kept_file).is_file():
+            kept_file = None
         return {
             "model_ref": model_ref,
             "deleted_path": str(toml_path),
             "kept_model_file": kept_file,
+            "cleanup": cleanup,
         }
 
     async def delete_model(self, model_ref: str) -> Dict[str, Any]:
@@ -1247,6 +1243,7 @@ class ModelManager:
                 self._strip_gguf_suffix(file_path.name),
                 file_path,
                 metadata,
+                repository=self.repository,
             )
 
         return metadata

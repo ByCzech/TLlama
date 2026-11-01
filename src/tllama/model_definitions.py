@@ -5,6 +5,7 @@ from tllama.repository_store import prepare_group
 from tllama.repository_runtime import destination, require_data_reference, repository_operation
 from tllama.model_uploads import verified_blob
 from tllama.helpers.metadata_cache import build_model_file_fingerprint
+from tllama.repository_cleanup import remember_definition, collect_pending
 
 
 def definition_path(manager, name):
@@ -35,9 +36,14 @@ def copy_definition(manager, source, destination, *, force=False):
     with source_path.open('r', encoding='utf-8', newline='') as source_file:
         text = source_file.read()
     validate_definition(manager, text)
+    warnings = remember_definition(manager.repository, target) if force else []
     write_model_toml(target, text, overwrite=force)
     manager._invalidate_metadata_cache_entry(destination)
-    return {'status': 'success', 'source': source, 'destination': destination}
+    result = {'status': 'success', 'source': source, 'destination': destination}
+    cleanup = collect_pending(manager.repository, warnings=warnings)
+    if any(cleanup.values()):
+        result['cleanup'] = cleanup
+    return result
 
 
 @repository_operation
@@ -89,6 +95,11 @@ def create_definition(manager, name, text, uploads, *, force=False, dry_run=Fals
     for group in groups:
         manager.repository.publish(group, link_owned=True)
     validate_definition(manager, text)
+    warnings = remember_definition(manager.repository, target) if force else []
     write_model_toml(target, text, overwrite=force)
     manager._invalidate_metadata_cache_entry(name)
-    return {'status': 'success', 'model': name}
+    result = {'status': 'success', 'model': name}
+    cleanup = collect_pending(manager.repository, warnings=warnings)
+    if any(cleanup.values()):
+        result['cleanup'] = cleanup
+    return result

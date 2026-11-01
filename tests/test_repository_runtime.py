@@ -225,7 +225,7 @@ def test_changed_source_updates_only_its_own_definition_pointer(manager, hf):
     assert old != new and spec.system_prompt == 'Czech' and '# Keep this' in definition.read_text()
     assert spec.llm_model == Path(new).relative_to(manager.models_dir).as_posix()
     assert parse_model_toml(manager.read_model_definition('snapshot')).llm_model == Path(old).relative_to(manager.models_dir).as_posix()
-    assert Path(old).exists()  # Physical reclamation comes after worker pins.
+    assert Path(old).exists()  # The snapshot alias still references the old group.
 
 
 def test_pull_preserves_a_definition_that_the_user_repointed(manager, hf, tmp_path):
