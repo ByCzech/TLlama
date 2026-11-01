@@ -60,6 +60,14 @@ def main():
         assert report["settings"]["server.port"]["value"] == 54801, report
         assert not (root / "models").exists()
 
+        for operation in (("check",), ("prune",), ("stats",), ("inspect", "absent")):
+            reply = subprocess.run([sys.executable, "-m", "tllama.daemon", "repo",
+                *operation, "--no-config", "--json"], env=env, capture_output=True,
+                text=True, timeout=30)
+            assert reply.returncode == 1, (operation, reply.stdout, reply.stderr)
+            assert not json.loads(reply.stdout)["ok"], reply.stdout
+            assert not (root / "models").exists()
+
         # Exercise the actual ASGI application and version endpoint in process.
         # No listener or native worker is started, and the store stays temporary.
         probe = '''
@@ -72,6 +80,9 @@ async def check():
         reply = await client.get("/api/version")
         assert reply.status_code == 200, reply.text
         assert reply.json() == {"version": get_version()}, reply.text
+        for path in ('/docs', '/redoc', '/openapi.json', '/docs/oauth2-redirect'):
+            reply = await client.get(path)
+            assert reply.status_code == 404, (path, reply.text)
 asyncio.run(check())
 '''
         subprocess.run([sys.executable, "-c", probe], env=env, check=True, timeout=30)
