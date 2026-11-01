@@ -13,18 +13,18 @@ The application retains this Debian README and its standard changelogs.
 Offline repository conversion
 -----------------------------
 
-The optional tllama-doc package also supplies the one-shot converter and its
-guide under /usr/share/doc/tllama-doc/tools/. The Python wheel has no converter
-module or installed conversion command. The documentation package stays
-independent; running the converter requires the matching installed TLlama
-application and its Python dependencies.
+The tllama application package supplies the one-shot converter and its guide
+under /usr/share/doc/tllama/tools/. No tllama-doc installation is needed for
+conversion. The Python wheel has no converter module or installed conversion
+command. The optional documentation package stays independent of Python and
+the native runtime. No maintainer script performs a repository conversion.
 
 Before upgrading an existing model repository, stop every daemon/writer using
 it (including on other hosts), preserve a backup and run as the repository
 service account or another account with deliberate ownership/ACL settings:
 
-  python3 /usr/share/doc/tllama-doc/tools/migrate-repository-v2.py /var/lib/tllama/models
-  python3 /usr/share/doc/tllama-doc/tools/migrate-repository-v2.py /var/lib/tllama/models --apply
+  python3 /usr/share/doc/tllama/tools/migrate-repository-v2.py /var/lib/tllama/models
+  python3 /usr/share/doc/tllama/tools/migrate-repository-v2.py /var/lib/tllama/models --apply
 
 The first command is a read-only preview; --apply changes paths and definitions.
 No conversion runs from package installation/upgrade scripts. If interrupted,
