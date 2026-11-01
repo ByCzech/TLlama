@@ -4,13 +4,20 @@ from pydantic import BaseModel, ConfigDict, StrictBool, StrictStr, Field
 
 
 class DeleteRequest(BaseModel):
-    # Keep ignored extension fields and the historical name-first alias order.
+    # Keep ignored extension fields; each route owns its historical alias order.
     name: StrictStr | None = None
     model: StrictStr | None = None
 
 
 class ShowRequest(DeleteRequest):
     runner: StrictStr | None = None
+
+
+class PullRequest(DeleteRequest):
+    runner: StrictStr | None = None
+    username: StrictStr | None = None
+    password: StrictStr | None = None
+    stream: StrictBool | None = True
 
 
 class CopyRequest(BaseModel):

@@ -1,6 +1,8 @@
 """Malformed management inputs fail before filesystem/network side effects."""
 
 from unittest.mock import AsyncMock
+from types import SimpleNamespace
+import json
 
 import httpx
 import pytest
@@ -29,7 +31,6 @@ async def test_invalid_show_body_never_reads_model_metadata(monkeypatch, payload
     monkeypatch.setattr(ollama.model_manager, 'get_model_metadata', metadata)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test') as client:
         # Explicit null is a JSON value, not HTTPX's missing-body shorthand.
-        import json
         response = await client.post('/api/show', content=json.dumps(payload),
                                      headers={'Content-Type':'application/json'})
     assert response.status_code == 400 and isinstance(response.json()['error'], str)
@@ -69,3 +70,48 @@ async def test_empty_delete_keeps_existing_missing_name_error(monkeypatch, paylo
         response = await client.request('DELETE', '/api/delete', json=payload)
     assert response.status_code == 400 and response.json() == {'error':'Missing model name'}
     delete.assert_not_awaited()
+
+
+@pytest.mark.parametrize('body', [b'[]', b'null', b'{', b'', b'{"model":12}',
+    b'{"name":[]}', b'{"model":"a","username":42}', b'{"model":"a","password":[]}',
+    b'{"model":"a","stream":"false"}', b'{"model":"a","stream":0}',
+    b'{"model":"a","runner":{}}'])
+async def test_invalid_pull_never_resolves_or_contacts_huggingface(monkeypatch, body):
+    from unittest.mock import Mock
+    resolve = Mock(side_effect=AssertionError('invalid input reached repository resolution'))
+    lookup = AsyncMock(side_effect=AssertionError('invalid input reached network'))
+    monkeypatch.setattr(ollama.model_manager, 'resolve_hf_pull_target', resolve)
+    monkeypatch.setattr(ollama.model_manager, 'fetch_hf_file_info', lookup)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test') as client:
+        response = await client.post('/api/pull', content=body, headers={'Content-Type':'application/json'})
+    assert response.status_code == 400 and isinstance(response.json()['error'], str)
+    assert '42' not in response.json()['error']
+    resolve.assert_not_called()
+    lookup.assert_not_awaited()
+
+
+@pytest.mark.parametrize('stream', [False, True, None])
+@pytest.mark.parametrize('alias', ['model', 'name', 'both'])
+async def test_pull_preserves_alias_precedence_token_and_stream_modes(monkeypatch, stream, alias):
+    from unittest.mock import Mock
+    payload = {'stream':stream, 'username':None, 'password':' token ', 'extra':'ignored'}
+    payload[alias if alias != 'both' else 'model'] = ' ns/repo/file.gguf '
+    if alias == 'both':
+        payload['name'] = 'other/repo/file.gguf'
+    resolve = Mock(return_value={'repo_id':'ns/repo','filename':'file.gguf'})
+    lookup = AsyncMock(return_value=SimpleNamespace(status='found',size=10))
+    pull = AsyncMock(return_value='data/hash/weights.gguf')
+    monkeypatch.setattr(ollama.model_manager, 'resolve_hf_pull_target', resolve)
+    monkeypatch.setattr(ollama.model_manager, 'fetch_hf_file_info', lookup)
+    monkeypatch.setattr(ollama.model_manager, 'pull_hf_file', pull)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test') as client:
+        response = await client.post('/api/pull', json=payload)
+    assert response.status_code == 200
+    if stream is False:
+        assert response.json()['status'] == 'success'
+    else:
+        assert response.headers['content-type'].startswith('application/x-ndjson')
+        assert json.loads(response.text.splitlines()[-1])['status'] == 'success'
+    resolve.assert_called_once_with('ns/repo/file.gguf')
+    assert lookup.await_args.kwargs['token'] == 'token'
+    assert pull.await_args.kwargs['token'] == 'token'
