@@ -76,6 +76,62 @@ def snapshot(root):
             for path in root.rglob('*') if path.is_file()}
 
 
+def test_conversion_records_all_original_names_without_splitting_identical_content(tmp_path):
+    root, source, _ = basic(tmp_path)
+    alias = root / 'jiný:Q4%.gguf'
+    alias.write_bytes(source.read_bytes())
+    plan = tool.build_plan(root)
+    result = tool.apply_plan(root, plan)
+    assert result['data_groups'] == 1
+    target = root / plan['mapping']['Local/old.gguf']
+    assert target == root / plan['mapping'][alias.name]
+    assert target.with_suffix('.inf').read_text().splitlines() == ['old.gguf', 'jiný:Q4%.gguf']
+    assert target.parent.name == result['definitions'][0]['id']
+
+
+def test_original_name_with_newline_is_rejected_in_read_only_preflight(tmp_path):
+    root, _, _ = basic(tmp_path)
+    weight(root / 'invalid\nname.gguf', arch='other')
+    before = snapshot(root)
+    with pytest.raises(ValueError, match='single-line basenames'):
+        tool.build_plan(root)
+    assert snapshot(root) == before
+    assert not (root / '.tllama').exists()
+
+
+def test_conversion_records_the_original_name_of_each_shard_and_lora(tmp_path):
+    root = tmp_path / 'models'
+    sources = split(root / 'Local', prefix='Qwen:IQ3%')
+    adapter = weight(root / 'Local' / 'adapter.bin', arch='adapter')
+    define(root, target=sources[0].relative_to(root).as_posix(), extra='[runtime]\nlora_path="Local/adapter.bin"\n')
+    plan = tool.build_plan(root)
+    tool.apply_plan(root, plan)
+    for source in [*sources, adapter]:
+        target = root / plan['mapping'][source.relative_to(root).as_posix()]
+        assert target.with_suffix('.inf').read_text() == source.name + '\n'
+
+
+def test_resume_recovers_original_names_after_cleanup_removed_all_sources(tmp_path, monkeypatch):
+    root, source, _ = basic(tmp_path)
+    atomic = tool.atomic_write
+    def interrupt(root, relative, raw, **kwargs):
+        if relative == tool.MARKER:
+            raise OSError('interrupted before marker')
+        return atomic(root, relative, raw, **kwargs)
+    plan = tool.build_plan(root)
+    with monkeypatch.context() as patch:
+        patch.setattr(tool, 'atomic_write', interrupt)
+        with pytest.raises(OSError, match='interrupted before marker'):
+            tool.apply_plan(root, plan)
+    assert not source.exists()
+    # This represents an older converter with the same journal contract.
+    for companion in (root / 'data').rglob('*.inf'):
+        companion.unlink()
+    assert tool.apply_plan(root, resume=True)['status'] == 'converted'
+    target = root / plan['mapping']['Local/old.gguf']
+    assert target.with_suffix('.inf').read_text() == 'old.gguf\n'
+
+
 def test_preview_is_read_only_and_reports_real_content_identity(tmp_path, capsys):
     root, source, _ = basic(tmp_path)
     before = snapshot(root)
@@ -186,7 +242,7 @@ def test_split_sets_stay_together_and_preserve_group_digest(tmp_path):
     tool.apply_plan(root, plan)
     [directory] = list((root / 'data').iterdir())
     assert directory.name == expected
-    assert {path.name for path in directory.iterdir()} == {
+    assert {path.name for path in directory.glob('*.gguf')} == {
         'weights-00001-of-00002.gguf', 'weights-00002-of-00002.gguf'}
     assert plan['definitions'][0]['id'] == expected
 
