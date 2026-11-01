@@ -5,6 +5,27 @@ identify the source; the complete history retains tests, refactoring and
 intermediate development steps. TLlama application versions
 are independent of the separately packaged `tllama-server` native runtime.
 
+## 1.4.1 — 2026-11-01
+
+### Fixed
+
+- Record original GGUF basenames in optional UTF-8 `.inf` companions, one
+  literal name per line and one companion per shard. Create, pull and offline
+  conversion retain additional names when reusing the same immutable weights.
+  Content-addressed directories, generic GGUF names, model IDs and TOML paths
+  remain unchanged; equal content continues to share a single stored group.
+- Accept corresponding regular companions during publication, reference
+  validation and local checks. Missing companions are normal, with no error or
+  warning. Content hashing and weight sizes exclude them; physical reclamation
+  and local prune remove them along with their unreferenced weight group.
+- Identify the actual failing GGUF path in conversion errors, including orphan
+  files and continuation shards. Progress is printed before inspecting orphans.
+
+No repository-format conversion is needed when upgrading from 1.4.0. Existing
+companions created by the standalone journal backfill tool are accepted. The
+converter can resume old unfinished journals and recover names from their
+recorded source paths. HTTP routes and request/response schemas are unchanged.
+
 ## 1.4.0 — 2026-11-01
 
 ### Added
