@@ -8,6 +8,7 @@ import re
 from tllama.residency import _settle_owned
 from tllama.helpers.metadata_cache import build_model_file_fingerprint, load_digest_cache, save_digest_cache
 from tllama.helpers.repository_files import repository_tempfile
+from tllama.repository_pins import Reservation
 
 
 def blob_path(manager, digest):
@@ -36,6 +37,11 @@ def verified_blob(manager, digest):
 async def receive_blob(manager, digest, request):
     from tllama.repository_runtime import ensure_format
     await _settle_owned(asyncio.create_task(asyncio.to_thread(ensure_format, manager.repository)))
+    async with Reservation(manager.repository, 'upload', paths=['.tllama/uploads']):
+        return await _receive_blob(manager, digest, request)
+
+
+async def _receive_blob(manager, digest, request):
     target = blob_path(manager, digest)
     length = request.headers.get('content-length')
     if length is not None:

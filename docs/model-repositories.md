@@ -136,6 +136,9 @@ data and disk caches remain. Physical reclamation requires the planned worker
 and publication pins across daemons before it can be enabled safely. The
 [implementation contract](repository-v2.md#removal-and-maintenance) describes
 that next step and the separate whole-store maintenance commands.
+Uploads and download/publication jobs already use the shared
+[reservation layer](repository-reservations.md); worker generation ownership
+will follow before reclamation is enabled.
 
 Metadata and measured content digests live under `.tllama/metadata-cache/`.
 Keys use repository-relative physical file paths, validated against size and

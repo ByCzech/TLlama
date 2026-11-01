@@ -4,7 +4,6 @@ import json
 import os
 from pathlib import Path
 import re
-import tempfile
 from functools import wraps
 from hashlib import sha256
 
@@ -16,6 +15,7 @@ from tllama.helpers.repository_files import repository_tempfile
 from tllama.repository_layout import REPOSITORY_FORMAT
 from tllama.repository_names import definition_path, check_portable_collisions
 from tllama.repository_store import prepare_group, sync_directory
+from tllama.repository_pins import temporary_directory
 
 
 MARKER = '.tllama/repository.json'
@@ -79,7 +79,7 @@ def ensure_format(store):
                                       'tools/migrate-repository-v2.py REPOSITORY, then --apply.')
             write_json(store, MARKER, REPOSITORY_FORMAT)
             sync_directory(store.root)
-        for directory in ('Local', 'TLlama', 'HuggingFace', 'data', '.tllama/metadata-cache'):
+        for directory in ('Local', 'TLlama', 'HuggingFace', 'data', '.tllama/metadata-cache', '.tllama/pins'):
             store._directory(directory)
 
 
@@ -241,9 +241,8 @@ def pull_sync(manager, repo_id, filename, token=None, revision=None, progress=No
         def add(self, count):
             progress.add(count)
 
-    staging = manager.repository._directory('.tllama/downloads')
-    with tempfile.TemporaryDirectory(prefix='pull-', dir=staging) as directory:
-        directory = Path(directory)
+    with temporary_directory(manager.repository, parent='.tllama/downloads', prefix='pull-',
+                             purpose='pull') as (directory, pin):
         def download(remote):
             result = Path(hf_hub_download(repo_id=repo_id, filename=remote, revision=revision, token=token,
                                          local_dir=directory,
@@ -258,5 +257,6 @@ def pull_sync(manager, repo_id, filename, token=None, revision=None, progress=No
         sources = [first] + [download(remote) for remote in files[1:]]
         group = prepare_group(sources)
         with manager.repository.lock():
+            pin.update(groups=[group.relative_paths[0].parts[1]])
             paths = manager.repository.publish(group, link_owned=True)
             return register_pull(manager, repo_id, filename, paths, group.metadata[0], group.digests, files)
