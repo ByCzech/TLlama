@@ -20,6 +20,7 @@ from tllama.repository_names import definition_name, check_portable_collisions
 from tllama.repository_pins import Reservation, snapshot
 from tllama.repository_runtime import read_format
 from tllama.repository_store import file_signature
+from tllama.repository_info import validate_group_files
 
 
 _GROUP = re.compile('[0-9a-f]{64}')
@@ -185,11 +186,11 @@ class _Inventory:
                 members = self.children(path, required=True, track=True)
                 if members is None:
                     continue
+                members = [member for member in members if member.name.endswith('.gguf')]
                 names = [member.name for member in members]
                 first = 'weights.gguf' if 'weights.gguf' in names else (names[0] if names else '')
                 expected = _files(first)
-                if names != expected:
-                    raise ValueError('Incomplete or unexpected canonical group file set.')
+                validate_group_files(path, expected)
                 signatures = []
                 for member in members:
                     if member.is_symlink():

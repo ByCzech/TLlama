@@ -50,7 +50,12 @@ Original filenames/locations are treated as literal legacy names: a literal
 `model%3A55b` is distinct from `model:55b`. The converted definition paths use
 the shared percent codec. Weights have canonical names under their content
 addresses; shards remain together in one directory. Definitions refer to the
-first shard. Templates, prompts and model parameters retain their values;
+first shard. Since 1.4.1 the converter also writes optional matching `.inf`
+files, with one original basename per UTF-8 line (not percent encoded). Each
+shard has its own companion; different names for identical content merge in
+the same companion without duplicating weights or name lines. Missing `.inf`
+is normal. No data hashes, model IDs or physical GGUF names change.
+Templates, prompts and model parameters retain their values;
 comments and CRLF line endings are preserved.
 
 The tool also checks that recomputing model identity with the changed paths
@@ -127,3 +132,9 @@ After a successful conversion use the new runtime exclusively. An older
 TLlama binary predating the guard may ignore the format marker; never start
 it on a converted repository. The current runtime validates the explicit
 format-2 marker and never falls back to legacy layout interpretation.
+
+An interrupted conversion started by 1.4.0 can resume with 1.4.1 using the
+same journal and target paths. Original names are recovered from recorded
+source paths even when cleanup has already removed those source files. An
+already completed conversion is not silently rewritten; use the separate
+one-shot backfill tool for such repositories, as needed.

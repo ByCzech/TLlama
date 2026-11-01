@@ -16,6 +16,7 @@ from tllama.helpers.model_toml import parse_model_toml
 from tllama.repository_names import definition_name
 from tllama.repository_pins import snapshot
 from tllama.repository_store import sync_directory
+from tllama.repository_info import info_path
 
 
 logger = logging.getLogger(__name__)
@@ -157,9 +158,13 @@ def _references(store):
 def _plan_group(store, group, files, pins):
     directory = store.root / 'data' / group
     exists = _directory(directory)
-    if exists and not {path.name for path in directory.iterdir()} <= set(files):
+    companion_names = {info_path(PurePosixPath(name)).name for name in files}
+    if exists and not {path.name for path in directory.iterdir()} <= set(files) | companion_names:
         raise ValueError(f'Unexpected files in data/{group}; cleanup skipped.')
     weights = [directory / name for name in files]
+    companions = [info_path(path) for path in weights]
+    for path in companions:
+        _regular(path)
     identities = set()
     for path in weights:
         info = _regular(path)
@@ -182,7 +187,7 @@ def _plan_group(store, group, files, pins):
         _regular(path)
     # Remove staging aliases first: if interrupted after a weight unlink,
     # retry can finish from the durable complete file list without its inode.
-    return (uploads, caches, weights), directory if exists else None
+    return (uploads, caches, companions, weights), directory if exists else None
 
 
 def _remove_group(store, group, files, pins, removed_files):

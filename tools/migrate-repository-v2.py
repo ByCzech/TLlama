@@ -29,6 +29,7 @@ from tllama.helpers.repository_files import repository_tempfile
 from tllama.model_identity import file_group_digest, model_digest, parameter_changes
 from tllama.repository_layout import REPOSITORY_FORMAT
 from tllama.repository_names import definition_path, check_portable_collisions
+from tllama.repository_info import validate_original_name
 from tllama.repository_store import (PreparedGroup, RepositoryStore, file_signature,
     hash_file, prepare_group, sync_directory)
 
@@ -174,6 +175,8 @@ def check_ownership_permissions(owner, relative):
 
 
 def group_record(group, root):
+    for path in group.sources:
+        validate_original_name(path.name)
     return {'sources': [path.relative_to(root).as_posix() for path in group.sources],
             'signatures': [list(value) for value in group.signatures],
             'digests': list(group.digests), 'metadata': list(group.metadata),
@@ -209,13 +212,19 @@ def build_plan(root, *, progress=None):
         raise ValueError('data/ and .tllama/staging must be on the same filesystem for atomic publication.')
     groups, mapping, source_group, group_permissions = [], {}, {}, {}
 
-    def add_group(relative):
+    def inspect_header(relative):
+        if progress is not None:
+            progress(relative)
+        try:
+            return read_gguf_metadata(str(safe_path(root, relative)))
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise ValueError(f'Cannot inspect GGUF {relative}: {exc}') from exc
+
+    def add_group(relative, header=None):
         if relative in source_group:
             return source_group[relative]
         path = safe_path(root, relative)
-        if progress is not None:
-            progress(relative)
-        names = shard_names(path.name, read_gguf_metadata(str(path)))
+        names = shard_names(path.name, inspect_header(relative) if header is None else header)
         paths = [safe_path(root, (path.parent / name).relative_to(root).as_posix()) for name in names]
         group = prepare_group(paths, names=names if len(names) > 1 else ['weights.gguf'], cache_dir=store.cache_dir)
         record = group_record(group, root)
@@ -287,9 +296,9 @@ def build_plan(root, *, progress=None):
     # Include orphan weights, without inventing any model definitions.
     for relative in files['weights']:
         if relative not in source_group:
-            header = read_gguf_metadata(str(safe_path(root, relative)))
+            header = inspect_header(relative)
             if header.get('split.no', 0) == 0:
-                add_group(relative)
+                add_group(relative, header)
     missing = set(files['weights']) - set(mapping)
     if missing:
         raise ValueError(f'Continuation shards have no complete first-shard group: {sorted(missing)}')
@@ -458,6 +467,7 @@ def apply_plan(root, plan=None, *, resume=False):
                 group = prepare_group(paths, cache_dir=store.cache_dir)
                 if list(group.digests) != entry['digests']:
                     raise ValueError('Published group no longer matches the migration journal.')
+                store.record_names(paths, [Path(source).name for source in entry['sources']])
 
         if journal['phase'] == 'publish':
             for directory in ('data', '.tllama/staging', '.tllama/metadata-cache'):
@@ -466,7 +476,8 @@ def apply_plan(root, plan=None, *, resume=False):
             for entry in plan['groups']:
                 paths = tuple(safe_path(root, value) for value in entry['sources'])
                 group = PreparedGroup(paths, tuple(tuple(value) for value in entry['signatures']),
-                                      tuple(entry['digests']), tuple(entry['metadata']))
+                                      tuple(entry['digests']), tuple(entry['metadata']),
+                                      tuple(path.name for path in paths))
                 # Different mounted filesystems inside a repository require a
                 # verified copy; never fall back to an unverified move/unlink.
                 link = all(path.stat().st_dev == root.stat().st_dev for path in paths)
@@ -474,11 +485,12 @@ def apply_plan(root, plan=None, *, resume=False):
                 address = entry['targets'][0]
                 if not entry['preexisting'] and address not in restored_owners:
                     for path, owner in zip(targets, entry['ownership']):
-                        if hasattr(os, 'chown') and ownership(path)[:2] != owner[:2]:
-                            os.chown(path, *owner[:2])
-                            os.chmod(path, owner[2])
-                            with path.open('rb') as handle:
-                                os.fsync(handle.fileno())
+                        for member in (path, path.with_suffix('.inf')):
+                            if hasattr(os, 'chown') and ownership(member)[:2] != owner[:2]:
+                                os.chown(member, *owner[:2])
+                                os.chmod(member, owner[2])
+                                with member.open('rb') as handle:
+                                    os.fsync(handle.fileno())
                     restored_owners.add(address)
             phase('definitions')
         if journal['phase'] == 'definitions':

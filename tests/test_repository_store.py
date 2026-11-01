@@ -59,7 +59,8 @@ def test_shards_are_published_together_with_warm_caches(tmp_path, monkeypatch):
     def publish(source, target):
         assert not Path(target).exists()
         assert {path.name for path in Path(source).iterdir()} == {
-            'weights-00001-of-00002.gguf', 'weights-00002-of-00002.gguf'}
+            'weights-00001-of-00002.gguf', 'weights-00002-of-00002.gguf',
+            'weights-00001-of-00002.inf', 'weights-00002-of-00002.inf'}
         observed.append(Path(target))
         return rename(source, target)
     monkeypatch.setattr('tllama.repository_store.os.rename', publish)

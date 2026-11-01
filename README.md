@@ -59,6 +59,8 @@ Start with the [documentation index](TOC.md), the detailed
 and [packages and platform roadmap](docs/distribution.md).
 TLlama 1.4.0 introduces portable model definitions, content-addressed shared
 GGUF groups, protected physical reclamation and local repository maintenance.
+Version 1.4.1 records original GGUF filenames in optional plain-text `.inf`
+companions, keeping the same stored weights, content addresses and model IDs.
 Existing repositories require the explicit [offline conversion](tools/README.md)
 with all writers stopped. See the [changelog](CHANGELOG.md) for migration,
 coordination requirements and other release changes.
