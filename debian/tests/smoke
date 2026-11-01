@@ -11,10 +11,10 @@ import sys
 import tempfile
 
 
-def run(module, *arguments, env):
+def run(module, *arguments, env, cwd):
     result = subprocess.run(
         [sys.executable, "-m", module, *arguments], env=env,
-        capture_output=True, text=True, timeout=30, check=True,
+        cwd=cwd, capture_output=True, text=True, timeout=30, check=True,
     )
     return result.stdout.strip()
 
@@ -22,14 +22,30 @@ def run(module, *arguments, env):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--expected-version")
+    parser.add_argument("--package-root", type=Path,
+                        help="Unpacked wheel directory selected by pybuild.")
     args = parser.parse_args()
-    version = metadata.version("tllama")
+    if args.package_root is not None:
+        package_root = args.package_root.resolve()
+        assert (package_root / 'tllama/__init__.py').is_file(), (
+            'Missing built TLlama package', str(package_root))
+        sys.path.insert(0, str(package_root))
+    else:
+        package_root = Path(import_module('tllama').__file__).resolve().parent.parent
+    package = import_module('tllama')
+    assert Path(package.__file__).resolve().parent == package_root / 'tllama', (
+        'TLlama imported outside selected package root', package.__file__, str(package_root))
+    distribution = metadata.distribution("tllama")
+    assert Path(distribution.locate_file('tllama')).resolve() == package_root / 'tllama', (
+        'TLlama metadata/code roots differ', str(distribution.locate_file('')), str(package_root))
+    print('TLlama package smoke imports: ' + str(package_root), flush=True)
+    version = distribution.version
     assert version != "0.0.0.dev0", version
     if args.expected_version is not None:
         from packaging.version import Version
         assert version == str(Version(args.expected_version)), (version, args.expected_version)
     scripts = {entry.name: entry.value for entry in
-               metadata.distribution("tllama").entry_points
+               distribution.entry_points
                if entry.group == "console_scripts"}
     assert scripts == {"tllama": "tllama.cli:main", "tllamad": "tllama.daemon:main"}, scripts
     if args.expected_version is None:
@@ -48,21 +64,23 @@ def main():
         env = {name: value for name, value in os.environ.items()
                if not name.startswith("TLLAMA_")}
         env.update(HOME=temporary, XDG_CONFIG_HOME=str(root / "config"),
-                   TLLAMA_MODELS=str(root / "models"))
-        assert run("tllama", "--version", env=env) == "tllama " + version
-        assert run("tllama.daemon", "--version", env=env) == "tllamad " + version
-        assert "HTTP client" in run("tllama", "--help", env=env)
-        assert "--config" in run("tllama.daemon", "--help", env=env)
+                   TLLAMA_MODELS=str(root / "models"), PYTHONPATH=str(package_root))
+        # Python -m/-c searches its CWD before PYTHONPATH. Use a clean temporary
+        # CWD as well as the pinned wheel path, never a checkout/stale build.
+        assert run("tllama", "--version", env=env, cwd=root) == "tllama " + version
+        assert run("tllama.daemon", "--version", env=env, cwd=root) == "tllamad " + version
+        assert "HTTP client" in run("tllama", "--help", env=env, cwd=root)
+        assert "--config" in run("tllama.daemon", "--help", env=env, cwd=root)
         config = root / "server.toml"
         config.write_text('[server]\nhost = "127.0.0.1"\nport = 54801\n', encoding="utf-8")
-        assert run("tllama.daemon", "--config", str(config), "--check-config", env=env) == "Configuration is valid."
-        report = json.loads(run("tllama.daemon", "--config", str(config), "--print-config", env=env))
+        assert run("tllama.daemon", "--config", str(config), "--check-config", env=env, cwd=root) == "Configuration is valid."
+        report = json.loads(run("tllama.daemon", "--config", str(config), "--print-config", env=env, cwd=root))
         assert report["settings"]["server.port"]["value"] == 54801, report
         assert not (root / "models").exists()
 
         for operation in (("check",), ("prune",), ("stats",), ("inspect", "absent")):
             reply = subprocess.run([sys.executable, "-m", "tllama.daemon", "repo",
-                *operation, "--no-config", "--json"], env=env, capture_output=True,
+                *operation, "--no-config", "--json"], env=env, cwd=root, capture_output=True,
                 text=True, timeout=30)
             assert reply.returncode == 1, (operation, reply.stdout, reply.stderr)
             assert not json.loads(reply.stdout)["ok"], reply.stdout
@@ -85,7 +103,7 @@ async def check():
             assert reply.status_code == 404, (path, reply.text)
 asyncio.run(check())
 '''
-        subprocess.run([sys.executable, "-c", probe], env=env, check=True, timeout=30)
+        subprocess.run([sys.executable, "-c", probe], env=env, cwd=root, check=True, timeout=30)
     print("TLlama package smoke passed: " + version)
 
 

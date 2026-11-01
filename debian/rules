@@ -16,7 +16,7 @@ export SETUPTOOLS_SCM_PRETEND_VERSION_FOR_TLLAMA := $(subst ~,,$(DEB_VERSION_UPS
 
 override_dh_auto_test:
 	# Build/install smoke only; the full inference suite is a development check.
-	dh_auto_test -- --system=custom --test-args='PYTHONPATH={build_dir}:$$PYTHONPATH {interpreter} {dir}/debian/tests/smoke --expected-version $(SETUPTOOLS_SCM_PRETEND_VERSION_FOR_TLLAMA)'
+	dh_auto_test -- --system=custom --test-args='{interpreter} "{dir}/debian/tests/smoke" --package-root "{build_dir}" --expected-version $(SETUPTOOLS_SCM_PRETEND_VERSION_FOR_TLLAMA)'
 
 override_dh_installchangelogs:
 	# Preserve documentation links to the upstream filename without a second copy.
