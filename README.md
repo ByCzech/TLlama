@@ -57,11 +57,11 @@ generation, vision, embedding and Decision models.
 Start with the [documentation index](TOC.md), the detailed
 [features and comparison](docs/features.md), [hardware support](docs/hardware.md)
 and [packages and platform roadmap](docs/distribution.md).
-TLlama 1.3.1 corrects complete model-file sizes, portable model-variant IDs
-and public Decision request cancellation. It retains 1.3.0's client image
-attachments, image-aware conversation saves and configurable size limits.
-See the [CLI guide](docs/cli.md#attach-images) and [changelog](CHANGELOG.md)
-for release changes, automatic cache regeneration and upgrade notes.
+TLlama 1.4.0 introduces portable model definitions, content-addressed shared
+GGUF groups, protected physical reclamation and local repository maintenance.
+Existing repositories require the explicit [offline conversion](tools/README.md)
+with all writers stopped. See the [changelog](CHANGELOG.md) for migration,
+coordination requirements and other release changes.
 These pages distinguish implemented features, tested configurations and planned
 distribution work.
 
