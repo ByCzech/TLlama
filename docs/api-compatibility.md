@@ -9,7 +9,7 @@ Ollama, OpenAI or the native server. The default listener is
 
 | Method | Path | Contract |
 | --- | --- | --- |
-| GET, HEAD | `/` | Empty HTTP 200 reachability response |
+| GET, HEAD | `/` | TLlama identity text on GET; body-free HEAD reachability |
 | GET | `/health` | Frontend health; not a loaded-model/kernel qualification |
 | GET, HEAD | `/api/version` | Installed TLlama Python distribution version, or `0.0.0-dev` without metadata |
 | GET, HEAD | `/api/tags` | Registered model definitions and offline GGUF details |
@@ -21,18 +21,22 @@ Ollama, OpenAI or the native server. The default listener is
 | POST | `/api/embeddings` | Legacy single text embedding with native legacy normalization |
 | POST | `/api/pull` | Hugging Face GGUF download, metadata/digest preparation and definition registration |
 | POST | `/api/copy` | Copy a definition while sharing weight files |
-| DELETE | `/api/delete` | Retire workers and delete a definition, retaining weights |
+| DELETE | `/api/delete` | Retire workers, delete a definition and reclaim its unused managed groups |
 | HEAD, POST | `/api/blobs/{digest}` | Immutable SHA-256-checked GGUF upload staging |
 | POST | `/api/create` | TLlama TOML definition creation and uploaded-file import |
 | GET | `/v1/models` | Registered models in OpenAI list shape |
 | POST | `/v1/chat/completions` | Chat, reasoning, modern tools and inline images, full or streamed |
 | POST | `/v1/embeddings` | Pooled vectors, exact local token input, float/base64 and supported media extension |
-| POST | `/v1/systemone` | Text Decision extension; no standard high-level OpenAI/Ollama SDK method |
+| POST | `/v1/systemone` | Text Decision; outside OpenAI, also exposed by current Ollama |
 
 `/v1/responses`, `/v1/completions` and audio routes are not implemented.
 Framework `/docs`, `/redoc` and `/openapi.json` describe the application schema;
 they are not inference APIs. A private worker's `/completion`, `/infill`,
 `/props` or `/tllama/memory` is not automatically a public TLlama route.
+
+Repository maintenance is local through `tllamad repo check`; there is no public
+`/api/repo/*` route or `tllama repo` HTTP client command. Additions to the public
+HTTP API require prior agreement with the maintainer.
 
 ## Generation and chat
 

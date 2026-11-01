@@ -5,8 +5,8 @@ format-2 runtime are implemented. See [model-repositories.md](model-repositories
 for current usage and [the converter](../tools/README.md) for upgrades.
 The [reservation layer](repository-reservations.md) now protects uploads and
 download/publication jobs and worker generation snapshots across cooperating
-daemons. Targeted physical reclamation is implemented; whole-store maintenance
-remains the next stage.
+daemons. Targeted physical reclamation and local `tllamad repo check` are
+implemented; explicit local prune/inspect/stats follow separately.
 
 ## Definitions and data
 
@@ -123,10 +123,18 @@ Upgrade/restart every daemon sharing the repository before using a version
 with physical reclamation. Older daemons and external readers without the
 reservation protocol cannot be detected by filesystem locks.
 
-Whole-store `repo prune` is separate, with a preview and explicit apply.
-`repo check` checks definitions, groups and optionally full hashes;
-`repo inspect`/`repo stats` explain sharing, orphans and reclaimable data.
-These are TLlama extensions with clear unsupported-server errors.
+The local daemon command `tllamad repo check` checks definitions, complete
+groups, headers, caches, reservations and the deferred cleanup queue. Optional
+`--hashes` independently verifies the content address of each valid group.
+Checks never initialize storage, refresh caches, drain pending cleanup or
+remove stale metadata. Full reads use a temporary reservation outside the
+global lock, released without triggering GC. Concurrent changes are reported.
+See [daemon commands](daemon.md#local-repository-integrity-check).
+
+Whole-store `tllamad repo prune` is planned separately, with preview and explicit
+apply. Local inspect/stats will explain sharing, orphans and reclaimable data.
+Repository maintenance does not add public HTTP endpoints or client commands.
+Public API expansion requires explicit prior agreement with the maintainer.
 
 Basic `rm` must also work against Ollama: accept a successful empty HTTP
 response, warn once per command on stderr that the server is probably Ollama,

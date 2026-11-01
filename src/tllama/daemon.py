@@ -15,11 +15,28 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="tllamad", description="TLlama server.")
     parser.add_argument("--version", action="version", version=f"tllamad {get_version()}")
     add_daemon_options(parser)
+    commands = parser.add_subparsers(dest='command')
+    repository = commands.add_parser('repo', help='Local model repository maintenance; no HTTP connection.')
+    operations = repository.add_subparsers(dest='repo_operation', required=True)
+    check = operations.add_parser('check', help='Read-only check of the local model repository.')
+    selection = check.add_mutually_exclusive_group()
+    selection.add_argument('--config', default=argparse.SUPPRESS, metavar='PATH', help='Server TOML file.')
+    selection.add_argument('--no-config', action='store_true', default=argparse.SUPPRESS,
+                           help='Ignore server TOML selection and discovery.')
+    check.add_argument('--models-dir', dest='storage.models_dir', default=argparse.SUPPRESS,
+                       metavar='PATH', help='Local model repository path (overrides server configuration).')
+    check.add_argument('--hashes', action='store_true', help='Independently read and verify full GGUF contents.')
+    check.add_argument('--json', action='store_true', help='Print the full check report as JSON.')
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.config and args.no_config:
+        parser.error('--config and --no-config cannot be combined')
+    if args.command == 'repo' and (args.check_config or args.print_config or args.list_devices):
+        parser.error('repo check cannot be combined with configuration/device inspection flags')
     from tllama.config import ConfigError
 
     try:
@@ -27,6 +44,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         overrides = {key: value for key, value in vars(args).items() if '.' in key}
         config = load_daemon_config(False if args.no_config else args.config, overrides,
                                     discover=not args.no_config)
+        if args.command == 'repo':
+            from tllama.repository_check_cli import run_check
+            return run_check(config.backend.models_dir, hashes=args.hashes, as_json=args.json)
         if args.list_devices:
             from tllama.daemon_devices import list_devices
             return list_devices(config.values['engine.executable'])

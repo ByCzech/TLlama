@@ -173,6 +173,12 @@ while daemons are stopped, but later hashing can read the full weights again.
 Source records are bookkeeping distinct from these regenerable caches.
 See [metadata-cache.md](metadata-cache.md).
 
+Run `tllamad repo check [--hashes] [--json]` locally on the repository machine
+to inspect integrity without repair or cleanup. This one-shot daemon command
+does not start/contact HTTP or load a model. It reads the configured local
+`storage.models_dir`, overridden by `--models-dir`. See
+[local integrity checks](daemon.md#local-repository-integrity-check).
+
 ## File permissions
 
 Files are created by the **daemon account**, including requests sent from a CLI

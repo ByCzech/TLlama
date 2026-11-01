@@ -52,7 +52,7 @@ def build_parser() -> argparse.ArgumentParser:
         ('ps', [], 'Show resident models and reported memory placement.'),
         ('version', [], 'Show client and server versions.'),
         ('pull', [], 'Download a Hugging Face model through the server.'),
-        ('rm', [], 'Delete model definitions; keep their weight files.'),
+        ('rm', [], 'Delete definitions and reclaim their unused managed weights.'),
         ('stop', [], 'Request unload after active inference leases drain.'),
         ('run', [], 'Run a model with a prompt, stdin, or an interactive session.'),
         ('cp', [], 'Copy a model definition; share existing weight files.'),

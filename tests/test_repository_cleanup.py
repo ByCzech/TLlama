@@ -40,7 +40,7 @@ def text_for(path, projector=None, lora=None):
 @pytest.fixture
 def repo(manager, tmp_path):
     def publish(arch='llama', count=1, upload=False):
-        sources = [gguf_file(tmp_path / f'{arch}-{i}.gguf', arch=arch,
+        sources = [gguf_file(tmp_path / (f'{arch}-{i+1:05d}-of-{count:05d}.gguf' if count > 1 else f'{arch}.gguf'), arch=arch,
                             shard=i if count > 1 else None, count=count if count > 1 else None)
                    for i in range(count)]
         if upload:

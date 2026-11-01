@@ -138,15 +138,18 @@ class RepositoryStore:
             self._mutex.release()
 
     @contextmanager
-    def lock(self, *, timeout=30):
+    def lock(self, *, timeout=30, create=True):
         """Reentrant per instance/thread, exclusive across cooperating writers.
 
         OS locks are released on process exit. Never delete/replace the lock
         file: another process might still hold its original inode open.
         Run synchronous transactions in an owned I/O thread, not the event loop.
+        create=False requires existing control/lock files for read-only audits.
         """
         if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout < 0:
             raise ValueError('Repository lock timeout must be finite and nonnegative.')
+        if type(create) is not bool:
+            raise ValueError('Repository lock create flag must be boolean.')
         deadline = time.monotonic() + timeout
         with self._thread_lock(timeout):
             if self._depth:
@@ -156,11 +159,13 @@ class RepositoryStore:
                 finally:
                     self._depth -= 1
                 return
-            directory = self._directory('.tllama')
+            directory = self._directory('.tllama') if create else self.root / '.tllama'
+            if directory.is_symlink() or not directory.is_dir():
+                raise ValueError('Repository control directory is missing or symlinked.')
             path = directory / 'repository.lock'
             if path.is_symlink():
                 raise ValueError('Repository lock must not be a symlink.')
-            fd = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, 'O_NOFOLLOW', 0)
+            fd = os.open(path, os.O_RDWR | (os.O_CREAT if create else 0) | getattr(os, 'O_NOFOLLOW', 0)
                          | getattr(os, 'O_BINARY', 0), 0o666)
             try:
                 if not stat.S_ISREG(os.fstat(fd).st_mode):
@@ -168,6 +173,8 @@ class RepositoryStore:
                 if os.name == 'nt':
                     import msvcrt
                     if os.fstat(fd).st_size == 0:
+                        if not create:
+                            raise ValueError('Repository lock byte is missing.')
                         os.write(fd, b'\0')
                     def acquire():
                         os.lseek(fd, 0, os.SEEK_SET)

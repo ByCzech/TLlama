@@ -19,6 +19,9 @@ Existing environments need their console scripts regenerated after this change
 checkout can use the module commands immediately. The daemon accepts server TOML
 and CLI settings with `CLI > environment > TOML > defaults`; see
 [daemon configuration](daemon.md) for all options and inspection commands.
+Repository maintenance is local: use `tllamad repo check [--hashes] [--json]`
+on the machine containing the repository. It has no HTTP endpoint and no
+corresponding `tllama` client command; see [local integrity checks](daemon.md#local-repository-integrity-check).
 
 ## Repository format
 
@@ -202,7 +205,10 @@ the server's existing downloader thread is not guaranteed to stop immediately.
 The client completes cleanup of the HTTP decoding chain before returning,
 including success, malformed progress and early termination.
 
-`rm` deletes definitions on the selected server and leaves weight files on disk.
+`rm` deletes definitions on the selected server and reclaims their unused managed
+groups/cache. Other definitions and live reservations protect shared/busy groups.
+Cleanup warnings and deferrals go to stderr, including with `--json`; successful
+definition removal retains exit status zero.
 It also accepts Ollama's successful empty DELETE response. In that case the
 client warns once per command on stderr that the server is probably Ollama;
 it still exits successfully and `--json` prints a normalized

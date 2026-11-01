@@ -240,7 +240,10 @@ shared `data/<group-sha256>/` storage. Complete split-GGUF groups are supported.
 Without `from`, use the exact managed data path from an existing definition.
 Creation writes the definition after validation; it does not load or convert
 the model. Copying definitions shares weights. Default conflicts require
-explicit `--force`. Removing a definition retains weight files.
+explicit `--force`. Removing a definition reclaims only its unused managed
+groups; other definitions and worker/publication reservations protect shared
+or busy weights. Use the local command `tllamad repo check` to check integrity
+without cleanup; `--hashes` independently verifies full weight content addresses.
 
 Existing repositories require the one-time offline [format-2 conversion](tools/README.md).
 Local additions use `create`; `rebuildrepo` has been removed. See [model-repositories.md](docs/model-repositories.md) and

@@ -89,7 +89,7 @@ def test_removed_rebuildrepo_is_rejected_without_touching_store(tmp_path):
     store = tmp_path / 'absent'
     result = run_module('tllama.daemon', 'rebuildrepo', '--dryrun', models_dir=store)
     assert result.returncode == 2
-    assert 'unrecognized arguments' in result.stderr
+    assert 'rebuildrepo' in result.stderr and ('unrecognized arguments' in result.stderr or 'invalid choice' in result.stderr)
     assert not store.exists()
 
 

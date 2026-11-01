@@ -176,7 +176,10 @@ class Reservation:
             from tllama.repository_cleanup import collect_pending
             collect_pending(self.store)
 
-    def close(self):
+    def close(self, *, retry_cleanup=True):
+        """Release ownership; read-only auditors opt out of deferred GC."""
+        if type(retry_cleanup) is not bool:
+            raise ValueError('Reservation cleanup flag must be boolean.')
         self._check_owner()
         with self.store.lock():
             if self._fd is None:
@@ -194,8 +197,9 @@ class Reservation:
             sync_directory(self.path.parent)
             # A definition may have disappeared while this owner was still
             # using its snapshot. Only durable targeted candidates are retried.
-            from tllama.repository_cleanup import collect_pending
-            collect_pending(self.store)
+            if retry_cleanup:
+                from tllama.repository_cleanup import collect_pending
+                collect_pending(self.store)
 
     def __enter__(self):
         return self.acquire()

@@ -24,6 +24,49 @@ process environment. Invalid configuration exits 2 with a diagnostic on stderr.
 `--check-config` checks the configuration contract; runtime availability and
 model/device compatibility are checked when actually used.
 
+## Local repository integrity check
+
+```sh
+tllamad repo check
+tllamad repo check --hashes --json
+tllamad repo check --models-dir /var/lib/tllama/models --hashes
+tllamad --config server.toml repo check --json
+```
+
+This is a one-shot **local filesystem command**, not a request to a running
+daemon. Run it on the machine/filesystem containing the model repository,
+with the intended repository account's permissions. It neither starts nor
+contacts an HTTP server and does not start a native worker. The ordinary
+server configuration selects `storage.models_dir`; `--models-dir` overrides
+it. `--config`/`--no-config` and `--models-dir` work before `repo` or after
+`check`. Configuration/device inspection modes cannot be combined with it.
+
+The default checks portable definitions and references, complete managed shard
+groups and GGUF headers, path-cache identities, reservations and the deferred
+cleanup queue. `--hashes` additionally reads every valid group's bytes and
+independently verifies its content address, ignoring digest caches. It holds
+a temporary reservation during long reads instead of the global repository
+lock. Concurrent definition/data changes make the report incomplete.
+
+The command performs no repair, cache refresh, pending cleanup, stale-record
+removal or storage initialization. Only full hashing's temporary coordination
+pin changes; it is released without triggering deferred GC. Immediate staging
+entries are inventoried without traversing active download jobs. A missing or
+unknown repository/control state is reported, never created or reinterpreted.
+
+Exit status is 0 for a complete report without integrity errors, 1 for errors
+or incomplete inspection, 2 for invalid CLI/configuration, and 130 for Ctrl+C.
+Regenerable caches, stale/retained records and valid orphan groups are warnings.
+Unknown protection prevents labeling groups as orphans. `--json` prints the
+complete version-1 report; human output lists issues. Ctrl+C is cooperative:
+chunked byte reads stop and pin release finishes before returning.
+
+Reports are diagnostic snapshots, not authorization for subsequent deletion.
+A future local `prune --apply` must perform fresh reference/pin checks under
+the repository lock through unlink. No `tllama repo` command or public
+`/api/repo/*` endpoint is installed. HTTP API expansion requires prior agreement
+with the maintainer; repository maintenance remains local.
+
 ## Sources and file selection
 
 For global settings: **CLI > environment > server TOML > defaults**.
