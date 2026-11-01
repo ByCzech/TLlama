@@ -44,6 +44,33 @@ def basic(tmp_path):
     return root, source, definition
 
 
+@pytest.mark.parametrize('interrupted', [False, True])
+def test_conversion_finishes_all_empty_runtime_directories_before_marker(tmp_path, monkeypatch, interrupted):
+    from tllama.repository_check import check_repository
+    from tllama.repository_inspect import inspect_repository
+    root, _, _ = basic(tmp_path)
+    if interrupted:
+        original = tool.ensure_directory
+        def fail_pins(root, relative, **kwargs):
+            if relative == '.tllama/pins':
+                raise PermissionError('injected final-directory failure')
+            return original(root, relative, **kwargs)
+        with monkeypatch.context() as patch:
+            patch.setattr(tool, 'ensure_directory', fail_pins)
+            with pytest.raises(PermissionError):
+                tool.apply_plan(root, tool.build_plan(root))
+        assert not (root / tool.MARKER).exists()
+        tool.apply_plan(root, resume=True)
+    else:
+        tool.apply_plan(root, tool.build_plan(root))
+    for relative in ('Local', 'TLlama', 'HuggingFace', '.tllama/pins'):
+        assert (root / relative).is_dir()
+    before = snapshot(root)
+    assert check_repository(RepositoryStore(root))['ok']
+    assert inspect_repository(RepositoryStore(root))['ok']
+    assert snapshot(root) == before
+
+
 def snapshot(root):
     return {path.relative_to(root).as_posix(): (path.read_bytes(), path.stat().st_mtime_ns)
             for path in root.rglob('*') if path.is_file()}

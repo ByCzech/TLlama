@@ -554,6 +554,11 @@ def apply_plan(root, plan=None, *, resume=False):
                 except OSError as exc:
                     if exc.errno not in {errno.ENOENT, errno.ENOTEMPTY, errno.EEXIST}:
                         raise
+            # The marker commits a complete current-format store, including
+            # empty definition branches and reservation state. Local read-only
+            # maintenance must work before the first daemon initialization.
+            for relative in (*AREAS, '.tllama/pins'):
+                ensure_directory(root, relative)
             atomic_write(root, MARKER, json_bytes(REPOSITORY_FORMAT), mode=None)
             phase('complete')
         return report(plan, 'converted')
