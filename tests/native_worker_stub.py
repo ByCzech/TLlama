@@ -56,6 +56,7 @@ USAGE = {"prompt_tokens": 25, "completion_tokens": 10, "total_tokens": 35,
 
 # Opt-in lifecycle fixture; all existing stub protocols retain their behavior.
 LIFECYCLE = os.environ.get("STUB_LIFECYCLE")
+LIFECYCLE_REQUESTS = set()
 if LIFECYCLE == "invalid-timeout" and Path(arg("--model")).name == "invalid-model.gguf":
     MODE = "hang-load"
 SLEEPING = False
@@ -717,6 +718,8 @@ async def fim_request(reader, writer, path, body):
 
 async def handle(reader, writer):
     global HEALTH_READS
+    if LIFECYCLE:
+        LIFECYCLE_REQUESTS.add(asyncio.current_task())
     try:
         request = await reader.readline()
         if not request:
@@ -866,6 +869,10 @@ async def handle(reader, writer):
             if mode == "hold":
                 mark("started", "stream")
                 await reader.read()
+                if LIFECYCLE == 'delayed-close':
+                    # Reproduce scheduling delay between receiving EOF and
+                    # recording cancellation, especially just before SIGTERM.
+                    await asyncio.sleep(0.05)
                 mark("cancelled", "stream")
                 return
             if mode == 'controlled':
@@ -911,6 +918,8 @@ async def handle(reader, writer):
             await writer.wait_closed()
         except ConnectionError:
             pass
+        finally:
+            LIFECYCLE_REQUESTS.discard(asyncio.current_task())
 
 
 async def main():
@@ -988,7 +997,19 @@ async def main():
     else:
         print("Loading model", flush=True)
     async with server:
-        await server.serve_forever()
+        if LIFECYCLE and os.name == 'posix':
+            # The supervisor closes transports before sending SIGTERM. Let
+            # those handlers record received EOF before exiting, rather than
+            # racing process death against the cancellation evidence file.
+            stopped = asyncio.Event()
+            loop = asyncio.get_running_loop()
+            loop.add_signal_handler(signal.SIGTERM, stopped.set)
+            await stopped.wait()
+            server.close()
+            await server.wait_closed()
+            await asyncio.wait_for(asyncio.gather(*LIFECYCLE_REQUESTS), timeout=1)
+        else:
+            await server.serve_forever()
 
 
 if __name__ == "__main__":

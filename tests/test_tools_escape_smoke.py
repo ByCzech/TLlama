@@ -14,6 +14,7 @@ from test_native_memory_locality import extended
 from test_native_weight_storage import weights
 from test_native_tensor_diagnostics import diagnosed
 from tllama.worker import WorkerError
+from repository_fixtures import repository_snapshot
 
 
 api = runpy.run_path(str(SCRIPT.with_name('tools-api-smoke.py')))
@@ -31,6 +32,7 @@ api = runpy.run_path(str(SCRIPT.with_name('tools-api-smoke.py')))
 ])
 def test_focused_capture_uses_same_native_response_and_preserves_failures(tmp_path, diagnosed, fault, ok, protocol, diagnosis):
     root, models, executable, env, definition = setup_files(tmp_path, diagnosed, 'tools')
+    before = repository_snapshot(models.parent)
     env['STUB_TOOLS_DEBUG'] = fault
     command = [sys.executable, str(SCRIPT), *arguments(tmp_path, 'tools-escape',
         '--executable', str(executable), '--transport', 'tcp', '--load-timeout', '5', '--request-timeout', '5')]
@@ -57,6 +59,7 @@ def test_focused_capture_uses_same_native_response_and_preserves_failures(tmp_pa
     assert all(row['ok'] for row in rows if row['stage'] in {'worker-cleanup', 'worker-exit'})
     assert len([row for row in rows if row['stage'] == 'qualification-memory']) == 2
     assert (models / 'a.toml').read_text() == definition
+    assert repository_snapshot(models.parent) == before
     requests = [json.loads(line)['body'] for line in (root / 'requests').read_text().splitlines()
                 if json.loads(line)['path'] == '/v1/chat/completions']
     assert len(requests) == len(debug)

@@ -138,7 +138,7 @@ async def test_cancel_requires_real_content_not_only_metadata():
 
 
 @pytest.mark.parametrize('mode,expected', [
-    ('normal', None), ('stale-sleep', 'sleeping:raw'), ('no-sleep', 'TimeoutError'),
+    ('normal', None), ('delayed-close', None), ('stale-sleep', 'sleeping:raw'), ('no-sleep', 'TimeoutError'),
     ('wake-no-sequence', 'awakened:raw'), ('accept-invalid', 'failed-replacement'),
     ('invalid-timeout', 'failed-replacement'),
     ('wrong-build', 'Unsupported runtime fingerprint'), ('no-memory', 'initial-ready:http'),
