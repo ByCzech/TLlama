@@ -14,6 +14,8 @@ tllama (1.4.0-1) unstable; urgency=medium
   * Extend the package smoke with disabled-docs and local repository commands.
   * Pin the unpacked wheel path for the package smoke and run subprocesses
     from a temporary directory so old CWD packages cannot shadow built code.
+  * Discard TLlama bytecode in the explicit build root before smoke imports;
+    test stale unchecked-hash and colliding timestamp caches separately.
 
  -- NemaChybu team APT archive <maintainers@nemachybu.cz>  Sun, 01 Nov 2026 12:00:00 +0100
 

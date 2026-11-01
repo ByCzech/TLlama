@@ -128,6 +128,9 @@ pybuild supplies its unpacked wheel root explicitly. The smoke checks that
 package code and distribution metadata belong to that root, pins it for child
 imports and runs all Python probes from a temporary working directory.
 An old package in the invocation directory cannot shadow the built application.
+For an explicit build root it discards package .pyc caches before importing
+TLlama, so a stale timestamp/unchecked-hash cache cannot override current source.
+Installed-package/autopkgtest mode does not delete installed bytecode caches.
 DEB_BUILD_OPTIONS=nocheck / DEB_BUILD_PROFILES=nocheck can skip it in the usual
 Debian way. The full development pytest suite is separate. The same smoke is
 registered as an autopkgtest and checks installed metadata, entry points,
