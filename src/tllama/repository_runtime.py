@@ -16,6 +16,7 @@ from tllama.repository_layout import REPOSITORY_FORMAT
 from tllama.repository_names import definition_path, check_portable_collisions
 from tllama.repository_store import prepare_group, sync_directory
 from tllama.repository_pins import temporary_directory
+from tllama.repository_info import validate_group_files
 
 
 MARKER = '.tllama/repository.json'
@@ -128,8 +129,8 @@ def require_data_reference(manager, value):
         raise FileNotFoundError(f'Managed data file does not exist: {value}')
     names = shard_names(result.name, read_gguf_metadata(str(result)))
     group = prepare_group([result.parent / name for name in names], cache_dir=manager.metadata_cache_dir)
-    if (group.relative_paths[0].as_posix() != value
-            or {item.name for item in result.parent.iterdir()} != set(names)):
+    validate_group_files(result.parent, names)
+    if group.relative_paths[0].as_posix() != value:
         raise ValueError('Managed data group does not match its content address or complete file set.')
     return result
 
@@ -152,6 +153,7 @@ def read_origin(manager, repo_id, filename):
 
 def register_pull(manager, repo_id, filename, paths, metadata, digests, source_files):
     """Called with the repository lock, after whole-group publication."""
+    manager.repository.record_names(paths, [Path(remote).name for remote in source_files])
     relative = paths[0].relative_to(manager.repository.root).as_posix()
     index = read_origin(manager, repo_id, filename)
     warnings = []

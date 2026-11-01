@@ -29,6 +29,24 @@ they include weights, projector/adapter and non-default parameters. Copying a
 definition shares files; identical uploads/downloads reuse complete groups.
 Published data is immutable and existing groups are verified before reuse.
 
+### Optional original filenames
+
+Each managed GGUF can have a companion with the same basename and `.inf`
+extension: `weights.inf` or `weights-00001-of-NNNNN.inf`. Its contents are
+plain UTF-8, one original basename per line. Names are literal, without percent
+encoding. Each shard records its own original names. Uploads and pulls merge
+new names, including reuse of an existing group, without duplicating lines.
+
+Missing companions are normal and produce no error or warning. Companions
+never enter weight hashes, public IDs, or weight-size accounting. Check and
+publication accept the matching regular companions; unrelated entries and
+symlinks are still refused. Removing the last definition or pruning an unused
+group also removes its companions. Copies continue to share the same weights
+and companions. A definition-only create/copy cannot invent lost filenames.
+
+The content-addressed directories, generic weight names and TOML references
+are unchanged from 1.4.0. No repository-format migration is necessary.
+
 ### Portable definition names
 
 Public names keep their spelling. Physical definition components selectively

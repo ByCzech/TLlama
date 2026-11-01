@@ -25,6 +25,7 @@ from tllama.helpers.gguf_metadata import build_model_metadata_payload
 from tllama.helpers.metadata_cache import (build_model_file_fingerprint,
     load_digest_cache, load_metadata_cache, save_digest_cache, save_metadata_cache)
 from tllama.repository_layout import group_paths
+from tllama.repository_info import append_original_names, validate_original_name, validate_group_files
 
 
 def file_signature(path):
@@ -67,6 +68,7 @@ class PreparedGroup:
     signatures: tuple[tuple, ...]
     digests: tuple[str, ...]
     metadata: tuple[dict, ...]
+    names: tuple[str, ...] = ()
 
     @property
     def relative_paths(self):
@@ -88,6 +90,8 @@ def prepare_group(paths, *, names=None, cache_dir=None):
     if len(names) != len(sources) or any(not isinstance(name, str) or '/' in name
             or '\\' in name or not name.lower().endswith('.gguf') for name in names):
         raise ValueError('Group input names must be plain GGUF basenames.')
+    for name in names:
+        validate_original_name(name)
     signatures = tuple(file_signature(path) for path in sources)
     headers = validate_group(names, sources)
     digests = tuple(measured_digest(path, cache_dir) for path in sources)
@@ -95,7 +99,7 @@ def prepare_group(paths, *, names=None, cache_dir=None):
                      or build_model_metadata_payload(header) for path, header in zip(sources, headers))
     if signatures != tuple(file_signature(path) for path in sources):
         raise ValueError('Weight group changed during preparation.')
-    return PreparedGroup(sources, signatures, digests, metadata)
+    return PreparedGroup(sources, signatures, digests, metadata, tuple(names))
 
 
 def sync_directory(path):
@@ -216,8 +220,7 @@ class RepositoryStore:
         directory = paths[0].parent
         if directory.is_symlink() or not directory.is_dir():
             raise ValueError('Existing group is not a regular repository directory.')
-        if {path.name for path in directory.iterdir()} != {path.name for path in paths}:
-            raise ValueError('Existing data group has an incomplete or unexpected file set.')
+        validate_group_files(directory, [path.name for path in paths])
         if any(path.is_symlink() for path in paths):
             raise ValueError('Existing data group contains a symlink.')
         signatures = tuple(file_signature(path) for path in paths)
@@ -226,6 +229,16 @@ class RepositoryStore:
             raise ValueError('Existing data group does not match its content address.')
         if signatures != tuple(file_signature(path) for path in paths):
             raise ValueError('Existing data group changed during verification.')
+
+    def record_names(self, paths, names):
+        """Merge provenance even when a pull reuses an already published group."""
+        if not names:
+            return
+        if len(paths) != len(names):
+            raise ValueError('Original names must match the complete weight group.')
+        with self.lock():
+            for path, name in zip(paths, names):
+                append_original_names(path, [name])
 
     def publish(self, group, *, link_owned=False):
         """Publish a prepared group atomically; never overwrite an existing one.
@@ -248,7 +261,7 @@ class RepositoryStore:
                 temporary = staging_root / ('group-' + secrets.token_hex(16))
                 temporary.mkdir()
                 try:
-                    for source, target, digest in zip(group.sources, paths, group.digests):
+                    for number, (source, target, digest) in enumerate(zip(group.sources, paths, group.digests)):
                         staged = temporary / target.name
                         if link_owned:
                             if not source.resolve().is_relative_to(self.root):
@@ -270,6 +283,8 @@ class RepositoryStore:
                             shutil.copystat(source, staged, follow_symlinks=False)
                             with staged.open('rb') as copied:
                                 os.fsync(copied.fileno())
+                        if group.names:
+                            append_original_names(staged, [group.names[number]])
                     self._check_sources(group)
                     sync_directory(temporary)
                     os.rename(temporary, paths[0].parent)
@@ -278,6 +293,7 @@ class RepositoryStore:
                 finally:
                     if temporary.exists():
                         shutil.rmtree(temporary)
+            self.record_names(paths, group.names)
             self._directory('.tllama/metadata-cache')
             for path, digest, metadata in zip(paths, group.digests, group.metadata):
                 fingerprint = build_model_file_fingerprint(path)

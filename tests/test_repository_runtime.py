@@ -283,7 +283,7 @@ def test_pull_completes_shards_and_rechecks_every_remote_member(manager, hf):
     second = hf.add('split/model-00002-of-00002.gguf', shard=1, count=2)
     progress = PullProgress()
     path = Path(manager._pull_hf_file_sync('ns/repo', 'split/model-00001-of-00002.gguf', progress=progress))
-    assert sorted(p.name for p in path.parent.iterdir()) == ['weights-00001-of-00002.gguf', 'weights-00002-of-00002.gguf']
+    assert sorted(p.name for p in path.parent.glob('*.gguf')) == ['weights-00001-of-00002.gguf', 'weights-00002-of-00002.gguf']
     assert progress.snapshot() == (len(first) + len(second),) * 2
     assert len(hf.calls) == 2
     assert manager._pull_hf_file_sync('ns/repo', 'split/model-00001-of-00002.gguf') == str(path)

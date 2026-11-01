@@ -29,7 +29,7 @@ def test_default_preview_lists_exact_paths_and_does_not_touch_any_repository_ent
     report = prune_repository(repo.repository)
     assert report['ok'] and report['can_apply'] and not report['apply']
     assert report['candidates'][0]['group'] == data.group
-    expected = {path.relative_to(repo.models_dir).as_posix() for path in [*data.paths, *data.blobs, *data.caches]
+    expected = {path.relative_to(repo.models_dir).as_posix() for path in [*data.paths, *(path.with_suffix('.inf') for path in data.paths), *data.blobs, *data.caches]
                 if path.exists()}
     assert set(report['candidates'][0]['remove_paths']) == expected
     assert report['removed_files'] == [] and report['removed_groups'] == []
