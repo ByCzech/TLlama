@@ -10,6 +10,29 @@ Install tllama-doc when local guides or examples are wanted. It is suggested
 by tllama, not required, and does not depend on Python or the native runtime.
 The application retains this Debian README and its standard changelogs.
 
+Offline repository conversion
+-----------------------------
+
+The optional tllama-doc package also supplies the one-shot converter and its
+guide under /usr/share/doc/tllama-doc/tools/. The Python wheel has no converter
+module or installed conversion command. The documentation package stays
+independent; running the converter requires the matching installed TLlama
+application and its Python dependencies.
+
+Before upgrading an existing model repository, stop every daemon/writer using
+it (including on other hosts), preserve a backup and run as the repository
+service account or another account with deliberate ownership/ACL settings:
+
+  python3 /usr/share/doc/tllama-doc/tools/migrate-repository-v2.py /var/lib/tllama/models
+  python3 /usr/share/doc/tllama-doc/tools/migrate-repository-v2.py /var/lib/tllama/models --apply
+
+The first command is a read-only preview; --apply changes paths and definitions.
+No conversion runs from package installation/upgrade scripts. If interrupted,
+keep writers stopped and follow the guide's --resume procedure. Input may be
+from TLlama older than 1.3.1; obsolete caches can be regenerated. Review
+ownership/access before starting upgraded daemons. The new runtime refuses a
+nonempty unconverted store rather than interpreting its names automatically.
+
 The tllama package installs both /usr/bin/tllama (client) and /usr/bin/tllamad
 (foreground daemon), using the system Python. It depends on tllama-server,
 whose metapackage supplies the private native runtime and CPU backend. Install
