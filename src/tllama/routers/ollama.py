@@ -247,16 +247,10 @@ async def pull_model_ollama(request: Request):
             local_path = await model_manager.pull_hf_file(
                 repo_id=target_info["repo_id"],
                 filename=target_info["filename"],
-                token=hf_token,
+                token=hf_token, file_info=hf_file_info,
             )
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
-
-        if await model_manager.store_hf_digest(local_path, hf_file_info) is None:
-            await model_manager.get_model_digest(local_path)
-
-        metadata = await model_manager.ensure_metadata_cache_for_path(local_path)
-        await model_manager.ensure_virtual_model_toml(local_path, metadata)
 
         return JSONResponse({
             "status": "success",
@@ -276,7 +270,7 @@ async def pull_model_ollama(request: Request):
                 repo_id=target_info["repo_id"],
                 filename=target_info["filename"],
                 token=hf_token,
-                progress=progress,
+                progress=progress, file_info=hf_file_info,
             )
         )
 
@@ -302,37 +296,11 @@ async def pull_model_ollama(request: Request):
                 yield ollama_stream_error_line(str(e))
                 return
         finally:
-            # A client that disconnects mid-download (GeneratorExit) must not
-            # leave this task dangling and unretrieved. The underlying thread
-            # is not forcibly interrupted -- asyncio.to_thread offers no such
-            # thing -- but the task itself is cleaned up promptly instead of
-            # lingering until the transfer happens to finish on its own.
+            # The owned worker joins download/publication before cancellation
+            # returns, so shutdown cannot race a late write to the repository.
             if not download_task.done():
                 download_task.cancel()
-
-        if await model_manager.store_hf_digest(local_path, hf_file_info) is None:
-            # The published digest was unusable. Hash the file here, while it
-            # is still warm, rather than leaving the cost to a later listing.
-            yield json.dumps({"status": "computing sha256 digest"}) + "\n"
-
-            if await model_manager.get_model_digest(local_path) is None:
-                yield json.dumps({"status": "digest unavailable"}) + "\n"
-
-        yield json.dumps({"status": "creating metadata cache"}) + "\n"
-
-        metadata = await model_manager.ensure_metadata_cache_for_path(local_path)
-        if metadata is None:
-            yield json.dumps({"status": "metadata cache unavailable"}) + "\n"
-        else:
-            yield json.dumps({"status": "metadata cache ready"}) + "\n"
-
-        # Without this the bytes are on disk and nothing can see them: a
-        # .gguf no .toml points at is not a model as far as any listing or
-        # load is concerned.
-        if await model_manager.ensure_virtual_model_toml(local_path, metadata) is None:
-            yield json.dumps({"status": "no model definition written"}) + "\n"
-        else:
-            yield json.dumps({"status": "model definition ready"}) + "\n"
+            await asyncio.gather(download_task, return_exceptions=True)
 
         yield json.dumps({
             "status": "success",

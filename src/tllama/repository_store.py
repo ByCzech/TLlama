@@ -1,6 +1,6 @@
 """Transactional publication of immutable, content-addressed GGUF groups.
 
-Shared by the future format-2 runtime and the offline migration tool. Merely
+Shared by the format-2 runtime and the offline migration tool. Merely
 constructing a store or preparing inputs does not create or change any file.
 All cooperating writers must use the repository lock. Locks require a backing
 filesystem that implements cross-process (and, when shared, cross-host) locks.

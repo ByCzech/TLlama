@@ -56,14 +56,14 @@ assert 'llama_cpp' not in sys.modules
 
 
 @pytest.mark.parametrize('module', ['tllama.daemon'])
-def test_repository_command_runs_with_binding_imports_blocked(tmp_path, module):
+def test_configuration_check_runs_with_binding_imports_blocked(tmp_path, module):
     result = run_without_binding(f'''
 import runpy
-sys.argv = ['tllama', 'rebuildrepo', '--dryrun']
+sys.argv = ['tllama', '--check-config']
 runpy.run_module({module!r}, run_name='__main__')
 ''', tmp_path)
     assert result.returncode == 0, result.stderr
-    assert 'Nothing was written.' in result.stdout
+    assert 'Configuration is valid.' in result.stdout
 
 
 @pytest.mark.parametrize('field,variable', [('kv_cache_type','TLLAMA_KV_CACHE_TYPE'),

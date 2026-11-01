@@ -3,7 +3,6 @@ import asyncio
 import logging
 import threading
 from contextlib import asynccontextmanager
-import shutil
 import itertools
 
 from dataclasses import dataclass
@@ -20,15 +19,16 @@ from tllama.helpers.model_toml import (
     TomlModelError,
     VirtualModelSpec,
     parse_model_toml,
-    render_model_toml,
     resolve_repo_relative_path,
-    write_model_toml,
 )
 from tllama.helpers.runtime_params import coerce_runtime_overrides
 from tllama.helpers.sampling_params import coerce_sampling_overrides
 from tllama.native_config import resolve_worker_config
 from tllama.native_params import freeze_values
 from tllama.model_artifacts import ModelArtifacts, gguf_files
+from tllama.repository_store import RepositoryStore
+from tllama.repository_names import definition_path, definition_name, encode_component
+from tllama.repository_runtime import destination, repository_operation
 from tllama.model_identity import file_group_digest, model_digest, parameter_changes
 from tllama.residency import NativeResidency, ModelDefinition, ResidencyClosed, _settle_owned
 from tllama.worker import NativeWorker
@@ -166,6 +166,7 @@ class ModelManager:
 
         self.models_dir = Path(self.config.models_dir)
         self.metadata_cache_dir = self.models_dir / ".tllama" / "metadata-cache"
+        self.repository = RepositoryStore(self.models_dir)
 
         self._janitor_task: asyncio.Task | None = None
 
@@ -315,18 +316,11 @@ class ModelManager:
         build, a one-off script. It also needed write access to that path
         before the process had done anything.
 
-        Called from start(), so a running server behaves exactly as before.
+        Called from start(); empty stores initialize in the current format,
+        while legacy repositories require the explicit offline converter.
         """
-        from tllama.repository_transition import require_legacy_repository
-        require_legacy_repository(self.models_dir)
-        for directory in (
-            self.models_dir,
-            self.metadata_cache_dir,
-            self.hf_models_dir,
-            self.local_models_dir,
-            self.tllama_models_dir,
-        ):
-            directory.mkdir(parents=True, exist_ok=True)
+        from tllama.repository_runtime import ensure_format
+        ensure_format(self.repository)
 
 
     def resolve_keep_alive(self, keep_alive: str | int | float | None) -> int | None:
@@ -374,18 +368,9 @@ class ModelManager:
         Returns None for a reference with more than 3 segments -- a .toml
         never sits deeper than that, so there is nowhere to look.
         """
-        parts = self._split_model_reference(model_ref)
-
-        if len(parts) == 1:
-            base_dir = self.local_models_dir
-        elif len(parts) == 2:
-            base_dir = self.tllama_models_dir
-        elif len(parts) == 3:
-            base_dir = self.hf_models_dir
-        else:
+        if isinstance(model_ref, str) and len(model_ref.split('/')) > 3:
             return None
-
-        return base_dir.joinpath(*parts[:-1], f"{parts[-1]}.toml")
+        return self.models_dir / definition_path(model_ref)
 
     def _resolve_virtual_model_spec(self, model_ref: str) -> Optional[VirtualModelSpec]:
         """Parse the .toml for model_ref, if one exists at its fixed depth.
@@ -573,10 +558,7 @@ class ModelManager:
                 digest = self._build_model_digest_sync(file_path)
                 if before != build_model_file_fingerprint(file_path):
                     continue
-                try:
-                    name = self._build_model_ref_from_path(file_path)
-                except ValueError:
-                    name = str(file_path)
+                name = str(file_path)
                 save_digest_cache(self.metadata_cache_dir, name, file_path, digest, fingerprint=before)
                 return digest
         except Exception as exc:
@@ -820,369 +802,6 @@ class ModelManager:
 
         return metadata
 
-    # Where a .toml sits inside each repository (spec doc §5). The .gguf
-    # it names may live at any depth; these numbers constrain only the
-    # .toml itself, which is what gives a model its name.
-    _TOML_DEPTH_BY_REPOSITORY = (
-        ("local_models_dir", 1),
-        ("tllama_models_dir", 2),
-        ("hf_models_dir", 3),
-    )
-
-    def _toml_location_for_model_file(self, file_path: Path) -> Optional[Path]:
-        """The directory a .toml naming this .gguf has to sit in.
-
-        A HuggingFace repository puts its files wherever its uploader felt
-        like -- bartowski files quantisations into subdirectories,
-        ggml-org leaves shards in the root -- and that is an organisational
-        habit with no protocol meaning. The .toml's own depth is fixed
-        regardless, so the name a model gets does not depend on how the
-        uploader arranged their repository. That separation is the point of
-        the indirection.
-
-        None when the file sits too shallow to be named at all: a .gguf
-        directly inside HuggingFace/ has no namespace and repository to
-        take a name from.
-        """
-        for attribute, depth in self._TOML_DEPTH_BY_REPOSITORY:
-            repo_dir = getattr(self, attribute)
-            if not file_path.is_relative_to(repo_dir):
-                continue
-
-            parts = file_path.relative_to(repo_dir).parts
-            if len(parts) < depth:
-                return None
-
-            return repo_dir.joinpath(*parts[: depth - 1])
-
-        return None
-
-    def _allocate_toml_path(self, directory: Path, stem: str, target_rel: str) -> "tuple[Optional[Path], bool]":
-        """Pick the .toml path for a model, avoiding an existing name.
-
-        Returns (path, already_defined). already_defined is True when a
-        .toml for this exact file was found: pulling the same model twice
-        must not leave a second definition behind, and the path is still
-        returned so a caller that means to replace it knows which one.
-
-        Two files in one HuggingFace repository can share a basename when
-        the uploader sorted quantisations into subdirectories, and the
-        .toml's fixed depth flattens both onto the same name. Rare --
-        quantisation is normally in the filename -- but the generator has
-        to survive it rather than silently overwrite one with the other, so
-        the second one becomes <name>_01.
-
-        That numbering answers a name held by a readable definition of some
-        other model. A candidate that will not parse gets an error instead:
-        it may well be this model's own definition, broken, and stepping
-        around it would answer a mistake in a file with a second file, the
-        very duplicate the numbering exists to prevent. The person is told
-        which file and why, and fixes it.
-        """
-        for candidate in self._iter_candidate_toml_paths(directory, stem):
-            if not candidate.exists():
-                return candidate, False
-
-            try:
-                existing = parse_model_toml(
-                    candidate.read_text(encoding="utf-8"), source=str(candidate)
-                )
-            except (TomlModelError, OSError) as exc:
-                raise TomlModelError(
-                    f"Cannot place a .toml for {target_rel}: {candidate} "
-                    f"cannot be read and may be this model's own definition "
-                    f"({exc})."
-                ) from exc
-
-            if existing.llm_model == target_rel:
-                return candidate, True
-
-        raise TomlModelError(
-            f"Cannot place a .toml for {target_rel}: {stem} and its numbered "
-            f"variants are all taken in {directory}."
-        )
-
-    def _iter_candidate_toml_paths(self, directory: Path, stem: str):
-        yield directory / f"{stem}.toml"
-        for suffix in range(1, 100):
-            yield directory / f"{stem}_{suffix:02d}.toml"
-
-    def _ensure_virtual_model_toml_sync(
-        self,
-        model_path: str | Path,
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> Optional[Path]:
-        """Give a physical model file a .toml, so that it is a model.
-
-        A .gguf nothing points at is not listed and cannot be loaded (spec
-        doc §3), which means a pull that only fetches bytes produces
-        nothing usable. This is what closes that gap.
-
-        Returns None, without writing anything, when the file is not a
-        model in its own right:
-
-        - a projector, which belongs to a model rather than being one
-        - a continuation shard, which is part of one file split across
-          several and is picked up automatically by llama.cpp from the
-          first shard alone
-        - a file too shallow in its repository to be named
-        - a file that already has a .toml
-
-        Never raises for an ordinary failure to write: a pull that fetched
-        several gigabytes successfully must not be reported as failed
-        because a small text file could not be created afterwards.
-        """
-        file_path = Path(model_path).resolve()
-        metadata = metadata or {}
-
-        if metadata.get("is_projector"):
-            logger.debug("No .toml for %s: it is a projector, not a model", file_path)
-            return None
-
-        if metadata.get("is_continuation_shard"):
-            logger.debug(
-                "No .toml for %s: shard %s of %s, named by its first shard",
-                file_path, metadata.get("shard_index"), metadata.get("shard_count"),
-            )
-            return None
-
-        directory = self._toml_location_for_model_file(file_path)
-        if directory is None:
-            logger.warning(
-                "No .toml for %s: it sits too shallow in its repository to be named",
-                file_path,
-            )
-            return None
-
-        try:
-            target_rel = str(file_path.relative_to(self.models_dir.resolve()))
-        except ValueError:
-            logger.warning("No .toml for %s: outside the model repository", file_path)
-            return None
-
-        stem = self._strip_gguf_suffix(file_path.name)
-
-        try:
-            toml_path, already_defined = self._allocate_toml_path(directory, stem, target_rel)
-            if already_defined:
-                return None
-
-            text = render_model_toml(target_rel, metadata=metadata)
-            write_model_toml(toml_path, text)
-        except Exception as exc:
-            logger.warning("Could not write a .toml for %s: %s", file_path, exc)
-            return None
-
-        logger.info("Created %s for %s", toml_path, file_path)
-        return toml_path
-
-    def _iter_repository_gguf_files(self):
-        """Every .gguf on disk, at any depth, in all three repositories.
-
-        Weights may sit anywhere because their TOML definitions need not
-        sit beside them. Every GGUF counts when finding unregistered files.
-        """
-        for attribute, _ in self._TOML_DEPTH_BY_REPOSITORY:
-            repo_dir = getattr(self, attribute)
-            if not repo_dir.exists():
-                continue
-
-            for file_path in sorted(repo_dir.rglob("*.gguf")):
-                if file_path.is_file():
-                    yield file_path
-
-    def rebuild_repository(
-        self,
-        *,
-        force: bool = False,
-        overwrite_backups: bool = False,
-        dry_run: bool = False,
-    ) -> List[Dict[str, Any]]:
-        """Give every .gguf on disk a .toml, so that every one is a model.
-
-        Explicitly run, never on startup: a repository quietly rewriting
-        itself when a service restarts is not something anyone asked for,
-        and the decision about what is a model belongs to whoever owns the
-        files.
-
-        Not only a one-off migration. Copying a .gguf into Local/ by hand
-        leaves it invisible for the same reason a pull without a .toml did,
-        so this is the answer to that too, and it is safe to run at any
-        time: without force it only adds files that were not there.
-
-        force replaces a definition that already exists. Whatever a person
-        wrote into it -- an uncommented n_ctx, a [system].prompt, their own
-        comments -- is kept as a .toml.bak alongside it, unconditionally:
-        anyone reaching for force is thinking about what they want to gain,
-        not about what they are about to lose, and would only think to ask
-        for the copy once it was already too late to make one.
-
-        A copy that already exists is not replaced by another one. Running
-        force twice used to overwrite the .toml.bak with a copy of the
-        generated file, so the second run destroyed the only thing
-        protecting against the first -- and the longer a mistake went
-        unnoticed, the less was left to recover. Those files are skipped
-        instead, one by one rather than as an abort, so everything without
-        a backup is still done. overwrite_backups says the copy is
-        expendable; on its own it is not a licence to replace anything,
-        and does nothing without force.
-
-        Returns one entry per file describing what was done or would be,
-        so a caller can report it without repeating the reasoning.
-        """
-        inventory: List[Any] = []
-        results: List[Dict[str, Any]] = []
-
-        for file_path in self._iter_repository_gguf_files():
-            try:
-                metadata = self._get_model_metadata_sync(str(file_path)) or {}
-            except Exception as exc:
-                # A header that will not parse is not a reason to stop:
-                # the rest of the repository is still worth doing.
-                results.append({
-                    "file": file_path,
-                    "action": "skip",
-                    "toml": None,
-                    "reason": f"unreadable GGUF header ({exc})",
-                })
-                continue
-
-            inventory.append((file_path, metadata))
-
-        # Everything is read before anything is written, so a model can be
-        # told about a projector sitting beside it. Deriving that from a
-        # filename would be cheaper and would also be a guess; this is
-        # what the repository actually contains.
-        projectors = self._projectors_by_directory(inventory)
-
-        for file_path, metadata in inventory:
-            results.append(
-                self._rebuild_one(
-                    file_path,
-                    metadata,
-                    projectors=projectors,
-                    force=force,
-                    overwrite_backups=overwrite_backups,
-                    dry_run=dry_run,
-                )
-            )
-
-        return results
-
-    def _projectors_by_directory(self, inventory) -> Dict[Path, List[Path]]:
-        """Where the projectors are, grouped by the directory holding them.
-
-        Deliberately not repository-wide. A projector is converted
-        alongside the model it belongs to, so offering one from an
-        unrelated repository would be noise a person has to recognise and
-        dismiss.
-        """
-        found: Dict[Path, List[Path]] = {}
-
-        for file_path, metadata in inventory:
-            if metadata.get("is_projector"):
-                found.setdefault(file_path.parent, []).append(file_path)
-
-        return found
-
-    def _suggested_projector(
-        self, file_path: Path, projectors: Dict[Path, List[Path]]
-    ) -> Optional[str]:
-        """The one projector beside this model, if there is exactly one.
-
-        Two of them is not a suggestion but a question, and a generated
-        configuration file is not the place to ask it.
-        """
-        candidates = projectors.get(file_path.parent) or []
-        if len(candidates) != 1:
-            return None
-
-        try:
-            return str(candidates[0].resolve().relative_to(self.models_dir.resolve()))
-        except ValueError:
-            return None
-
-    def _rebuild_one(
-        self,
-        file_path: Path,
-        metadata: Dict[str, Any],
-        *,
-        projectors: Optional[Dict[Path, List[Path]]] = None,
-        force: bool,
-        overwrite_backups: bool = False,
-        dry_run: bool,
-    ) -> Dict[str, Any]:
-        def outcome(action, toml=None, reason=""):
-            return {"file": file_path, "action": action, "toml": toml, "reason": reason}
-
-        if metadata.get("is_projector"):
-            return outcome("skip", reason="projector, belongs to a model")
-
-        if metadata.get("is_continuation_shard"):
-            return outcome(
-                "skip",
-                reason=f"shard {metadata.get('shard_index')} of {metadata.get('shard_count')}",
-            )
-
-        directory = self._toml_location_for_model_file(file_path)
-        if directory is None:
-            return outcome("skip", reason="too shallow in its repository to be named")
-
-        try:
-            target_rel = str(file_path.resolve().relative_to(self.models_dir.resolve()))
-            toml_path, already_defined = self._allocate_toml_path(
-                directory, self._strip_gguf_suffix(file_path.name), target_rel
-            )
-        except (TomlModelError, ValueError) as exc:
-            return outcome("skip", reason=str(exc))
-
-        if already_defined and not force:
-            return outcome("skip", toml_path, "already defined")
-
-        backup_path = toml_path.with_name(toml_path.name + ".bak")
-
-        # Ahead of the dry run rather than beside the copy itself: a dry
-        # run that promises an overwrite the real run refuses is worse
-        # than no dry run at all, because it is consulted precisely by
-        # someone deciding whether to go ahead.
-        if already_defined and backup_path.exists() and not overwrite_backups:
-            return outcome(
-                "skip",
-                toml_path,
-                f"{backup_path.name} already exists; it holds what was "
-                "replaced last time and would be lost. Move it aside, or "
-                "pass --overwrite-backups to say it is expendable",
-            )
-
-        action = "overwrite" if already_defined else "create"
-
-        if dry_run:
-            return outcome(action, toml_path, "")
-
-        try:
-            if already_defined:
-                shutil.copy2(toml_path, backup_path)
-
-            text = render_model_toml(
-                target_rel,
-                metadata=metadata,
-                suggested_mmproj=self._suggested_projector(file_path, projectors or {}),
-            )
-            write_model_toml(toml_path, text, overwrite=already_defined)
-        except Exception as exc:
-            return outcome("skip", toml_path, f"could not write ({exc})")
-
-        return outcome(action, toml_path, "")
-
-    async def ensure_virtual_model_toml(
-        self,
-        model_path: str | Path,
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> Optional[Path]:
-        return await asyncio.to_thread(
-            self._ensure_virtual_model_toml_sync, model_path, metadata
-        )
-
     def _model_artifacts(self, spec, target_path, source, *, metadata=None):
         projector = self.resolve_mmproj_path(spec, str(source))
         adapter = ()
@@ -1352,15 +971,11 @@ class ModelManager:
             await self._native.expire()
 
     def _split_model_reference(self, model_ref: str) -> List[str]:
-        cleaned = (model_ref or "").strip().strip("/")
-        parts = [part.strip() for part in cleaned.split("/") if part.strip()]
-
-        if not parts:
-            raise ValueError("Empty model reference")
-
-        if any(part in {".", ".."} for part in parts):
+        if not isinstance(model_ref, str) or not model_ref or model_ref != model_ref.strip():
             raise ValueError("Invalid model reference")
-
+        parts = model_ref.split('/')
+        for part in parts:
+            encode_component(part)
         return parts
 
     def resolve_hf_pull_target(self, model_ref: str) -> Dict[str, Any]:
@@ -1379,84 +994,26 @@ class ModelManager:
         filename_parts[-1] = self._normalize_pull_filename(filename_parts[-1])
         filename = "/".join(filename_parts)
 
-        target_path = self.hf_models_dir.joinpath(namespace, repo, *filename_parts)
-
         return {
-            "model_ref": "/".join(parts),
-            "namespace": namespace,
-            "repo": repo,
-            "repo_id": f"{namespace}/{repo}",
-            "filename": filename,
-            "target_dir": target_path.parent,
-            "target_path": target_path,
+            "model_ref": "/".join(parts), "namespace": namespace, "repo": repo,
+            "repo_id": f"{namespace}/{repo}", "filename": filename,
+            "definition_name": f"{namespace}/{repo}/" + self._strip_gguf_suffix(filename_parts[-1]),
         }
 
-    def _pull_hf_file_sync(
-        self,
-        repo_id: str,
-        filename: str,
-        token: str | None = None,
-        revision: str | None = None,
-        progress: "PullProgress | None" = None,
-    ) -> str:
+    def _pull_hf_file_sync(self, repo_id, filename, token=None, revision=None, progress=None, file_info=None):
+        from tllama.repository_runtime import pull_sync
         try:
-            from huggingface_hub import hf_hub_download
-        except ImportError as e:
-            raise RuntimeError(
-                "huggingface_hub is not installed. Install it to enable HuggingFace pulls."
-            ) from e
-
-        namespace, repo = repo_id.split("/", 1)
-        target_root = self.hf_models_dir / namespace / repo
-        target_root.mkdir(parents=True, exist_ok=True)
-
-        tqdm_class = _hf_tqdm_class_for(progress) if progress is not None else None
-
-        try:
-            return hf_hub_download(
-                repo_id=repo_id,
-                filename=filename,
-                revision=revision,
-                token=token,
-                local_dir=target_root,
-                tqdm_class=tqdm_class,
-            )
-        except ValueError as e:
-            # huggingface_hub decides to use the Xet backend by checking
-            # whether the hf_xet *package metadata* is present, then only
-            # tries the actual `import hf_xet` once it has already committed
-            # to that path. A package whose compiled extension does not
-            # match the running interpreter (seen in practice: a .so built
-            # for the free-threaded 3.13t ABI installed under plain 3.13)
-            # is "present" but not importable, and surfaces here as a
-            # ValueError with no indication that a plain HTTP download
-            # would have worked fine.
-            if "Xet storage" in str(e):
-                raise RuntimeError(
-                    f"{e} This repository uses Xet storage and the installed "
-                    "hf_xet package cannot actually be imported (check "
-                    "`python3 -c \"import hf_xet\"` in this server's "
-                    "environment). Set HF_HUB_DISABLE_XET=1 to fall back to "
-                    "a regular HTTP download until hf_xet is fixed."
-                ) from e
+            return pull_sync(self, repo_id, filename, token, revision, progress, file_info)
+        except ImportError as exc:
+            raise RuntimeError("huggingface_hub is not installed. Install it to enable HuggingFace pulls.") from exc
+        except ValueError as exc:
+            if "Xet storage" in str(exc):
+                raise RuntimeError(f"{exc} Set HF_HUB_DISABLE_XET=1 if the installed hf_xet cannot be imported.") from exc
             raise
 
-    async def pull_hf_file(
-        self,
-        repo_id: str,
-        filename: str,
-        token: str | None = None,
-        revision: str | None = None,
-        progress: "PullProgress | None" = None,
-    ) -> str:
-        return await asyncio.to_thread(
-            self._pull_hf_file_sync,
-            repo_id,
-            filename,
-            token,
-            revision,
-            progress,
-        )
+    async def pull_hf_file(self, repo_id, filename, token=None, revision=None, progress=None, file_info=None):
+        return await _settle_owned(asyncio.create_task(asyncio.to_thread(
+            self._pull_hf_file_sync, repo_id, filename, token, revision, progress, file_info)))
 
     def _fetch_hf_file_info_sync(
         self,
@@ -1470,8 +1027,8 @@ class ModelManager:
 
         The LFS oid is the sha256 of the file contents and is still published
         for Xet-backed repositories, where the Xet hash is an additional field
-        rather than a replacement. This lets a pull record the digest without
-        reading the downloaded file back.
+        rather than a replacement. These claims can avoid a repeat download
+        when they match an already locally verified, complete data group.
 
         Only an empty answer from a repository that did reply is reported as
         MISSING. Anything else, including every error, is UNKNOWN, so a
@@ -1526,65 +1083,6 @@ class ModelManager:
             revision,
         )
 
-    async def store_hf_digest(
-        self,
-        model_path: str | Path,
-        hf_file_info: Optional["HfFileLookup"],
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Record a digest taken from HuggingFace for a freshly pulled file.
-
-        HuggingFace publishes the sha256, but hf_hub_download only verifies a
-        download against the expected size, so the value is a claim about the
-        bytes rather than a measurement of them. The size is checked before
-        the claim is accepted; on mismatch nothing is stored and the digest is
-        computed locally on next use.
-
-        The stored source is "hf" precisely so that a later verification can
-        tell a claimed digest from a measured one.
-        """
-        if hf_file_info is None or hf_file_info.status != HF_LOOKUP_FOUND:
-            return None
-
-        sha256_hex = hf_file_info.sha256
-        expected_size = hf_file_info.size
-
-        if not sha256_hex or expected_size is None:
-            return None
-
-        file_path = Path(model_path)
-
-        try:
-            actual_size = file_path.stat().st_size
-        except OSError as exc:
-            logger.warning("Cannot stat %s for digest recording: %s", file_path, exc)
-            return None
-
-        if actual_size != expected_size:
-            logger.warning(
-                "Size mismatch for %s (published %s, on disk %s); "
-                "digest will be computed locally",
-                file_path, expected_size, actual_size,
-            )
-            return None
-
-        digest = {"content_sha256": sha256_hex, "source": "hf"}
-
-        try:
-            model_name = self._build_model_ref_from_path(file_path)
-        except ValueError:
-            model_name = str(file_path)
-
-        await asyncio.to_thread(
-            save_digest_cache,
-            self.metadata_cache_dir,
-            model_name,
-            file_path,
-            digest,
-        )
-
-        return digest
-
     def _normalize_pull_filename(self, filename: str) -> str:
         cleaned = (filename or "").strip()
         if not cleaned:
@@ -1610,6 +1108,7 @@ class ModelManager:
 
             current = current.parent
 
+    @repository_operation
     def delete_model_definition(self, model_ref: str) -> Dict[str, Any]:
         """Delete a model by deleting its definition, and only that.
 
@@ -1632,10 +1131,7 @@ class ModelManager:
         that never moved. Only the in-memory entry keyed by the model's
         name is dropped, because that name no longer refers to anything.
         """
-        toml_path = self._toml_path_for_reference(model_ref)
-
-        if toml_path is None:
-            raise ValueError(f"Not a model name this repository can hold: {model_ref}")
+        toml_path = destination(self, model_ref)
 
         if not toml_path.is_file():
             raise FileNotFoundError(f"Model not found: {model_ref}")
@@ -1678,24 +1174,6 @@ class ModelManager:
     def _strip_gguf_suffix(self, value: str) -> str:
         return value[:-5] if value.lower().endswith(".gguf") else value
 
-    def _build_relative_ref_without_suffix(self, base_dir: Path, file_path: Path) -> str:
-        rel = file_path.relative_to(base_dir)
-        parts = list(rel.parts)
-        parts[-1] = self._strip_gguf_suffix(parts[-1])
-        return "/".join(parts)
-
-    def _build_model_ref_from_path(self, file_path: Path) -> str:
-        if file_path.is_relative_to(self.hf_models_dir):
-            return self._build_relative_ref_without_suffix(self.hf_models_dir, file_path)
-
-        if file_path.is_relative_to(self.local_models_dir):
-            return self._build_relative_ref_without_suffix(self.local_models_dir, file_path)
-
-        if file_path.is_relative_to(self.tllama_models_dir):
-            return self._build_relative_ref_without_suffix(self.tllama_models_dir, file_path)
-
-        raise ValueError(f"File path is outside known model repositories: {file_path}")
-
     def _iter_repository_toml_files(self):
         """Yield .toml files that name a virtual model.
 
@@ -1720,22 +1198,7 @@ class ModelManager:
                     yield file_path
 
     def _build_virtual_model_ref_from_toml_path(self, toml_path: Path) -> str:
-        if toml_path.is_relative_to(self.hf_models_dir):
-            base_dir = self.hf_models_dir
-        elif toml_path.is_relative_to(self.local_models_dir):
-            base_dir = self.local_models_dir
-        elif toml_path.is_relative_to(self.tllama_models_dir):
-            base_dir = self.tllama_models_dir
-        else:
-            raise ValueError(f"File path is outside known model repositories: {toml_path}")
-
-        rel = toml_path.relative_to(base_dir)
-        parts = list(rel.parts)
-        name = parts[-1]
-        if name.lower().endswith(".toml"):
-            name = name[:-5]
-        parts[-1] = name
-        return "/".join(parts)
+        return definition_name(toml_path.relative_to(self.models_dir).as_posix())
 
     def _read_metadata_for_path(self, file_path: Path) -> Dict[str, Any]:
         """Metadata for a file, from the on-disk cache when it is there.

@@ -56,15 +56,15 @@ def test_bad_config_fails_cleanly_and_no_config_ignores_environment_selection(tm
     assert result.returncode == 0 and result.stdout == 'Configuration is valid.\n'
 
 
-def test_maintenance_uses_daemon_configured_store(tmp_path):
+def test_configuration_inspection_leaves_configured_store_untouched(tmp_path):
     file = tmp_path / 'server.toml'
     store = tmp_path / 'configured'
     file.write_text(f'[storage]\nmodels_dir="{store}"\n')
     result = subprocess.run([sys.executable, '-m', 'tllama.daemon', '--config', str(file),
-                             'rebuildrepo', '--dryrun'], env=environment(tmp_path),
+                             '--check-config'], env=environment(tmp_path),
                             capture_output=True, text=True, timeout=20)
     assert result.returncode == 0, result.stderr
-    assert (store / 'Local').is_dir()
+    assert not store.exists()
 
 
 @pytest.mark.parametrize('reload', [False, True])

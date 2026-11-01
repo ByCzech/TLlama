@@ -236,14 +236,14 @@ tllama create my-model -f model.toml
 
 Relative `from` paths use the client's **CWD**, including when the TOML is
 elsewhere. Model and optional projector files are uploaded into the server's
-`Local` storage. Complete split-GGUF groups are supported. Without `from`, use
-`model = "Local/existing.gguf"` to reference an existing repository file.
+shared `data/<group-sha256>/` storage. Complete split-GGUF groups are supported.
+Without `from`, use the exact managed data path from an existing definition.
 Creation writes the definition after validation; it does not load or convert
 the model. Copying definitions shares weights. Default conflicts require
 explicit `--force`. Removing a definition retains weight files.
 
-For manually copied weights, `tllamad rebuildrepo --dryrun` previews missing
-definitions. See [model-repositories.md](docs/model-repositories.md) and
+Existing repositories require the one-time offline [format-2 conversion](tools/README.md).
+Local additions use `create`; `rebuildrepo` has been removed. See [model-repositories.md](docs/model-repositories.md) and
 [configuration.md](docs/configuration.md).
 
 ## APIs and model modes

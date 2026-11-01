@@ -5,12 +5,10 @@ format 2. It is a one-time administration tool, outside the installed Python
 package and console commands. The source distribution includes it so Debian
 can ship it in the documentation package; the Python wheel does not.
 
-**Development sequence:** this patch introduces the converter and a daemon
-startup guard. The ordinary runtime still uses the legacy layout. You can
-inspect a real repository now, but do not apply the conversion to a repository
-you need to serve until the following format-2 runtime patch is installed.
-The current daemon refuses converted or partially converted repositories.
-Tests and copies of a repository may exercise the complete apply/resume path.
+The ordinary daemon now requires format 2. Empty stores initialize automatically;
+existing unmarked stores must be converted explicitly while all writers are
+stopped. The final marker is written only after successful publication,
+definition changes and cleanup. Incomplete conversions block daemon startup.
 
 ## Requirements and preview
 
@@ -61,12 +59,17 @@ cache contained an incorrect remote digest claim, that claim is not preserved.
 
 ## Apply and recover
 
-Once the format-2 runtime patch is available, stop **every daemon using this
-repository**, including daemons on other hosts, and keep all other writers
+Stop **every daemon using this repository**, including daemons on other hosts, and keep all other writers
 stopped until conversion completes. The old runtime does not participate in
 the new repository lock, so a lock cannot automatically stop an old daemon.
 Run as the repository service account or another deliberately chosen account
-with suitable access. No command below starts or stops services for you.
+with suitable access. When converting as an administrator for a different
+service account, ensure that account can subsequently write the newly created
+`data/`, definition directories, metadata cache and `.tllama/repository.lock`
+through the intended owner/group/ACL policy. Private migration backups and the
+journal may remain administrator-only. Running as the service account avoids
+creating administrator-owned runtime files. No command below starts or stops
+services for you.
 
 ```sh
 python3 tools/migrate-repository-v2.py /var/lib/tllama/models --apply
@@ -122,5 +125,5 @@ unrecognized leftover control files before retrying.
 
 After a successful conversion use the new runtime exclusively. An older
 TLlama binary predating the guard may ignore the format marker; never start
-it on a converted repository. The guard in this patch is replaced by normal
-format-2 validation when the runtime switch is delivered.
+it on a converted repository. The current runtime validates the explicit
+format-2 marker and never falls back to legacy layout interpretation.

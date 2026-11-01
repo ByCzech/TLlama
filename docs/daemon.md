@@ -13,10 +13,9 @@ tllamad --config server.toml --check-config
 tllamad --config server.toml --print-config
 tllamad --config server.toml --device Vulkan0 --port 54801
 tllamad --no-config --models-dir ./models --log-level debug
-tllamad --config server.toml rebuildrepo --dryrun
 ```
 
-Daemon options precede the maintenance subcommand. `--help` and `--version`
+`--help` and `--version`
 do not read server configuration or import the application. Inspection exits
 without importing FastAPI, creating storage, discovering GPUs, or loading a
 model. `--print-config` emits JSON with each effective value and its source;

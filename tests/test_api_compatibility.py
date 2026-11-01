@@ -175,31 +175,6 @@ def test_root_head_probe_has_get_headers_without_a_body(client):
     assert response.headers["content-length"] == str(len(get.content))
 
 
-@pytest.mark.parametrize(
-    "relative_path, expected_reference",
-    [
-        ("Local/plain.gguf", "plain"),
-        ("TLlama/ByCzech/qwen3.gguf", "ByCzech/qwen3"),
-        ("HuggingFace/ns/repo/qwen3.gguf", "ns/repo/qwen3"),
-        ("HuggingFace/ns/repo/sub/qwen3.gguf", "ns/repo/sub/qwen3"),
-    ],
-)
-def test_a_stored_model_resolves_back_to_its_own_path(
-    manager, gguf_file, relative_path, expected_reference
-):
-    """One segment is Local, two are TLlama, three or more are HuggingFace.
-
-    Naming only -- whether that reference is actually loadable now depends
-    on a matching .toml (tests/test_virtual_model_scan.py), which is a
-    separate concern from the naming scheme itself.
-    """
-    path = gguf_file(relative_path)
-
-    reference = manager._build_model_ref_from_path(path)
-
-    assert reference == expected_reference
-
-
 def test_the_never_expires_horizon_matches_the_one_ollama_reports():
     """Ollama turns a negative keep_alive into math.MaxInt64 nanoseconds."""
     assert NEVER_EXPIRES_SECONDS == (2 ** 63 - 1) // 1_000_000_000

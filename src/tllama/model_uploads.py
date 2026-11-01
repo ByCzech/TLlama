@@ -1,4 +1,4 @@
-"""Verified streaming GGUF staging; only create publishes files into Local."""
+"""Verified streaming GGUF staging; create publishes complete managed groups."""
 
 import asyncio
 from hashlib import sha256
@@ -13,9 +13,10 @@ from tllama.helpers.repository_files import repository_tempfile
 def blob_path(manager, digest):
     if not re.fullmatch(r'sha256:[0-9a-f]{64}', digest):
         raise ValueError('Expected sha256: followed by 64 lowercase hexadecimal characters.')
-    directory = manager.local_models_dir / '.uploads'
+    directory = manager.repository.root / '.tllama' / 'uploads'
     path = directory / digest[7:]
-    if path.is_symlink() or not path.resolve().is_relative_to(manager.models_dir.resolve()):
+    if (directory.is_symlink() or directory.parent.is_symlink() or path.is_symlink()
+            or not path.resolve().is_relative_to(manager.repository.root)):
         raise ValueError('Upload staging must stay inside the model repository.')
     return path
 
@@ -33,6 +34,8 @@ def verified_blob(manager, digest):
 
 
 async def receive_blob(manager, digest, request):
+    from tllama.repository_runtime import ensure_format
+    await _settle_owned(asyncio.create_task(asyncio.to_thread(ensure_format, manager.repository)))
     target = blob_path(manager, digest)
     length = request.headers.get('content-length')
     if length is not None:
@@ -42,7 +45,7 @@ async def receive_blob(manager, digest, request):
                 raise ValueError
         except ValueError:
             raise ValueError('Invalid upload Content-Length.') from None
-    target.parent.mkdir(parents=True, exist_ok=True)
+    manager.repository._directory('.tllama/uploads')
     descriptor, temporary = repository_tempfile(prefix='.upload-', directory=target.parent)
     digest_state = sha256()
     prefix = bytearray()

@@ -1,4 +1,4 @@
-"""Create from client-side TOML, including Local imports and complete shard groups."""
+"""Create from client-side TOML, including managed data imports and complete shard groups."""
 
 import asyncio
 from contextlib import aclosing
@@ -21,6 +21,7 @@ from tllama.routers import ollama
 from tllama.client import TLlamaClient, ClientError
 from tllama.client_import import create_from_file, _file_job, _hash, _chunks
 from tllama.helpers.model_toml import parse_model_toml
+from tllama.repository_store import prepare_group
 
 
 def gguf_file(path, *, shard=None, count=None, arch='llama'):
@@ -43,9 +44,10 @@ async def create_client(manager, monkeypatch):
 
 
 async def test_definition_only_create_preserves_text_and_changes_no_weights(create_client, manager, tmp_path):
-    weight = gguf_file(manager.local_models_dir / 'existing.gguf')
+    source = gguf_file(tmp_path / 'existing.gguf')
+    weight, = manager.repository.publish(prepare_group([source]))
     signature = weight.stat()
-    text = '# User comment\n[llm]\nmodel = "Local/existing.gguf"\n[system]\nprompt="Hello"\n'
+    text = '# User comment\n[llm]\nmodel = ' + json.dumps(weight.relative_to(manager.models_dir).as_posix()) + '\n[system]\nprompt="Hello"\n'
     definition = tmp_path / 'client' / 'model.toml'
     definition.parent.mkdir()
     definition.write_text(text)
@@ -53,12 +55,12 @@ async def test_definition_only_create_preserves_text_and_changes_no_weights(crea
     assert result == {'status': 'success', 'model': 'created'}
     assert (manager.local_models_dir / 'created.toml').read_text() == text
     assert weight.stat().st_ino == signature.st_ino
-    assert not (manager.local_models_dir / '.uploads').exists()
+    assert not (manager.models_dir / '.tllama/uploads').exists()
     assert manager.native_snapshot() == []
 
 
 @pytest.mark.parametrize('absolute', [False, True])
-async def test_from_uploads_model_and_projector_into_server_local(create_client, manager, tmp_path, monkeypatch, absolute):
+async def test_from_uploads_model_and_projector_into_shared_data(create_client, manager, tmp_path, monkeypatch, absolute):
     source = tmp_path / 'client files'
     model = gguf_file(source / 'model.gguf')
     projector = gguf_file(source / 'projector.gguf', arch='clip')
@@ -80,7 +82,8 @@ async def test_from_uploads_model_and_projector_into_server_local(create_client,
     stored = (manager.tllama_models_dir / 'collection' / 'created.toml').read_text()
     spec = parse_model_toml(stored)
     assert spec.llm_from is None and spec.mmproj_from is None
-    assert spec.llm_model.startswith('Local/imports/') and spec.mmproj_model.startswith('Local/imports/')
+    assert spec.llm_model == f'data/{sha256(model.read_bytes()).hexdigest()}/weights.gguf'
+    assert spec.mmproj_model == f'data/{sha256(projector.read_bytes()).hexdigest()}/weights.gguf'
     assert (manager.models_dir / spec.llm_model).read_bytes() == model.read_bytes()
     assert (manager.models_dir / spec.mmproj_model).read_bytes() == projector.read_bytes()
     assert '# Keep comment' in stored and '# weight comment' in stored
@@ -96,7 +99,7 @@ async def test_from_uploads_model_and_projector_into_server_local(create_client,
     assert {row['id'] for row in listed} == {'collection/created', 'another'}
 
 
-async def test_split_from_uploads_every_shard_and_preserves_names(create_client, manager, tmp_path, monkeypatch):
+async def test_split_from_uploads_every_shard_into_one_canonical_group(create_client, manager, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     first = gguf_file(tmp_path / 'bundle-00001-of-00002.gguf', shard=0, count=2)
     second = gguf_file(tmp_path / 'bundle-00002-of-00002.gguf', shard=1, count=2)
@@ -105,7 +108,9 @@ async def test_split_from_uploads_every_shard_and_preserves_names(create_client,
     await create_from_file(create_client, 'split', definition, as_json=True)
     spec = parse_model_toml((manager.local_models_dir / 'split.toml').read_text())
     installed = manager.models_dir / spec.llm_model
-    assert installed.name == first.name and (installed.parent / second.name).read_bytes() == second.read_bytes()
+    assert installed.name == 'weights-00001-of-00002.gguf'
+    assert installed.read_bytes() == first.read_bytes()
+    assert (installed.parent / 'weights-00002-of-00002.gguf').read_bytes() == second.read_bytes()
     assert len(list(installed.parent.glob('*.gguf'))) == 2
 
 
@@ -124,7 +129,7 @@ async def test_bad_inputs_do_not_upload_anything(create_client, manager, tmp_pat
     definition.write_text(text)
     with pytest.raises(ClientError):
         await create_from_file(create_client, '../bad' if broken == 'bad_name' else 'created', definition, as_json=True)
-    assert not (manager.local_models_dir / '.uploads').exists()
+    assert not (manager.models_dir / '.tllama/uploads').exists()
     assert not list(manager.models_dir.rglob('*.toml'))
 
 
@@ -135,20 +140,22 @@ async def test_relative_from_does_not_fall_back_to_toml_directory(create_client,
     monkeypatch.chdir(tmp_path)
     with pytest.raises(ClientError, match='Import source is not a file'):
         await create_from_file(create_client, 'created', definition, as_json=True)
-    assert not (manager.local_models_dir / '.uploads').exists()
+    assert not (manager.models_dir / '.tllama/uploads').exists()
     assert not list(manager.models_dir.rglob('*.toml'))
 
 
 async def test_create_requires_force_and_does_not_replace_weights(create_client, manager, tmp_path):
-    gguf_file(manager.local_models_dir / 'existing.gguf')
+    weight, = manager.repository.publish(prepare_group([gguf_file(tmp_path / 'existing.gguf')]))
+    signature = weight.stat()
     definition = tmp_path / 'model.toml'
-    definition.write_text('[llm]\nmodel="Local/existing.gguf"\n')
+    definition.write_text('[llm]\nmodel=' + json.dumps(weight.relative_to(manager.models_dir).as_posix()) + '\n')
     await create_from_file(create_client, 'created', definition, as_json=True)
     definition.write_text(definition.read_text() + '[system]\nprompt="changed"\n')
     with pytest.raises(ClientError, match='409'):
         await create_from_file(create_client, 'created', definition, as_json=True)
     await create_from_file(create_client, 'created', definition, force=True, as_json=True)
     assert parse_model_toml((manager.local_models_dir / 'created.toml').read_text()).system_prompt == 'changed'
+    assert weight.stat().st_ino == signature.st_ino
 
 
 async def test_conflict_fails_before_hashing_or_upload(create_client, manager, tmp_path, monkeypatch):
@@ -161,7 +168,7 @@ async def test_conflict_fails_before_hashing_or_upload(create_client, manager, t
     monkeypatch.setattr('tllama.client_import._hash', forbidden)
     with pytest.raises(ClientError, match='409'):
         await create_from_file(create_client, 'existing', definition, as_json=True)
-    assert not (manager.local_models_dir / '.uploads').exists()
+    assert not (manager.models_dir / '.tllama/uploads').exists()
     assert (manager.local_models_dir / 'existing.toml').read_text() == 'existing user content'
 
 

@@ -40,7 +40,7 @@ def forbidden(*args):
     raise AssertionError('Repository writers must never change the process umask')
 os.umask = forbidden
 
-from tllama.backend import ModelManager
+from tllama.backend import ModelManager, HfFileLookup, HF_LOOKUP_UNKNOWN
 from tllama.config import BackendConfig
 from tllama.helpers.model_toml import parse_model_toml, write_model_toml
 from tllama.model_uploads import receive_blob, blob_path
@@ -90,12 +90,15 @@ async def exercise():
 
     # The HF downloader owns GGUF permissions; substitute only that external
     # transfer, then exercise actual /api/pull registration and cache writes.
-    async def download(repo_id, filename, **kwargs):
-        target = manager.hf_models_dir / repo_id / filename
+    def download(*, local_dir, filename, **kwargs):
+        target = local_dir / filename
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(payload)
         return str(target)
-    manager.pull_hf_file = download
+    sys.modules['huggingface_hub'] = SimpleNamespace(hf_hub_download=download)
+    async def lookup(**kwargs):
+        return HfFileLookup(HF_LOOKUP_UNKNOWN)
+    manager.fetch_hf_file_info = lookup
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test') as client:
         response = await client.post('/api/pull', json={'model': 'ns/repo/model.gguf', 'stream': False})
     assert response.status_code == 200, response.text

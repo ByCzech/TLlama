@@ -335,13 +335,12 @@ def test_real_model_identity_is_unchanged_for_weights_projector_and_parameters(t
                           '[runtime]\nlora_path="Local/adapter.gguf"\nn_ctx=4096\n'
                           '[sampling]\ntemperature=0.5\n[system]\nprompt="Keep this prompt"\n')
     manager = ModelManager(BackendConfig(models_dir=str(root)))
-    manager.ensure_storage()
     before = manager._listing_identity('model')
     plan = tool.build_plan(root)
     assert plan['definitions'][0]['id'] == before[0]
     tool.apply_plan(root, plan)
-    # A read-only resolution by the existing manager can compare the actual
-    # content/parameters; no daemon is started on the converted repository.
+    # Resolve the converted definition through the actual format-2 runtime.
+    manager.ensure_storage()
     assert manager._listing_identity('model') == before
 
 
@@ -393,8 +392,13 @@ def test_interrupted_migration_resumes_without_duplicate_or_lost_data(tmp_path, 
     with pytest.raises(OSError, match='injected'):
         tool.apply_plan(root, plan)
     assert (root / tool.JOURNAL).exists()
-    with pytest.raises(ConfigError, match='format-2'):
+    if failure == 'marker-written':
+        # The marker commits a complete conversion; the private journal may
+        # still need its final status written, but the repository is usable.
         ModelManager(BackendConfig(models_dir=str(root))).ensure_storage()
+    else:
+        with pytest.raises(ConfigError, match='conversion is incomplete'):
+            ModelManager(BackendConfig(models_dir=str(root))).ensure_storage()
     monkeypatch.undo()
     assert tool.apply_plan(root, resume=True)['status'] == 'converted'
     converted = root / parse_model_toml(definition.read_text()).llm_model
@@ -544,5 +548,5 @@ def test_startup_guard_does_not_need_access_to_private_journal(tmp_path):
     root, _, _ = basic(tmp_path)
     control = root / tool.CONTROL
     control.mkdir(parents=True, mode=0o700)
-    with pytest.raises(ConfigError, match='migration control directory'):
+    with pytest.raises(ConfigError, match='conversion is incomplete'):
         ModelManager(BackendConfig(models_dir=str(root))).ensure_storage()

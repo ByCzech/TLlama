@@ -3,12 +3,6 @@ import os
 
 import pytest
 
-from tllama.backend import (
-    HF_LOOKUP_FOUND,
-    HF_LOOKUP_MISSING,
-    HF_LOOKUP_UNKNOWN,
-    HfFileLookup,
-)
 from tllama.helpers import metadata_cache
 
 
@@ -116,40 +110,3 @@ def test_deleting_a_model_keeps_both_cache_documents(manager, gguf_file, toml_fi
 
     assert metadata_cache.get_metadata_cache_path(manager.metadata_cache_dir, path).exists()
     assert metadata_cache.get_digest_cache_path(manager.metadata_cache_dir, path).exists()
-
-
-async def test_a_published_digest_is_recorded_without_reading_the_file(
-    manager, gguf_file, monkeypatch
-):
-    payload = os.urandom(512)
-    path = gguf_file("HuggingFace/ns/repo/model.gguf", payload)
-    published = hashlib.sha256(payload).hexdigest()
-
-    def fail(*args, **kwargs):
-        raise AssertionError("the file was hashed despite a usable published digest")
-
-    monkeypatch.setattr(manager, "_compute_content_sha256", fail)
-
-    stored = await manager.store_hf_digest(
-        path, HfFileLookup(HF_LOOKUP_FOUND, published, len(payload))
-    )
-
-    assert stored == {"content_sha256": published, "source": "hf"}
-
-
-@pytest.mark.parametrize(
-    "lookup",
-    [
-        None,
-        HfFileLookup(HF_LOOKUP_UNKNOWN),
-        HfFileLookup(HF_LOOKUP_MISSING),
-        HfFileLookup(HF_LOOKUP_FOUND, "a" * 64, 999999),
-    ],
-    ids=["absent", "unknown", "missing", "size-mismatch"],
-)
-async def test_an_unusable_published_digest_is_not_recorded(manager, gguf_file, lookup):
-    """A published sha256 is a claim; a size that disagrees withdraws it."""
-    path = gguf_file("HuggingFace/ns/repo/model.gguf")
-
-    assert await manager.store_hf_digest(path, lookup) is None
-    assert metadata_cache.load_digest_cache(manager.metadata_cache_dir, path) is None

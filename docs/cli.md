@@ -20,19 +20,12 @@ checkout can use the module commands immediately. The daemon accepts server TOML
 and CLI settings with `CLI > environment > TOML > defaults`; see
 [daemon configuration](daemon.md) for all options and inspection commands.
 
-## Local repository maintenance
+## Repository format
 
-`rebuildrepo` now belongs to the daemon host, not the HTTP client:
-
-```sh
-tllamad rebuildrepo --dryrun
-tllamad rebuildrepo
-tllamad rebuildrepo --force --overwrite-backups
-```
-
-This replaces `tllama rebuildrepo`; it operates on the local TLLAMA_MODELS store,
-with the existing backup and validation rules. It does not start the server.
-See [model-repositories.md](model-repositories.md) for details.
+New repositories use the explicit format-2 layout. Local imports use `create`
+and Hugging Face files use `pull`; `rebuildrepo` has been removed. Existing
+repositories require the offline [one-time converter](../tools/README.md), with
+all daemons and writers stopped. See [model repositories](model-repositories.md).
 
 ## HTTP client basics
 
@@ -561,7 +554,7 @@ POST streams bytes to a temporary file, verifies the SHA-256 and basic GGUF
 header, then publishes an immutable staging entry. Wrong hashes, incomplete
 and interrupted bodies leave no published entry or temporary file. Identical
 uploads are idempotent and never replace an existing inode. Uploading alone
-does not register a model; create will publish named GGUF files into Local and
+does not register a model; create will publish complete groups into data and
 a definition only after its validation succeeds. Completed staging entries
 are retained for reuse if a subsequent create fails; garbage collection is
 separate work. This binary API does not accept multipart/form-data.
@@ -579,10 +572,10 @@ existing server repository files, create only writes the TOML:
 
 ```toml
 [llm]
-model = "Local/already-present.gguf"
+model = "data/<group-sha256>/weights.gguf" # use the actual managed path
 ```
 
-`from` instead uploads a client-side GGUF into the server's `Local` storage.
+`from` instead uploads a client-side GGUF into the server's shared `data` storage.
 Relative `from` paths are relative to the client's current working directory,
 even when the TOML file is elsewhere. Absolute paths and `~` refer to the client
 machine. An optional projector is imported the same way:
@@ -598,23 +591,19 @@ from = "weights/projector.gguf"
 Use exactly one of model/from in each section. Client files remain untouched.
 The server never interprets from as permission to read its own filesystem.
 Each source is validated, hashed and uploaded as a bounded stream; already
-uploaded digests are reused after HEAD. The staging directory is in Local so
-publication needs no second multi-gigabyte copy. Imported files are published
-under `Local/imports/FIRST_FILE_SHA256/original-filename.gguf`; from is replaced
-by that repository-relative model path in the server TOML, preserving comments.
-Definitions and weight/projector files retain their separate names and roles.
+uploaded digests are reused after HEAD. Verified blobs stage in `.tllama/uploads/`
+so publication can use hard links without a second multi-gigabyte copy. Imported
+groups use `data/<group-sha256>/weights.gguf`; from becomes that physical model
+path in the stored TOML, preserving comments. Projectors have independent groups.
 
 For a split GGUF, from must name the first shard. The client automatically
-includes the complete sibling set described by split.count/split.no, with the
-standard NAME-00001-of-NNNNN.gguf names. Both sides verify shard positions and
-counts, and the server preserves filenames together so native shard discovery
-works. Missing, mismatched or continuation-only imports fail explicitly.
-Each group is limited to 2048 shards. GGUF structural checks do not prove a
-model's compatibility with a particular native backend/device.
-Verified upload digests and inspected headers warm the existing caches for
-the final Local paths; an unchanged imported file is not hashed or scanned
-again just to list it. Cache versions are unchanged. Changed staged bytes are
-rechecked and cannot be published under their old digest.
+includes the complete sibling set described by split.count/split.no. Both sides
+verify shard positions/counts. The server publishes canonical
+`weights-00001-of-NNNNN.gguf` names together so native discovery works. Missing,
+mismatched or continuation-only imports fail explicitly. Each group is limited
+to 2048 shards. Structural checks do not prove native backend/device support.
+Verified digests and inspected headers warm final-path caches. Cache versions
+are unchanged; changed staged bytes cannot be published under their old digest.
 
 Before hashing/uploading, create preflights the name, TOML and references to
 existing server files. It reserves no name: final publication still checks

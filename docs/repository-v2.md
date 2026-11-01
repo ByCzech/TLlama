@@ -1,11 +1,9 @@
 # Repository format 2: implementation contract
 
-This document describes the agreed repository transition. The name codec,
-data-group publication layer and offline converter are implemented; the
-ordinary daemon still uses the legacy layout. Do not rename a live repository
-by hand. Inspect it using [the tool](../tools/README.md), and wait for the
-format-2 runtime switch before converting a repository needed for service.
-The current startup guard refuses converted or partially converted stores.
+The name codec, transactional data-group store, offline converter and ordinary
+format-2 runtime are implemented. See [model-repositories.md](model-repositories.md)
+for current usage and [the converter](../tools/README.md) for upgrades.
+Physical reclamation and whole-store maintenance remain the next stage.
 
 ## Definitions and data
 
@@ -40,16 +38,20 @@ paths is not validation or publication.
 
 ## Transition and ownership
 
-Format 2 will be explicitly recorded under `.tllama/`. The daemon will have
-one current format; it must not infer encoding from `%HH` or automatically
-migrate an old store on startup. Local files enter through `create`; remote
-files through `pull`. Remove `rebuildrepo` and old layout fallback code when
-the storage switch is delivered.
+Format 2 is explicitly recorded in `.tllama/repository.json`. The daemon has
+one current format; it never infers encoding from `%HH` or automatically
+converts an old store. Empty stores initialize automatically; populated unmarked
+stores require the offline converter. Local files enter through `create`;
+remote files through `pull`. Definition mutations and group publication use the
+shared repository lock. `rebuildrepo` and physical-file-derived model naming
+have been removed. Pulls stage complete groups privately, then register a
+portable definition and source association; a repeated pull preserves edited
+settings and stable aliases. No raw GGUF scan creates definitions.
 
 The one-time converter is `tools/migrate-repository-v2.py`, outside the Python
 wheel. Its Debian documentation installation is a separate packaging patch.
 It preflights definitions/collisions,
-default to a read-only plan, and apply only on explicit request with daemons
+defaults to a read-only plan, and applies only on explicit request with daemons
 stopped. Preserve TOML comments, backups, file times and hard links; record a
 recoverable migration journal. Move unreferenced weights without registering
 new models. Remap `[llm].model`, `[mmproj].model` and `runtime.lora_path`.
@@ -89,8 +91,8 @@ within one store/thread and released on process exit. Windows uses a byte-range
 lock; POSIX uses flock. The backing shared filesystem must honor locks across
 all participating hosts. Locking a publication does not by itself implement
 worker pins, definition transactions or garbage collection: those are required
-before runtime physical deletion is enabled. These primitives do not yet change
-the active daemon layout or write a repository-format marker.
+before runtime physical deletion is enabled. Definition transactions now use
+this lock too; downloads/uploads stage bytes before publication.
 
 ## Removal and maintenance
 
