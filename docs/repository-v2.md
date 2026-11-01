@@ -6,7 +6,7 @@ for current usage and [the converter](../tools/README.md) for upgrades.
 The [reservation layer](repository-reservations.md) now protects uploads and
 download/publication jobs and worker generation snapshots across cooperating
 daemons. Targeted physical reclamation and local `tllamad repo check` and
-`tllamad repo prune` are implemented; local inspect/stats follow separately.
+`tllamad repo prune`, `inspect` and `stats` are implemented.
 
 ## Definitions and data
 
@@ -134,7 +134,9 @@ See [daemon commands](daemon.md#local-repository-integrity-check).
 Whole-store [`tllamad repo prune`](repository-prune.md) defaults to a read-only
 preview; `--apply` rechecks references and reservations under the repository lock
 and removes complete valid orphan groups with their owned caches/upload aliases.
-Local inspect/stats will explain sharing, orphans and reclaimable data.
+Local `inspect`/`stats` explain sharing, orphans, reservations and candidate
+weight bytes without treating them as guaranteed freed disk space. See
+[local inspection](daemon.md#local-repository-inspection-and-statistics).
 Repository maintenance does not add public HTTP endpoints or client commands.
 Public API expansion requires explicit prior agreement with the maintainer.
 

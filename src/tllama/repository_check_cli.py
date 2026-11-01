@@ -75,3 +75,42 @@ def run_prune(root, *, apply=False, as_json=False):
     finally:
         if previous is not None:
             signal.signal(signal.SIGINT, previous)
+
+
+def inspection_text(data):
+    counts = data['summary']
+    lines = [f"Repository {data['operation']}: {'OK' if data['ok'] else 'FAILED'}"]
+    if 'valid_group_weight_bytes' in counts:
+        lines.append(f"Valid group weight bytes: {counts['valid_group_weight_bytes']}; "
+                     f"unique inode bytes: {counts['valid_group_unique_inode_bytes']}")
+        lines.append(f"Groups by usage: {counts['groups_by_usage']}; shared groups: {counts['shared_groups']}")
+        lines.append(f"Prune candidate weight bytes: {counts['prune_candidate_weight_bytes']} "
+                     '(snapshot; not disk space guaranteed to be freed)')
+    for row in data['groups']:
+        if data['operation'] != 'inspect' or row['id'] not in data.get('selected_groups', []):
+            continue
+        lines.append(f"{row['path']}/: {row['usage']}; reserved={row['reserved']}; "
+                     f"bytes={row.get('weight_bytes')}; prune_candidate={row.get('prune_candidate')}")
+        lines.append('  definitions: ' + (', '.join(row['references']) or '(none)'))
+        lines.extend('  ' + path for path in row['files'])
+    lines.extend(f"{issue['severity']}: {issue['path']}: {issue['message']}" for issue in data['issues'])
+    return '\n'.join(lines)
+
+
+def run_inspection(root, *, model=None, group=None, as_json=False):
+    from tllama.repository_inspect import inspect_repository
+    stop = threading.Event()
+    previous = None
+    if threading.current_thread() is threading.main_thread():
+        previous = signal.signal(signal.SIGINT, lambda *args: stop.set())
+    try:
+        report = inspect_repository(RepositoryStore(root), model=model, group=group, stop=stop)
+        if stop.is_set():
+            return 130
+        print(json.dumps(report, ensure_ascii=False, allow_nan=False) if as_json else inspection_text(report))
+        return 0 if report['ok'] else 1
+    except CheckCancelled:
+        return 130
+    finally:
+        if previous is not None:
+            signal.signal(signal.SIGINT, previous)

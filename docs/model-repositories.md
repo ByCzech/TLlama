@@ -179,6 +179,13 @@ does not start/contact HTTP or load a model. It reads the configured local
 `storage.models_dir`, overridden by `--models-dir`. See
 [local integrity checks](daemon.md#local-repository-integrity-check).
 
+`tllamad repo inspect MODEL` (or `--group SHA256`) explains component sharing,
+shards and protection; `tllamad repo stats` summarizes managed groups and bytes.
+These are read-only local commands. `tllamad repo prune` previews whole-store
+orphan cleanup and requires `--apply` for deletion. See
+[inspection/statistics](daemon.md#local-repository-inspection-and-statistics)
+and [pruning](repository-prune.md).
+
 ## File permissions
 
 Files are created by the **daemon account**, including requests sent from a CLI

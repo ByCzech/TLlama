@@ -98,6 +98,40 @@ Independent caches, staging/download leftovers and stale reservation records
 are not swept. See [pruning details](repository-prune.md) for ownership,
 recovery and coordination requirements.
 
+## Local repository inspection and statistics
+
+```sh
+tllamad repo inspect my-model
+tllamad repo inspect --group GROUP_SHA256 --json
+tllamad repo stats
+tllamad repo stats --models-dir /var/lib/tllama/models --json
+```
+
+`inspect` selects either a public model name or a lowercase data-group SHA-256.
+It lists all component groups (including projector/LoRA), shard paths, current
+definition references, reservation state, weight bytes and whether the group
+is a current prune candidate. `stats` summarizes sharing, groups by usage and
+managed weight sizes. JSON includes the underlying inventory, reservation and
+cache/staging diagnostics. These commands only read local files under the
+repository lock. They never initialize/repair storage, drain the cleanup queue,
+refresh caches, start/contact HTTP or load a model.
+
+Group weight bytes count canonical files once per group, independently of the
+number of definitions sharing them; per-definition bytes include its unique
+component groups. Unique-inode bytes count each `(device, inode)` once across
+managed weights. Neither is an allocation/RSS measurement or guaranteed disk
+space savings. Cache/upload/staging bytes are excluded. Prune candidate weight
+bytes exclude live/retained pins and matching upload-path reservations and are
+only a snapshot, not deletion authorization. A later `prune --apply` rechecks.
+
+The structural inventory does not verify full content hashes; use `repo check
+--hashes` separately. Invalid/incomplete inventory gives exit 1, marks byte
+counts incomplete and reports candidate bytes as unknown rather than zero.
+Known valid-group byte counts can still be shown. Usage categories prioritize
+definition references over reservations; the separate `reserved` flag can be
+true for a referenced group. CLI/configuration errors exit 2, Ctrl+C exits 130.
+Normal storage/configuration selectors work before `repo` or after the command.
+
 ## Sources and file selection
 
 For global settings: **CLI > environment > server TOML > defaults**.

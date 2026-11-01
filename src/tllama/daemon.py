@@ -20,7 +20,9 @@ def build_parser() -> argparse.ArgumentParser:
     operations = repository.add_subparsers(dest='repo_operation', required=True)
     for name, help_text in (
             ('check', 'Read-only check of the local model repository.'),
-            ('prune', 'Preview unused managed groups; --apply removes them locally.')):
+            ('prune', 'Preview unused managed groups; --apply removes them locally.'),
+            ('inspect', 'Explain a local model or data group and its sharing.'),
+            ('stats', 'Read-only counts and weight byte accounting for the local repository.')):
         command = operations.add_parser(name, help=help_text)
         selection = command.add_mutually_exclusive_group()
         selection.add_argument('--config', default=argparse.SUPPRESS, metavar='PATH', help='Server TOML file.')
@@ -31,8 +33,11 @@ def build_parser() -> argparse.ArgumentParser:
         command.add_argument('--json', action='store_true', help='Print the full local report as JSON.')
         if name == 'check':
             command.add_argument('--hashes', action='store_true', help='Independently read and verify full GGUF contents.')
-        else:
+        elif name == 'prune':
             command.add_argument('--apply', action='store_true', help='Remove currently proved unused groups; default is preview.')
+        elif name == 'inspect':
+            command.add_argument('model', nargs='?', help='Public model name.')
+            command.add_argument('--group', metavar='SHA256', help='Inspect a data group instead of a model.')
     return parser
 
 
@@ -43,6 +48,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error('--config and --no-config cannot be combined')
     if args.command == 'repo' and (args.check_config or args.print_config or args.list_devices):
         parser.error('repo commands cannot be combined with configuration/device inspection flags')
+    if args.command == 'repo' and args.repo_operation == 'inspect' and bool(args.model) == bool(args.group):
+        parser.error('repo inspect requires either MODEL or --group SHA256')
     from tllama.config import ConfigError
 
     try:
@@ -54,8 +61,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.repo_operation == 'check':
                 from tllama.repository_check_cli import run_check
                 return run_check(config.backend.models_dir, hashes=args.hashes, as_json=args.json)
-            from tllama.repository_check_cli import run_prune
-            return run_prune(config.backend.models_dir, apply=args.apply, as_json=args.json)
+            if args.repo_operation == 'prune':
+                from tllama.repository_check_cli import run_prune
+                return run_prune(config.backend.models_dir, apply=args.apply, as_json=args.json)
+            from tllama.repository_check_cli import run_inspection
+            return run_inspection(config.backend.models_dir, as_json=args.json,
+                model=getattr(args, 'model', None), group=getattr(args, 'group', None))
         if args.list_devices:
             from tllama.daemon_devices import list_devices
             return list_devices(config.values['engine.executable'])
