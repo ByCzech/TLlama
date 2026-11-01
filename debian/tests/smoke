@@ -29,6 +29,14 @@ def main():
         package_root = args.package_root.resolve()
         assert (package_root / 'tllama/__init__.py').is_file(), (
             'Missing built TLlama package', str(package_root))
+        # installer/previous build caches may contain bytecode independent of
+        # the current source. Discard all optimization levels before the first
+        # TLlama import. Only explicit build roots are writable test fixtures;
+        # installed-package/autopkgtest mode must leave their caches alone.
+        caches = sorted((package_root / 'tllama').rglob('*.pyc'))
+        for cache in caches:
+            cache.unlink()
+        print(f'Discarded build bytecode caches: {len(caches)}', flush=True)
         sys.path.insert(0, str(package_root))
     else:
         package_root = Path(import_module('tllama').__file__).resolve().parent.parent
