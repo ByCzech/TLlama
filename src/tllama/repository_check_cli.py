@@ -38,3 +38,40 @@ def run_check(root, *, hashes=False, as_json=False):
     finally:
         if previous is not None:
             signal.signal(signal.SIGINT, previous)
+
+
+def prune_text(data):
+    mode = 'APPLY' if data['apply'] else 'PREVIEW'
+    status = 'CANCELLED' if data['cancelled'] else 'OK' if data['ok'] else 'FAILED'
+    counts = data['summary']
+    lines = [f'Repository prune: {mode} {status}',
+        f"Candidate groups: {counts['candidate_groups']}; removed: {counts['removed_groups']}; "
+        f"referenced: {counts['referenced_groups']}; reserved: {counts['reserved_groups']}; "
+        f"deferred: {counts['deferred_groups']}"]
+    for row in data['candidates']:
+        lines.append(f"group: data/{row['group']}/")
+        lines.extend('  ' + path for path in row['remove_paths'])
+    if data['apply']:
+        lines.extend('removed: ' + path for path in data['removed_files'])
+    elif data['can_apply']:
+        lines.append('Preview only. Use --apply to recheck and remove currently unused groups.')
+    lines.extend(f"{issue['severity']}: {issue['path']}: {issue['code']}: {issue['message']}"
+                 for issue in data['issues'])
+    return '\n'.join(lines)
+
+
+def run_prune(root, *, apply=False, as_json=False):
+    from tllama.repository_prune import prune_repository
+    stop = threading.Event()
+    previous = None
+    if threading.current_thread() is threading.main_thread():
+        previous = signal.signal(signal.SIGINT, lambda *args: stop.set())
+    try:
+        report = prune_repository(RepositoryStore(root), apply=apply, stop=stop)
+        print(json.dumps(report, ensure_ascii=False, allow_nan=False) if as_json else prune_text(report))
+        if report['cancelled'] or stop.is_set():
+            return 130
+        return 0 if report['ok'] else 1
+    finally:
+        if previous is not None:
+            signal.signal(signal.SIGINT, previous)

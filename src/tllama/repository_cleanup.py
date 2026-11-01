@@ -185,6 +185,34 @@ def _plan_group(store, group, files, pins):
     return (uploads, caches, weights), directory if exists else None
 
 
+def _remove_group(store, group, files, pins, removed_files):
+    """Unlink one already-unreferenced group under the caller's store lock.
+
+    Both targeted reclamation and explicit local prune share the exact path
+    checks and durable alias/cache/weight ordering. The caller owns the durable
+    retry record before calling this function. False means a staging pin defers
+    this group. Partial progress remains visible if an unlink fails.
+    """
+    plan = _plan_group(store, group, files, pins)
+    if plan is None:
+        return False
+    phases, directory = plan
+    for paths in phases:
+        changed = set()
+        for path in paths:
+            if _regular(path) is not None:
+                path.unlink()
+                removed_files.append(path.relative_to(store.root).as_posix())
+                changed.add(path.parent)
+        # A retry must not lose the last inode from which it finds aliases.
+        for parent in changed:
+            sync_directory(parent)
+    if directory is not None:
+        directory.rmdir()
+        sync_directory(directory.parent)
+    return True
+
+
 def collect_pending(store, *, warnings=()):
     """Best-effort targeted cleanup; report failures without undoing mutations.
 
@@ -218,25 +246,9 @@ def collect_pending(store, *, warnings=()):
                     report['deferred_groups'].append(group)
                     continue
                 try:
-                    plan = _plan_group(store, group, files, pins)
-                    if plan is None:
+                    if not _remove_group(store, group, files, pins, report['removed_files']):
                         report['deferred_groups'].append(group)
                         continue
-                    phases, directory = plan
-                    for paths in phases:
-                        changed = set()
-                        for path in paths:
-                            if _regular(path) is not None:
-                                path.unlink()
-                                report['removed_files'].append(path.relative_to(store.root).as_posix())
-                                changed.add(path.parent)
-                        # Make staging alias removal durable before losing the
-                        # last group inode from which a retry finds those aliases.
-                        for parent in changed:
-                            sync_directory(parent)
-                    if directory is not None:
-                        directory.rmdir()
-                        sync_directory(directory.parent)
                     report['removed_groups'].append(group)
                     del pending[group]
                 except Exception as exc:

@@ -62,10 +62,37 @@ complete version-1 report; human output lists issues. Ctrl+C is cooperative:
 chunked byte reads stop and pin release finishes before returning.
 
 Reports are diagnostic snapshots, not authorization for subsequent deletion.
-A future local `prune --apply` must perform fresh reference/pin checks under
+Local `prune --apply` performs fresh reference/pin checks under
 the repository lock through unlink. No `tllama repo` command or public
 `/api/repo/*` endpoint is installed. HTTP API expansion requires prior agreement
 with the maintainer; repository maintenance remains local.
+
+## Local repository pruning
+
+```sh
+tllamad repo prune
+tllamad repo prune --json
+tllamad repo prune --models-dir /var/lib/tllama/models --apply
+tllamad --config server.toml repo prune --apply --json
+```
+
+The default is a read-only preview of complete unreferenced, unreserved data
+groups and the exact weight, cache and matching upload-hardlink paths to remove.
+`--apply` makes a fresh inventory and keeps the repository lock through deletion;
+it does not accept a previous report as authorization. Referenced or reserved
+groups are preserved. An incomplete or invalid inventory blocks all deletion.
+
+Like `repo check`, this command runs locally without HTTP or native workers.
+`--models-dir` is optional and follows normal server configuration precedence;
+configuration selectors work before `repo` or after `prune`. `--hashes` belongs
+to `check`, not `prune`. Exit statuses are 0 for success, 1 for inspection or
+deletion errors, 2 for CLI/configuration errors, and 130 for Ctrl+C. Cancellation
+finishes the current group's deletion and reports partial progress; remaining
+scheduled groups stay in the durable retry queue.
+
+Independent caches, staging/download leftovers and stale reservation records
+are not swept. See [pruning details](repository-prune.md) for ownership,
+recovery and coordination requirements.
 
 ## Sources and file selection
 
