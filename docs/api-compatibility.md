@@ -30,8 +30,8 @@ Ollama, OpenAI or the native server. The default listener is
 | POST | `/v1/systemone` | Text Decision; outside OpenAI, also exposed by current Ollama |
 
 `/v1/responses`, `/v1/completions` and audio routes are not implemented.
-Framework `/docs`, `/redoc` and `/openapi.json` describe the application schema;
-they are not inference APIs. A private worker's `/completion`, `/infill`,
+Framework `/docs`, `/redoc`, `/openapi.json` and `/docs/oauth2-redirect` are
+disabled. A private worker's `/completion`, `/infill`,
 `/props` or `/tllama/memory` is not automatically a public TLlama route.
 
 Repository maintenance is local through `tllamad repo check`; there is no public

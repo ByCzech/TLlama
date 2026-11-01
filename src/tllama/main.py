@@ -32,7 +32,10 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Multi AI Proxy Server",
-    lifespan=lifespan
+    lifespan=lifespan,
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
 )
 
 app.add_middleware(UndeclaredJsonBodyMiddleware)

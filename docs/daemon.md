@@ -8,6 +8,10 @@ and exits without starting the server or loading a model. `--config`,
 `tllamad` runs the server in the foreground. `tllama` is the HTTP client.
 The source equivalents are `python -m tllama.daemon` and `python -m tllama`.
 
+Framework documentation routes (`/docs`, `/redoc`, `/openapi.json` and
+`/docs/oauth2-redirect`) are disabled. The daemon serves its application APIs
+without loading a browser documentation UI or its external assets.
+
 ```sh
 tllamad --config server.toml --check-config
 tllamad --config server.toml --print-config
