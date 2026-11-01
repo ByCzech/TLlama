@@ -19,7 +19,7 @@ from tllama.embedding_contract import embedding_capable
 from tllama.decision_contract import has_decision_head, decision_capable
 from tllama.native_embeddings import embedding_response
 from tllama.schemas.embeddings import OllamaEmbedRequest, OllamaLegacyEmbeddingRequest
-from tllama.schemas.model_management import CopyRequest, CreateRequest
+from tllama.schemas.model_management import CopyRequest, CreateRequest, DeleteRequest
 from tllama.model_definitions import copy_definition, create_definition
 from tllama.residency import _settle_owned
 from tllama.model_uploads import blob_path, receive_blob
@@ -311,10 +311,8 @@ async def pull_model_ollama(request: Request):
 
 
 @router.delete("/delete")
-async def delete_model_ollama(request: Request):
-    payload = await request.json()
-
-    model_ref = (payload.get("name") or payload.get("model") or "").strip()
+async def delete_model_ollama(request: DeleteRequest):
+    model_ref = (request.name or request.model or "").strip()
     if not model_ref:
         raise HTTPException(status_code=400, detail="Missing model name")
 

@@ -3,6 +3,12 @@
 from pydantic import BaseModel, ConfigDict, StrictBool, StrictStr, Field
 
 
+class DeleteRequest(BaseModel):
+    # Keep ignored extension fields and the historical name-first alias order.
+    name: StrictStr | None = None
+    model: StrictStr | None = None
+
+
 class CopyRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
     source: StrictStr = Field(min_length=1)
