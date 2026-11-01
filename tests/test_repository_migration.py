@@ -132,6 +132,29 @@ def test_resume_recovers_original_names_after_cleanup_removed_all_sources(tmp_pa
     assert target.with_suffix('.inf').read_text() == 'old.gguf\n'
 
 
+def test_empty_orphan_error_identifies_the_file_not_the_previous_progress_line(tmp_path, capsys):
+    root, _, _ = basic(tmp_path)
+    empty = root / 'orphan-empty.gguf'
+    empty.touch()
+    before = snapshot(root)
+    assert tool.main([str(root)]) == 1
+    output = capsys.readouterr()
+    assert 'Inspecting: orphan-empty.gguf' in output.err
+    assert 'Cannot inspect GGUF orphan-empty.gguf:' in output.err
+    assert snapshot(root) == before
+
+
+def test_empty_continuation_error_identifies_the_actual_shard(tmp_path, capsys):
+    root = tmp_path / 'models'
+    sources = split(root / 'Local')
+    sources[1].write_bytes(b'')
+    define(root, target=sources[0].relative_to(root).as_posix())
+    before = snapshot(root)
+    assert tool.main([str(root)]) == 1
+    assert str(sources[1]) in capsys.readouterr().err
+    assert snapshot(root) == before
+
+
 def test_preview_is_read_only_and_reports_real_content_identity(tmp_path, capsys):
     root, source, _ = basic(tmp_path)
     before = snapshot(root)

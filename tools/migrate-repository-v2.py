@@ -212,13 +212,19 @@ def build_plan(root, *, progress=None):
         raise ValueError('data/ and .tllama/staging must be on the same filesystem for atomic publication.')
     groups, mapping, source_group, group_permissions = [], {}, {}, {}
 
-    def add_group(relative):
+    def inspect_header(relative):
+        if progress is not None:
+            progress(relative)
+        try:
+            return read_gguf_metadata(str(safe_path(root, relative)))
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise ValueError(f'Cannot inspect GGUF {relative}: {exc}') from exc
+
+    def add_group(relative, header=None):
         if relative in source_group:
             return source_group[relative]
         path = safe_path(root, relative)
-        if progress is not None:
-            progress(relative)
-        names = shard_names(path.name, read_gguf_metadata(str(path)))
+        names = shard_names(path.name, inspect_header(relative) if header is None else header)
         paths = [safe_path(root, (path.parent / name).relative_to(root).as_posix()) for name in names]
         group = prepare_group(paths, names=names if len(names) > 1 else ['weights.gguf'], cache_dir=store.cache_dir)
         record = group_record(group, root)
@@ -290,9 +296,9 @@ def build_plan(root, *, progress=None):
     # Include orphan weights, without inventing any model definitions.
     for relative in files['weights']:
         if relative not in source_group:
-            header = read_gguf_metadata(str(safe_path(root, relative)))
+            header = inspect_header(relative)
             if header.get('split.no', 0) == 0:
-                add_group(relative)
+                add_group(relative, header)
     missing = set(files['weights']) - set(mapping)
     if missing:
         raise ValueError(f'Continuation shards have no complete first-shard group: {sorted(missing)}')
