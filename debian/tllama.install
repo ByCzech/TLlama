@@ -1,3 +1,5 @@
 examples/server.toml etc/tllama
 examples/client.toml etc/tllama
 systemd/tllamad.service usr/lib/systemd/system
+tools/migrate-repository-v2.py usr/share/doc/tllama/tools/
+tools/README.md usr/share/doc/tllama/tools/
