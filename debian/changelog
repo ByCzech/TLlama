@@ -1,3 +1,17 @@
+tllama (1.4.1-1) unstable; urgency=medium
+
+  * New upstream bugfix release:
+    - Keep original GGUF filenames in optional plain-text .inf companions,
+      including shared imports, pulls, shards and offline conversion.
+    - Accept missing companions silently and remove existing companions with
+      unused weights; preserve content addresses, model IDs and TOML paths.
+    - Report the actual offending file when GGUF header inspection fails.
+  * Ship the offline converter and its guide in tllama under
+    /usr/share/doc/tllama/tools/, instead of the optional tllama-doc package.
+    Keep the script uncompressed; never convert from maintainer scripts.
+
+ -- NemaChybu team APT archive <maintainers@nemachybu.cz>  Sun, 01 Nov 2026 21:00:00 +0100
+
 tllama (1.4.0-1) unstable; urgency=medium
 
   * New upstream release:

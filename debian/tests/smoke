@@ -110,6 +110,32 @@ async def check():
             reply = await client.get(path)
             assert reply.status_code == 404, (path, reply.text)
 asyncio.run(check())
+
+# Qualify optional .inf support from the actual installed/built wheel.
+import os
+from pathlib import Path
+import gguf
+from tllama.repository_store import RepositoryStore, prepare_group
+from tllama.repository_runtime import ensure_format
+from tllama.repository_check import check_repository
+from tllama.repository_prune import prune_repository
+store = RepositoryStore(Path(os.environ['TLLAMA_MODELS']))
+ensure_format(store)
+source = store.root.parent / 'original-name.gguf'
+writer = gguf.GGUFWriter(str(source), 'llama')
+writer.write_header_to_file()
+writer.write_kv_data_to_file()
+writer.close()
+weight, = store.publish(prepare_group([source]))
+info = weight.with_suffix('.inf')
+assert info.read_text() == source.name + chr(10)
+assert check_repository(store, hashes=True)['ok']
+info.unlink()
+assert check_repository(store, hashes=True)['ok']
+assert store.publish(prepare_group([source])) == (weight,)
+assert info.read_text() == source.name + chr(10)
+assert prune_repository(store, apply=True)['ok']
+assert not weight.parent.exists()
 '''
         subprocess.run([sys.executable, "-c", probe], env=env, cwd=root, check=True, timeout=30)
     print("TLlama package smoke passed: " + version)
