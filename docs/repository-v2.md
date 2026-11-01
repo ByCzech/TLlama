@@ -4,8 +4,8 @@ The name codec, transactional data-group store, offline converter and ordinary
 format-2 runtime are implemented. See [model-repositories.md](model-repositories.md)
 for current usage and [the converter](../tools/README.md) for upgrades.
 The [reservation layer](repository-reservations.md) now protects uploads and
-download/publication jobs across cooperating daemons. Worker generation pins,
-physical reclamation and whole-store maintenance remain the next stages.
+download/publication jobs and worker generation snapshots across cooperating
+daemons. Physical reclamation and whole-store maintenance remain the next stages.
 
 ## Definitions and data
 
@@ -92,9 +92,9 @@ The store uses an exclusive OS-backed `.tllama/repository.lock`, reentrant
 within one store/thread and released on process exit. Windows uses a byte-range
 lock; POSIX uses flock. The backing shared filesystem must honor locks across
 all participating hosts. Locking a publication does not by itself implement
-worker pins or garbage collection: those are required before runtime physical
-deletion is enabled. Definition transactions use this lock too; downloads and
-uploads now hold OS-backed reservations while staging bytes before publication.
+garbage collection. Definition transactions use this lock too; downloads,
+uploads and worker snapshots hold OS-backed reservations. Physical deletion
+will consume both definition references and these reservations atomically.
 
 ## Removal and maintenance
 

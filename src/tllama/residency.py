@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections import deque
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import itertools
 import logging
 import math
@@ -47,6 +47,7 @@ class ModelDefinition:
     fingerprint: Any = None
     file_info: Mapping = field(default_factory=dict)
     metadata: Mapping = field(default_factory=dict)
+    protection: Any = field(default=None, compare=False, repr=False)
 
     def __post_init__(self):
         if not isinstance(self.name, str) or not self.name:
@@ -167,6 +168,10 @@ class NativeResidency:
         if self._closing:
             raise ResidencyClosed("Native model manager is shutting down")
 
+    async def _close_protection(self, definition):
+        if definition is not None and definition.protection is not None:
+            await _settle_owned(self._owned(asyncio.to_thread(definition.protection.close)))
+
     def _forget_current(self, entry):
         if self._current.get(entry.definition.name) is entry:
             del self._current[entry.definition.name]
@@ -220,6 +225,7 @@ class NativeResidency:
             failure = entry.error or exc
             try:
                 await entry.worker.close()
+                await self._close_protection(entry.definition)
             except BaseException as cleanup:
                 async with self._condition:
                     self._forget_current(entry)
@@ -268,6 +274,7 @@ class NativeResidency:
             if entry.load_task is not None and not entry.load_task.done():
                 await asyncio.gather(entry.load_task, return_exceptions=True)
             await entry.worker.close()
+            await self._close_protection(entry.definition)
         except BaseException as exc:
             async with self._condition:
                 entry.state, entry.error = "cleanup_failed", exc
@@ -319,69 +326,81 @@ class NativeResidency:
         name = intent.name
         while True:
             self._ensure_open()
+            definition, entry = None, None
+            transferred, admitted = False, False
             try:
-                definition = await self._resolve(name, num_ctx, **({"runtime_overrides": runtime_overrides} if runtime_overrides else {}))
-            except Exception:
-                if not runtime_overrides:
-                    await self.unload(name)
-                raise
-            if definition.name != name:
-                raise ValueError("Resolver returned a different public model name")
-            expected_mode = "embedding" if operation == "text_embedding" else operation
-            if operation is not None and definition.resolved.launch.mode != expected_mode:
-                raise ValueError(f"Model {name!r} is not configured for {operation}")
-            if operation == 'text_embedding':
-                embedding_contract(definition.metadata, definition.resolved.launch.pooling_type)
-            async with self._condition:
-                self._ensure_open()
-                if intent.aborted:
-                    raise ModelUnloaded(f"Model {name!r} was unloaded before admission")
-                if intent.load_failure is not None and intent.load_failure[0].same_version(definition):
-                    raise intent.load_failure[1]
-                self._expire_locked()
-                entry = self._current.get(name)
-                if entry is not None and not entry.definition.same_version(definition):
-                    self._retire(entry, "definition changed")
-                    entry = None
-                if entry is not None and entry.loaded and entry.worker.state != "ready":
-                    entry.error = self._worker_failure(entry)
-                    if not entry.exit_recorded:
-                        self._record_failure(entry, "exit", entry.error)
-                        entry.exit_recorded = True
-                    self._retire(entry, "worker exited", force=True)
-                    entry = None
-                if entry is None:
-                    if len(self._entries) >= self.max_loaded_models:
-                        if any(e.state == "cleanup_failed" for e in self._entries.values()):
-                            raise ModelCleanupError("Native capacity is held by a generation whose cleanup failed")
-                        if self.max_loaded_models == 1:
-                            for other in list(self._entries.values()):
-                                if not other.retired:
-                                    self._retire(other, "single-model replacement")
-                        if any(e.retired or not e.loaded for e in self._entries.values()):
-                            await self._condition.wait()
-                            continue
-                        raise ModelCapacityError(
-                            f"Loaded model limit reached ({self.max_loaded_models}). "
-                            "Unload a model first or increase TLLAMA_MAX_LOADED_MODELS."
-                        )
-                    launch = definition.resolved.launch
-                    worker = (AutomaticWorker(launch, worker_factory=self._factory)
-                              if launch.device is None else self._factory(launch))
-                    entry = _Generation(next(self._numbers), definition, worker)
-                    self._entries[entry.number] = entry
-                    self._current[name] = entry
-                    entry.load_task = self._owned(self._load_entry(entry))
-                entry.refs += 1
-                intent.entry = entry
-                entry.keep_alive = keep_alive  # Latest admitted request sets policy.
-                entry.expires_at = None
-            try:
+                try:
+                    try:
+                        definition = await self._resolve(name, num_ctx, **({"runtime_overrides": runtime_overrides} if runtime_overrides else {}))
+                    except Exception:
+                        if not runtime_overrides:
+                            await self.unload(name)
+                        raise
+                    if definition.name != name:
+                        raise ValueError("Resolver returned a different public model name")
+                    expected_mode = "embedding" if operation == "text_embedding" else operation
+                    if operation is not None and definition.resolved.launch.mode != expected_mode:
+                        raise ValueError(f"Model {name!r} is not configured for {operation}")
+                    if operation == 'text_embedding':
+                        embedding_contract(definition.metadata, definition.resolved.launch.pooling_type)
+                    async with self._condition:
+                        self._ensure_open()
+                        if intent.aborted:
+                            raise ModelUnloaded(f"Model {name!r} was unloaded before admission")
+                        if intent.load_failure is not None and intent.load_failure[0].same_version(definition):
+                            raise intent.load_failure[1]
+                        self._expire_locked()
+                        entry = self._current.get(name)
+                        if entry is not None and not entry.definition.same_version(definition):
+                            self._retire(entry, "definition changed")
+                            entry = None
+                        if entry is not None and entry.loaded and entry.worker.state != "ready":
+                            entry.error = self._worker_failure(entry)
+                            if not entry.exit_recorded:
+                                self._record_failure(entry, "exit", entry.error)
+                                entry.exit_recorded = True
+                            self._retire(entry, "worker exited", force=True)
+                            entry = None
+                        if entry is None:
+                            if len(self._entries) >= self.max_loaded_models:
+                                if any(e.state == "cleanup_failed" for e in self._entries.values()):
+                                    raise ModelCleanupError("Native capacity is held by a generation whose cleanup failed")
+                                if self.max_loaded_models == 1:
+                                    for other in list(self._entries.values()):
+                                        if not other.retired:
+                                            self._retire(other, "single-model replacement")
+                                if any(e.retired or not e.loaded for e in self._entries.values()):
+                                    await self._condition.wait()
+                                    continue
+                                raise ModelCapacityError(
+                                    f"Loaded model limit reached ({self.max_loaded_models}). "
+                                    "Unload a model first or increase TLLAMA_MAX_LOADED_MODELS."
+                                )
+                            launch = definition.resolved.launch
+                            if definition.protection is not None:
+                                launch = replace(launch, resource_fds=tuple(dict.fromkeys(
+                                    (*launch.resource_fds, *definition.protection.inherited_fds))))
+                            worker = (AutomaticWorker(launch, worker_factory=self._factory)
+                                      if launch.device is None else self._factory(launch))
+                            entry = _Generation(next(self._numbers), definition, worker)
+                            self._entries[entry.number] = entry
+                            self._current[name] = entry
+                            entry.load_task = self._owned(self._load_entry(entry))
+                            transferred = True
+                        entry.refs += 1
+                        admitted = True
+                        intent.entry = entry
+                        entry.keep_alive = keep_alive  # Latest admitted request sets policy.
+                        entry.expires_at = None
+                finally:
+                    # A reused generation already owns its original snapshot.
+                    # Validation failures, retries and unused resolutions must
+                    # release their temporary pin outside the residency lock.
+                    if not transferred:
+                        await self._close_protection(definition)
                 try:
                     await asyncio.shield(entry.load_task)
                 except asyncio.CancelledError:
-                    # A task cancelled before its coroutine begins cannot
-                    # translate operator cancellation in _load_entry itself.
                     if entry.load_task.cancelled() and entry.error is not None:
                         raise entry.error
                     raise
@@ -393,7 +412,10 @@ class NativeResidency:
                         raise self._worker_failure(entry)
                 return entry
             except BaseException:
-                await _settle_owned(self._owned(self._release(entry)))
+                # This also covers cancellation during unused-pin cleanup,
+                # after a reference was admitted but before load delivery.
+                if admitted:
+                    await _settle_owned(self._owned(self._release(entry)))
                 raise
 
     @asynccontextmanager

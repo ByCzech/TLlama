@@ -66,6 +66,8 @@ class WorkerLaunchSpec:
     # An explicit diagnostic pin, including a pin to the default build. This
     # is independent of per-feature audit lists and never changes them.
     expected_runtime_fingerprint: str | None = None
+    # Supervisor-owned repository locks, never a model setting or identity.
+    resource_fds: tuple[int, ...] = field(default=(), compare=False, repr=False)
 
     @property
     def accepted_runtime_fingerprints(self) -> frozenset[str]:
@@ -81,6 +83,10 @@ class WorkerLaunchSpec:
         return SUPPORTED_RUNTIME_FINGERPRINTS
 
     def __post_init__(self):
+        descriptors = tuple(self.resource_fds)
+        if any(type(value) is not int or value < 0 for value in descriptors):
+            raise ValueError('resource_fds must contain nonnegative file descriptors')
+        object.__setattr__(self, 'resource_fds', tuple(dict.fromkeys(descriptors)))
         object.__setattr__(self, "backend_priority", backend_priority(self.backend_priority))
         if self.fit is not None and type(self.fit) is not bool:
             raise ValueError("fit must be a boolean or unset")

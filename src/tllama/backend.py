@@ -5,7 +5,8 @@ import threading
 from contextlib import asynccontextmanager
 import itertools
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+import os
 from pathlib import Path
 from hashlib import sha256
 
@@ -204,7 +205,7 @@ class ModelManager:
         self._native = self._new_native_residency()
 
     def _new_native_residency(self):
-        return NativeResidency(self._resolve_native_definition,
+        return NativeResidency(self._resolve_protected_native_definition,
                                max_loaded_models=self.config.max_loaded_models,
                                worker_factory=self._native_factory,
                                generation_numbers=self._native_generation_numbers)
@@ -215,7 +216,34 @@ class ModelManager:
 
     async def _resolve_native_definition(self, model_name, num_ctx, *, runtime_overrides=None):
         # Definition/path/header work is independent of the residency lock.
-        return await asyncio.to_thread(self._resolve_native_definition_sync, model_name, num_ctx, runtime_overrides=runtime_overrides)
+        return await _settle_owned(asyncio.create_task(asyncio.to_thread(
+            self._resolve_native_definition_sync, model_name, num_ctx, runtime_overrides=runtime_overrides)))
+
+    async def _resolve_protected_native_definition(self, model_name, num_ctx, *, runtime_overrides=None):
+        from tllama.repository_pins import Reservation
+        from tllama.repository_runtime import read_format
+        from tllama.repository_workers import launch_groups
+        # Isolated legacy/physical diagnostic inputs outside data cannot be
+        # reclaimed by managed GC. Do not create control files alongside them.
+        if await _settle_owned(asyncio.create_task(asyncio.to_thread(read_format, self.repository))) is None:
+            return await self._resolve_native_definition(model_name, num_ctx, runtime_overrides=runtime_overrides)
+        pin = Reservation(self.repository, 'worker', all_data=True, retain_on_crash=os.name != 'posix')
+        transferred = False
+        try:
+            await _settle_owned(asyncio.create_task(asyncio.to_thread(pin.acquire)))
+            definition = await self._resolve_native_definition(model_name, num_ctx, runtime_overrides=runtime_overrides)
+            groups = await _settle_owned(asyncio.create_task(asyncio.to_thread(
+                launch_groups, definition.resolved.launch)))
+            if any(root != self.repository.root for root in groups):
+                raise RuntimeError('Resolved data groups no longer belong to the reserved repository')
+            await _settle_owned(asyncio.create_task(asyncio.to_thread(
+                pin.update, groups=groups.get(self.repository.root, ()), all_data=False)))
+            result = replace(definition, protection=pin)
+            transferred = True
+            return result
+        finally:
+            if not transferred:
+                await _settle_owned(asyncio.create_task(asyncio.to_thread(pin.close)))
 
     def _resolve_native_definition_sync(self, model_name, num_ctx, *, runtime_overrides=None):
         for _ in range(3):

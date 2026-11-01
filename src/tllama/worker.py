@@ -106,6 +106,8 @@ class NativeWorker:
         self._memory_lock = asyncio.Lock()
         self._memory_failure = None
         self._memory_parser_failed = False
+        self._repository_pins = []
+        self._reservation_task = None
 
     @property
     def state(self) -> str:
@@ -170,7 +172,9 @@ class NativeWorker:
             self.process = await asyncio.create_subprocess_exec(
                 *self.command, cwd=self.runtime_directory, env=env,
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-                start_new_session=True, pass_fds=self._credentials.pass_fds,
+                start_new_session=True, pass_fds=tuple(dict.fromkeys(
+                    (*self._credentials.pass_fds, *self.spec.resource_fds,
+                     *(fd for pin in self._repository_pins for fd in pin.inherited_fds)))),
             )
         finally:
             self._credentials.close_fd()
@@ -178,9 +182,36 @@ class NativeWorker:
                           ((self.process.stdout, "stdout"), (self.process.stderr, "stderr"))]
         self._exit_task = asyncio.create_task(self.process.wait())
 
+    def _reserve_repository_files(self):
+        from tllama.repository_workers import resolve_launch
+        from tllama.repository_pins import Reservation
+        from tllama.repository_store import RepositoryStore
+        self.spec, resources = resolve_launch(self.spec)
+        for root, groups in sorted(resources.items()):
+            pin = Reservation(RepositoryStore(root), 'worker', groups=groups,
+                              retain_on_crash=os.name != 'posix')
+            self._repository_pins.append(pin)
+            pin.acquire()
+
     async def _start_impl(self):
         if self._closing:
             raise WorkerError("Worker is closing")
+        if not self.spec.resource_fds:
+            # Physical diagnostics bypass ModelManager. Resolve/pin their
+            # managed groups off-loop before the child opens any files.
+            task = self._reservation_task = asyncio.create_task(asyncio.to_thread(self._reserve_repository_files))
+            try:
+                await asyncio.shield(task)
+            except BaseException:
+                while not task.done():
+                    try:
+                        await asyncio.shield(task)
+                    except asyncio.CancelledError:
+                        continue
+                task.exception()
+                raise
+        if self._closing:
+            raise WorkerError('Worker is closing')
         self._directory = runtime_directory()
         self.runtime_directory = Path(self._directory.name)
         if self.spec.transport == "uds":
@@ -420,6 +451,8 @@ class NativeWorker:
     async def _close_impl(self):
         self._state = "closing"
         try:
+            if self._reservation_task is not None:
+                await asyncio.gather(self._reservation_task, return_exceptions=True)
             if self._spawn_task is not None:
                 await asyncio.gather(self._spawn_task, return_exceptions=True)
             if self._memory_task is not None:
@@ -458,6 +491,9 @@ class NativeWorker:
             if self._directory is not None:
                 self._directory.cleanup()
             self._state = "closed" if self.process is None or self.process.returncode is not None else "failed"
+            if self._state == 'closed':
+                for pin in self._repository_pins:
+                    await asyncio.to_thread(pin.close)
 
     async def _json_body(self, response: httpx.Response) -> dict:
         body = bytearray()

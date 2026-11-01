@@ -132,13 +132,12 @@ code have been removed; copying weights into a branch is no longer an import.
 ## Removal and caches
 
 At this stage `rm` removes the definition and retires its local workers; shared
-data and disk caches remain. Physical reclamation requires the planned worker
-and publication pins across daemons before it can be enabled safely. The
+data and disk caches remain. Worker and publication reservations are now in
+place; physical reclamation is the next implementation step. The
 [implementation contract](repository-v2.md#removal-and-maintenance) describes
 that next step and the separate whole-store maintenance commands.
-Uploads and download/publication jobs already use the shared
-[reservation layer](repository-reservations.md); worker generation ownership
-will follow before reclamation is enabled.
+Uploads, download/publication jobs, worker snapshots and managed physical
+diagnostic launches use the shared [reservation layer](repository-reservations.md).
 
 Metadata and measured content digests live under `.tllama/metadata-cache/`.
 Keys use repository-relative physical file paths, validated against size and

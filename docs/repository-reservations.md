@@ -2,8 +2,8 @@
 
 Reservations are the shared protection layer for future physical reclamation.
 They describe resources in use; they do not delete weights or enable garbage
-collection. The first integration protects streaming uploads and complete HF
-download/publication jobs. Worker generation ownership is the next integration.
+collection. Integrations protect streaming uploads, complete HF
+download/publication jobs and native worker generation snapshots.
 Ordinary `rm` still removes the definition and retires local workers.
 
 ## Ownership and coordination
@@ -43,10 +43,10 @@ still recoverable because the filename declares its orphan policy.
 
 On POSIX the reservation exposes `inherited_fds` for explicit `pass_fds` to a
 native child. The inherited open description can keep the flock alive after
-the parent descriptor disappears. A future worker integration must pass it
-to every actual backend attempt and keep normal ownership until the worker
-has been reaped. This release adds and tests that primitive; it does not yet
-attach it to daemon worker generations.
+the parent descriptor disappears. Worker generation ownership passes it
+to every actual backend attempt and releases normal ownership only after
+worker cleanup has reaped the process. Internal descriptor numbers are not
+part of model/configuration identity and never appear as native CLI options.
 
 For an owner that cannot preserve the lock in a surviving child,
 `retain_on_crash=True` creates a `retain-*.json` record. An unlocked leftover
@@ -72,8 +72,41 @@ are removed before the pin is released, including on transfer failure.
 Already verified repeat pulls perform their group/definition work under the
 existing repository lock. Create/copy publication is likewise already locked.
 
-Before physical reclamation can be enabled, worker generations and all other
-cooperating readers must participate, and every daemon sharing the store must
+## Worker snapshots and physical diagnostics
+
+Before model definition/header/digest I/O, admission takes an `all_data` pin.
+The I/O runs outside the residency and repository locks. Once a stable launch
+snapshot is resolved, the pin narrows to its actual model, projector and LoRA
+group addresses under the repository lock, with no unprotected interval.
+Resolution into a different managed repository is rejected rather than
+attaching the original repository's unrelated protection descriptor.
+Each group protects all its shards. Unmarked physical diagnostic inputs are
+outside managed GC and do not acquire repository bookkeeping.
+
+A newly admitted generation takes ownership of that pin. Reusing an existing
+generation releases the unused resolution pin; validation failures, capacity
+retries, cancelled admission and factory failures also release unused pins.
+Cancellation joins resolution work before releasing its protection. Shutting
+down the residency prevents late admission even if a definition reader is
+still completing its owned I/O; its pin remains until that reader settles.
+
+Loading, ready, retired/draining and closing generations keep their own
+snapshot regardless of subsequent TOML edits/deletion. Pin release follows
+successful worker cleanup. A cleanup failure keeps the pin and quarantined
+capacity instead of claiming that resources are free. Automatic backend
+selection forwards the same descriptor to every actual native attempt.
+
+Direct NativeWorker launches used by physical diagnostics detect marked
+managed groups, freeze symlink targets, and acquire their own pins before
+spawning. They join a pending acquire on close/cancellation and cannot spawn
+after closure. Ordinary physical files outside managed repositories are not
+GC candidates. POSIX children inherit the protection descriptor; other
+platforms conservatively retain records after owner death for inspection.
+Temporary reservation records are legitimate runtime bookkeeping; model
+definitions, weight bytes and source caches keep their source-preservation
+checks. The model repository format and migration marker are unchanged.
+
+Before physical reclamation can be enabled, every daemon sharing the store must
 be upgraded/restarted. Filesystem locks cannot detect an older daemon or an
-external reader that does not use the reservation protocol. No first-stage
-reservation patch changes that activation requirement or turns on deletion.
+external reader that does not use the reservation protocol. The worker
+integration does not itself turn on deletion; targeted cleanup is the next step.
