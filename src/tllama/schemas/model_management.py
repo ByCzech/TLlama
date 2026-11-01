@@ -9,6 +9,10 @@ class DeleteRequest(BaseModel):
     model: StrictStr | None = None
 
 
+class ShowRequest(DeleteRequest):
+    runner: StrictStr | None = None
+
+
 class CopyRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
     source: StrictStr = Field(min_length=1)

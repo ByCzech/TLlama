@@ -19,7 +19,7 @@ from tllama.embedding_contract import embedding_capable
 from tllama.decision_contract import has_decision_head, decision_capable
 from tllama.native_embeddings import embedding_response
 from tllama.schemas.embeddings import OllamaEmbedRequest, OllamaLegacyEmbeddingRequest
-from tllama.schemas.model_management import CopyRequest, CreateRequest, DeleteRequest
+from tllama.schemas.model_management import CopyRequest, CreateRequest, DeleteRequest, ShowRequest
 from tllama.model_definitions import copy_definition, create_definition
 from tllama.residency import _settle_owned
 from tllama.model_uploads import blob_path, receive_blob
@@ -102,9 +102,9 @@ async def ollama_embeddings(request: OllamaLegacyEmbeddingRequest, http_request:
 
 
 @router.post("/show")
-async def show_model_info(request: dict):
-    _validate_runner(request.get("runner"))
-    model_name = request.get("name", "") or request.get("model", "")
+async def show_model_info(request: ShowRequest):
+    _validate_runner(request.runner)
+    model_name = request.name or request.model or ""
     if not model_name:
         raise HTTPException(status_code=400, detail="Missing model name")
 
