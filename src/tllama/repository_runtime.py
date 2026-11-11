@@ -119,7 +119,9 @@ def require_data_reference(manager, value):
     if (len(parts) != 3 or parts[0] != 'data' or not re.fullmatch('[0-9a-f]{64}', parts[1])
             or not re.fullmatch(r'weights(?:-00001-of-\d{5})?\.gguf', parts[2])):
         raise ValueError('Model files must reference the first file of a managed data/<sha256>/ group.')
-    result = manager.models_dir / path
+    # Use the same resolved root as publication and origin registration.
+    # A configured repository alias is valid; symlinks below it are not.
+    result = manager.repository.root / path
     current = manager.repository.root
     for part in parts:
         current /= part

@@ -213,6 +213,82 @@ def test_repeat_pull_reuses_measured_group_and_preserves_edited_definition(manag
     assert progress.snapshot() == (Path(path).stat().st_size,) * 2
 
 
+@pytest.mark.parametrize('root_kind', ['direct', 'symlink', 'parent-symlink', 'relative'])
+@pytest.mark.parametrize('arch', ['llama', 'clip'])
+@pytest.mark.parametrize('split', [False, True])
+def test_repeat_pull_uses_store_root_for_every_member(manager, hf, monkeypatch, tmp_path,
+                                                     root_kind, arch, split):
+    root = manager.repository.root
+    configured = root
+    if root_kind == 'symlink':
+        configured = tmp_path / 'models-alias'
+        configured.symlink_to(root, target_is_directory=True)
+    elif root_kind == 'parent-symlink':
+        parent = tmp_path / 'parent-alias'
+        parent.symlink_to(root.parent, target_is_directory=True)
+        configured = parent / root.name
+    elif root_kind == 'relative':
+        monkeypatch.chdir(root.parent)
+        configured = Path(root.name)
+    aliased = ModelManager(BackendConfig(models_dir=str(configured)))
+    aliased.ensure_storage()
+    monkeypatch.setattr(aliased, '_fetch_hf_file_info_sync', manager._fetch_hf_file_info_sync)
+    names = (['nested/model-00001-of-00002.gguf', 'nested/model-00002-of-00002.gguf']
+             if split else ['nested/model.gguf'])
+    for number, filename in enumerate(names):
+        hf.add(filename, arch=arch, shard=number if split else None, count=2 if split else None)
+    first = Path(aliased._pull_hf_file_sync('ns/repo', names[0]))
+    members = sorted(first.parent.glob('*.gguf'))
+    signatures = {path.name: (path.stat().st_ino, path.read_bytes()) for path in members}
+    definition = root / definition_path('ns/repo/' + Path(names[0]).stem)
+    custom = None
+    if arch == 'llama':
+        custom = definition.read_text() + '# Preserve user settings\n[system]\nprompt="Czech"\n'
+        definition.write_text(custom)
+    origin = root / origin_path('ns/repo', names[0])
+    before = json.loads(origin.read_text())
+    progress = PullProgress()
+    second = Path(aliased._pull_hf_file_sync('ns/repo', names[0], progress=progress))
+    assert first == second and first.is_relative_to(root)
+    assert {path.name: (path.stat().st_ino, path.read_bytes()) for path in members} == signatures
+    assert hf.calls == [('ns/repo', name) for name in names]
+    assert hf.lookups == [('ns/repo', name) for name in names]
+    assert json.loads(origin.read_text()) == before
+    assert before['path'] == first.relative_to(root).as_posix()
+    assert progress.snapshot() == (sum(path.stat().st_size for path in members),) * 2
+    assert len(list((root / 'data').iterdir())) == 1
+    for path, name in zip(members, names):
+        assert path.with_suffix('.inf').read_text().splitlines() == [Path(name).name]
+    if arch == 'llama':
+        assert definition.read_text() == custom
+        assert parse_model_toml(custom).llm_model == before['path']
+        copy_definition(aliased, 'ns/repo/' + Path(names[0]).stem, 'copy')
+        assert aliased.read_model_definition('copy') == custom
+    else:
+        assert not list(root.rglob('*.toml'))
+    assert not list((root / '.tllama/downloads').iterdir())
+
+
+@pytest.mark.parametrize('component', ['data', 'group', 'weight'])
+def test_alias_root_does_not_allow_symlinks_inside_managed_data(manager, tmp_path, component):
+    import shutil
+
+    relative = publish(manager, tmp_path)
+    original = manager.repository.root / relative
+    content = original.read_bytes()
+    target = {'data': original.parent.parent, 'group': original.parent, 'weight': original}[component]
+    outside = tmp_path / 'outside-managed-data'
+    shutil.move(str(target), str(outside))
+    target.symlink_to(outside, target_is_directory=component != 'weight')
+    alias = tmp_path / 'models-alias'
+    alias.symlink_to(manager.repository.root, target_is_directory=True)
+    aliased = ModelManager(BackendConfig(models_dir=str(alias)))
+    with pytest.raises(ValueError, match='symlink'):
+        create_definition(aliased, 'bad', text_for(relative), {})
+    assert original.read_bytes() == content
+    assert not list(manager.repository.root.rglob('*.toml'))
+
+
 def test_changed_source_updates_only_its_own_definition_pointer(manager, hf):
     hf.add('model.gguf')
     old = manager._pull_hf_file_sync('ns/repo', 'model.gguf')
