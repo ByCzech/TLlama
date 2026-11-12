@@ -81,7 +81,7 @@ def _groups(spec, directory, *, stop):
     # list/show/run and definition-only create never import GGUF here.
     from tllama.helpers.gguf_import import local_group
     groups = {}
-    for section, source in (('llm', spec.llm_from), ('mmproj', spec.mmproj_from)):
+    for section, model, source in spec.components:
         if source is not None:
             if stop.is_set():
                 return {}
@@ -105,7 +105,8 @@ async def create_from_file(client, model, path, *, force=False, as_json=False, d
         # or transferring potentially many gigabytes. Publication rechecks
         # the same constraints atomically; preflight reserves no model name.
         await client.check_create(model, text, force=force)
-        groups = await _file_job(_groups, spec, directory) if spec.llm_from is not None or spec.mmproj_from is not None else {}
+        groups = await _file_job(_groups, spec, directory) if any(
+            source is not None for section, model, source in spec.components) else {}
         uploads = {}
         # Validate every source and hash before uploading any file, so a
         # missing projector/shard cannot leave a partly prepared model.

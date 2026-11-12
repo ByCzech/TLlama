@@ -43,8 +43,8 @@ model = "data/<group-sha256>/weights.gguf"
 Standalone helpers contain only their data reference. Runtime, sampling,
 prompt/template and projector context settings belong to the main definition
 which uses them. A standalone helper is not an inference worker and is hidden
-from the default runnable-model listing. Client import and attachment commands
-follow in the remaining management patches.
+from the default runnable-model listing. Client import and attachment controls
+require the complete helper-management capability described below.
 
 A main definition may contain `[llm]`, `[mmproj]` and one `[draft]` reference.
 Declaring a draft does not activate speculative decoding. This foundation
@@ -135,6 +135,37 @@ conversion during pull.
 Upstream references for the shared architecture and native variant handling:
 [architecture names](https://github.com/ggml-org/llama.cpp/blob/master/gguf-py/gguf/constants.py)
 and [DFlash loader](https://github.com/ggml-org/llama.cpp/blob/master/src/models/dflash.cpp).
+
+### Client create and local helper import
+
+`tllama create NAME -f FILE.toml` accepts a standalone helper or a composite
+main definition. For example, an explicitly imported helper is:
+
+```toml
+[draft]
+from = "/client/models/draft-00001-of-00002.gguf"
+```
+
+The client inspects the complete shard group and uploads it in the `draft`
+role. `[mmproj].from` works the same way. Relative paths use the client's
+working directory, as for the existing main import; the TOML's directory is
+not a fallback. `model = "data/..."` uses already imported server data and
+requires no local GGUF inspection or GGUF/runtime dependency in the client.
+
+An explicit standalone create registers exactly one helper TOML. A composite
+`[llm]`/`[mmproj]`/`[draft]` create registers only the requested main TOML,
+preserving independent helper definitions which already share its data.
+No helper is registered as an incidental side effect of importing a main.
+All local groups and hashes are checked before any upload; original names
+and complete shards use the existing `.inf` and publication machinery.
+
+Standalone helper create and any create containing a draft require the
+`repository_helpers` marker. Both client preflight and final create check it
+before their POST. Unsupported servers are rejected before local GGUF work or
+uploads. Ordinary main create, including its existing projector attachment,
+does not probe capabilities or change its request shape. At this checkpoint,
+the new helper imports remain gated until the remaining list patch advertises
+the complete contract. Server-side native DFlash loading is a separate step.
 
 ### Assemble a model from registered helpers
 

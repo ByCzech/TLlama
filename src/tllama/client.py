@@ -276,7 +276,18 @@ class TLlamaClient:
         finally:
             await stream.aclose()
 
+    async def _require_create_support(self, definition, uploads=None):
+        from tllama.helpers.model_toml import parse_model_toml
+        try:
+            spec = parse_model_toml(definition)
+        except ValueError as exc:
+            raise ClientConfigError(str(exc)) from None
+        if (spec.model_type != 'main' or spec.draft_model is not None
+                or spec.draft_from is not None or (uploads is not None and 'draft' in uploads)):
+            await self.require_repository_helpers()
+
     async def create(self, model, definition, *, uploads=None, force=False):
+        await self._require_create_support(definition, uploads)
         data = await self._request('POST', 'api/create', wait_for_server_work=True,
                                    json={'model': model, 'definition': definition,
                                          'uploads': uploads or {}, 'force': force})
@@ -285,6 +296,7 @@ class TLlamaClient:
         return data
 
     async def check_create(self, model, definition, *, force=False):
+        await self._require_create_support(definition)
         data = await self._request('POST', 'api/create', wait_for_server_work=True,
                                    json={'model': model, 'definition': definition, 'force': force, 'dry_run': True})
         if data.get('status') != 'ready':
