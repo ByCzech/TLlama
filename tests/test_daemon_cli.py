@@ -86,7 +86,8 @@ def test_real_daemon_uses_toml_cli_and_cors_before_import(tmp_path, reload):
             while time.monotonic() < deadline:
                 try:
                     with urlopen(f'http://127.0.0.1:{port}/api/tags', timeout=0.3) as response:
-                        assert json.load(response) == {'models': []}
+                        assert json.load(response) == {
+                            'models': [], 'server_features': ['repository_helpers']}
                     break
                 except (URLError, TimeoutError):
                     if process.poll() is not None:
