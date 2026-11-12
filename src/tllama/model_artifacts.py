@@ -20,6 +20,9 @@ def gguf_files(path, read_metadata, root):
             raise TomlModelError(f'Cannot inspect GGUF shard set: {path}') from None
         header = {}
     raw = header.get('metadata_raw', {})
+    if ('split.count' not in raw and header.get('arch') in (None, '', 'unknown')
+            and re.fullmatch(r'.+-\d{5}-of-\d{5}\.gguf', path.name)):
+        raise TomlModelError(f'Cannot inspect GGUF shard set: {path}')
     names = shard_names(path.name, raw)
     files = tuple(path.parent / name for name in names)
     for index, file in enumerate(files):

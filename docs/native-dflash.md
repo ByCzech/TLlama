@@ -45,6 +45,11 @@ Missing bindings/files/shards and a known non-`dflash` architecture fail before
 worker startup. Unknown metadata is not proof of pair compatibility: the native
 loader validates target/draft tensors and tokenizer compatibility. Startup
 failure is reported without retrying under a different strategy.
+Optional Python metadata-read failure on an unsharded draft, or the normalized
+`unknown` architecture marker, leaves model validation to the native loader as
+it does for the target. It is not a compatibility success. A known different
+architecture still fails before startup, and an unverifiable named shard set
+cannot use this fallback. See [the metadata audit](draft-metadata-audit.md).
 
 ## Captured native contract and initial defaults
 

@@ -286,8 +286,15 @@ class ModelManager:
                                              metadata=metadata, runtime_overrides=runtime_overrides,
                                              **self._native_launch_options)
             if resolved.launch.draft is not None:
-                arch = self._read_metadata_for_path(draft).get('arch')
-                if arch and arch != 'dflash':
+                try:
+                    arch = self._read_metadata_for_path(draft).get('arch')
+                except (ValueError, OSError) as exc:
+                    # As for the target, optional Python metadata is not the
+                    # native loader's model-validity verdict. Shard integrity
+                    # has already been checked separately above.
+                    logger.warning("Native draft metadata scan failed for %s: %s", model_name, exc)
+                    arch = None
+                if arch not in (None, '', 'unknown', 'dflash'):
                     raise ValueError(f"Model '{model_name}': draft-dflash requires dflash weights; got {arch!r}")
             artifacts = self._model_artifacts(spec, model, model_name, metadata=metadata)
             identity_before = tuple(build_model_file_fingerprint(path) for path in artifacts.files)
