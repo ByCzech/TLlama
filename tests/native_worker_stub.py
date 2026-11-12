@@ -511,10 +511,45 @@ async def stream_bytes(writer, value):
         await asyncio.sleep(0)
 
 
+def dflash_memory(data):
+    """Profile-specific synthetic inventory for the physical draft diagnostic."""
+    report = json.loads(data)
+    active = arg('--spec-type') == 'draft-dflash'
+    mode = os.environ['STUB_DFLASH_QUAL']
+    if not active and mode != 'off-leaks-draft':
+        removed = {owner['id'] for owner in report['owners'] if 'draft' in owner['roles']}
+        report['owners'] = [owner for owner in report['owners'] if owner['id'] not in removed]
+        buffers = []
+        for buffer in report['buffers']:
+            buffer['owners'] = [rel for rel in buffer['owners'] if rel['owner_id'] not in removed]
+            if buffer['owners']:
+                buffers.append(buffer)
+        report['buffers'] = buffers
+        report['placement']['layer_groups'] = [group for group in report['placement']['layer_groups']
+                                               if group['owner_id'] not in removed]
+        if 'weight_storage' in report:
+            intervals = []
+            for item in report['weight_storage']['intervals']:
+                item['relationships'] = [rel for rel in item['relationships'] if rel['owner_id'] not in removed]
+                if item['relationships']:
+                    intervals.append(item)
+            report['weight_storage']['intervals'] = intervals
+    if active and mode == 'no-draft-owner':
+        for owner in report['owners']:
+            if owner['kind'] == 'model' and 'draft' in owner['roles']:
+                owner['roles'] = []
+    if active and mode == 'partial-memory':
+        report['status'] = 'partial'
+        report['missing_components'] = [{'owner_id':None, 'component':'compute', 'reason':'not_observed'}]
+    return json.dumps(report).encode()
+
+
 async def mtp_request(reader, writer, body):
     """Synthetic MTP counters/transport only, never a model or speed benchmark."""
-    mode = os.environ['STUB_MTP']
-    enabled = arg('--spec-type') == 'draft-mtp'
+    dflash = os.environ.get('STUB_DFLASH_QUAL')
+    mode = dflash or os.environ['STUB_MTP']
+    enabled = (arg('--spec-type') == 'draft-dflash' and bool(arg('--spec-draft-model'))
+               if dflash else arg('--spec-type') == 'draft-mtp')
     if mode == 'http500':
         await json_response(writer, {'error': 'synthetic MTP failure'}, 500)
         return
@@ -534,6 +569,10 @@ async def mtp_request(reader, writer, body):
         if mode == 'changed-control' and enabled and MTP_CONTROL_READS > 1:
             content = 'CHANGED'
     timings = {**TIMINGS, 'predicted_per_second': 90.0 if enabled else 45.0}
+    if dflash and body.get('cache_prompt') is False:
+        timings['cache_n'] = 1 if mode == 'reused-cache' else 0
+        if mode == 'unknown-cache':
+            timings.pop('cache_n')
     if (enabled and mode != 'no-drafting'
             and not (mode == 'no-stream-drafting' and body['stream'])
             and not (mode == 'no-full-drafting' and not body['stream'])):
@@ -562,14 +601,17 @@ async def mtp_request(reader, writer, body):
     for piece in content:
         await stream_bytes(writer, event({'choices': [{'index': 0, 'delta': {'content': piece}, 'finish_reason': None}]}))
         if '10000' in prompt:
-            mark('started', 'mtp')
+            mark('started', 'dflash' if dflash else 'mtp')
             await reader.read()
-            mark('cancelled', 'mtp')
+            mark('cancelled', 'dflash' if dflash else 'mtp')
             if enabled and mode == 'changed-weights':
                 report_path = ROOT / 'memory-report'
                 report = json.loads(report_path.read_text())
                 report['weight_storage']['intervals'][0]['size_bytes'] += 1
                 report_path.write_text(json.dumps(report))
+            if enabled and mode == 'changed-shard':
+                shard = Path(os.environ['STUB_DFLASH_MUTATE_SHARD'])
+                shard.write_bytes(shard.read_bytes() + b'changed payload')
             return
     await stream_bytes(writer, event({'choices': [{'index': 0, 'delta': {}, 'finish_reason': finish}]}))
     await stream_bytes(writer, event({'choices': [], 'timings': timings, 'usage': USAGE}))
@@ -792,6 +834,8 @@ async def handle(reader, writer):
             data = file.read_bytes()
             if LIFECYCLE:
                 data = lifecycle_memory(data)
+            if os.environ.get('STUB_DFLASH_QUAL'):
+                data = dflash_memory(data)
             writer.write(f"HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\n"
                          f"Content-Length: {len(data)}\r\nConnection: close\r\n\r\n".encode() + data)
             await writer.drain()
@@ -803,7 +847,7 @@ async def handle(reader, writer):
             async with LOCK:
                 await tools_request(reader,writer,body)
             return
-        if os.environ.get('STUB_MTP') and path == '/v1/chat/completions':
+        if (os.environ.get('STUB_MTP') or os.environ.get('STUB_DFLASH_QUAL')) and path == '/v1/chat/completions':
             async with LOCK:
                 await mtp_request(reader, writer, body)
             return

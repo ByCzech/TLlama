@@ -121,6 +121,13 @@ subsequent off request without stale counters. Actual drafting/acceptance on a
 compatible DFlash/DFlash2 pair still requires hardware qualification; successful
 startup or the presence of a draft path is not proof of measured activity.
 
+For real pair captures use
+[dflash-qualification-smoke.md](../scripts/dflash-qualification-smoke.md).
+It checks uncached off/on native inference, owner/weight evidence, cancellation
+transport/recovery and cleanup, retaining raw data for mandatory manual review.
+Run DFlash and DFlash2 exports separately; an automatic protocol pass is not a
+quality certificate or proof that the native task stopped early.
+
 ## Identity and lifetime
 
 All declared artifacts contribute to stored model SIZE/ID and repository
