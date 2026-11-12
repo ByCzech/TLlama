@@ -748,6 +748,7 @@ async def fim_request(reader, writer, path, body):
         final = {'content': content, 'stop': True, 'stop_type': 'word' if stopping_word else 'eos',
                  'stopping_word': stopping_word, 'tokens': generated, 'tokens_evaluated': len(tokens),
                  'tokens_predicted': len(generated), 'timings': {'prompt_n': len(tokens), 'predicted_n': len(generated)}}
+        final['timings'].update({key: TIMINGS[key] for key in ('draft_n', 'draft_n_accepted') if key in TIMINGS})
         if not body['stream']:
             await json_response(writer, final)
             return

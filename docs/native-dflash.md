@@ -161,8 +161,32 @@ following request. These tests add no public fields or strategy fallback.
 This is adapter/lifecycle regression coverage, not native model qualification.
 The synthetic producer does not prove that a real target/draft pair supports
 Tools templates, grammar-constrained verification or every sampling mode.
-Those combinations still require real backend/model captures. Vision, FIM and
-prefix-cache/context-shift qualification remain separate work.
+Those combinations still require real backend/model captures. Prefix-cache/
+context-shift qualification remains separate work.
+
+## Vision and FIM adapter coverage
+
+`tests/test_dflash_vision_fim.py` checks production adapters with synthetic native
+subprocesses. A composite vision definition can pass both complete two-shard
+projector and draft groups to the same worker. Changing images retains that
+worker and the image payload, schema and request-scoped counters on Ollama
+chat/generate and OpenAI chat, full/streamed. Turning speculation off removes
+only the external draft from the next launch: the projector remains active and
+both stored data references remain intact. In-flight draining requests retain
+both helper pins until the owning process exits.
+
+The adapter suite also preserves literal FIM prefix/suffix token sequences,
+codegemma/starcoder vocabularies, configured PSM/SPM orders, boundary stops and
+sampling while carrying measured draft counters. FIM remains a literal native
+completion, without the chat template or native infill route. Invalid inputs
+fail before loading either model; a missing supported recipe still returns 501.
+Unsupported live vision or decoder failure cannot publish a successful reply
+or speculative statistics merely because a projector and draft were configured.
+
+These tests prove payload, reporting and lifetime behavior only. Their native
+producer is a stub, not a target/draft compatibility or correctness oracle.
+Actual DFlash/DFlash2 vision/FIM quality, context operations, supported loaders,
+sampling and performance need separate captures on the selected native build.
 
 For real pair captures use
 [dflash-qualification-smoke.md](../scripts/dflash-qualification-smoke.md).
