@@ -11,6 +11,13 @@ RUNNER_ALIASES = {
 
 def ollama_runtime_overrides(options):
     values = {}
+    # TLlama's explicit generation strategy is not a generic runner alias:
+    # embedding routes must continue to reject it.
+    if "spec_type" in options:
+        problem = runtime_problem("spec_type", options["spec_type"])
+        if problem:
+            raise ValueError(f"options.spec_type: {problem}")
+        values["spec_type"] = options["spec_type"]
     for public, native in RUNNER_ALIASES.items():
         if public not in options:
             continue
@@ -55,7 +62,7 @@ def resolve_ollama_speculation(overrides, configured_strategy):
     if problem:
         raise ValueError(f"options.draft_num_predict: {problem}")
     strategy = values.get("spec_type", configured_strategy)
-    if value == 0:
+    if value == 0 or values.get("spec_type") == "none":
         values["spec_type"] = "none"
     else:
         values["spec_type"] = strategy if strategy not in (None, "none") else "draft-mtp"

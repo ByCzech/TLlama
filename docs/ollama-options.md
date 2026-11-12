@@ -21,6 +21,7 @@ Omitting a previously supplied override returns to TOML/environment defaults.
 | `use_mmap` | Mmap part of `--load-mode`; configured mlock remains independent | On change |
 | `num_thread` | Positive: `--threads` and `--threads-batch`; nonpositive: native automatic defaults, overriding configured thread counts | On change |
 | `draft_num_predict` | Positive N sets the selected strategy's `draft_n_max=N`; without an active strategy it selects embedded `draft-mtp`. 0 selects `none` | On change |
+| `spec_type` (TLlama extension) | Explicit `none`, `draft-mtp` or `draft-dflash`; `none` stays off even with positive `draft_num_predict`, and count 0 disables any strategy | On change |
 | `num_keep` | `n_keep`; -1 preserves the initial prompt, 0 keeps no ordinary prefix tokens | Enables context shifting when first requested; value changes do not reload |
 | `repeat_last_n` | Native repeat window; -1 = context, 0 = disabled; overrides runtime `last_n_tokens_size` | No |
 | `num_predict` | Positive token budget; 0 passes native zero unchanged; -1 is unbounded; -2 fills remaining context with shifting disabled | -2 can change the worker's context-shift mode |
@@ -83,6 +84,28 @@ An omitted request value inherits the configured method and length. Request
 intent never enters the stored TOML, public model ID or native argv as a
 `draft_num_predict` option. Direct internal `draft_n_max` overrides keep native
 length semantics and do not implicitly activate speculation.
+
+The maintainer-approved TLlama extension `options.spec_type` selects the strategy
+explicitly on `/api/chat` and `/api/generate`. It overrides the configured method;
+`none` must not fall back to MTP when paired with a positive draft count. Count
+zero still disables an explicitly active method. A positive count without an
+explicit request method retains the legacy configured-method/MTP behavior above.
+Values are strictly the three strings shown; combinations and `draft-dflash2`
+are rejected. DFlash2 uses the native `draft-dflash` loader with its own export.
+An active DFlash request requires an attached valid draft; there is no method
+fallback on missing files or startup failure. This extension is not an Ollama
+compatibility promise and adds no OpenAI or embedding option.
+
+```text
+/set parameter spec_type "draft-dflash"
+/set parameter draft_num_predict 3
+```
+
+These commands update session request options locally. The next request applies
+them; changing the effective launch reloads the worker, while the same settings
+reuse it. A prior count zero must be changed to re-enable speculation. Main and
+helper TOML files, stored ID and repository size are unchanged. Placement/KV/
+batch controls and direct `draft_n_max` remain configuration-only.
 
 Public `num_predict=0` is passed unchanged as native zero, including its output
 and measured statistics. In the audited native pin `3144c167ef`, zero can return

@@ -29,8 +29,10 @@ Ollama `draft_num_predict` overrides them per request: a positive value adjusts
 the selected strategy's length, falling back to MTP when no strategy is active;
 zero disables the strategy. Selection happens after global/TOML configuration,
 not in the early options-name adapter. An attached external draft is passed
-only when DFlash is selected. Direct `spec_type`/`draft_n_max` option spellings
-still return HTTP 400. See [ollama-options.md](ollama-options.md).
+only when DFlash is selected. TLlama also accepts request `options.spec_type`
+to explicitly select the method. Explicit `none` stays off with a positive
+draft count; count zero disables any requested method. Direct `draft_n_max`
+still returns HTTP 400. See [ollama-options.md](ollama-options.md).
 Changes participate in normal definition/config identity: active leases retain
 their old worker, which drains, while new requests use the new configuration.
 

@@ -39,7 +39,7 @@ async def test_embedding_runner_options_reach_launch_and_reload_without_changing
 @pytest.mark.parametrize('options', [
     {'num_thread': True}, {'num_thread': '2'}, {'num_batch': 0}, {'num_gpu': -2},
     {'main_gpu': -1}, {'use_mmap': 1}, {'num_ctx': 2**31}, {'unknown': 1},
-    {'temperature': 0.5}, {'draft_num_predict': 0}, {'num_keep': 1},
+    {'temperature': 0.5}, {'draft_num_predict': 0}, {'num_keep': 1}, {'spec_type': 'none'},
 ])
 async def test_invalid_or_generation_only_options_never_load_even_for_empty_unload(embeddings, path, options):
     manager, client, name, _, _ = embeddings

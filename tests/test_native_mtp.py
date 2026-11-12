@@ -114,7 +114,7 @@ async def test_native_mtp_failure_cleans_up_without_relaunching_disabled(native_
 
 
 @pytest.mark.parametrize('path', ['/api/chat', '/api/generate'])
-@pytest.mark.parametrize('name,value', [('spec_type', 'draft-mtp'), ('draft_n_max', 3)])
+@pytest.mark.parametrize('name,value', [('spec_type', 'draft-simple'), ('draft_n_max', 3)])
 async def test_request_cannot_silently_change_a_worker_load_setting(public, path, name, value):
     manager, client, model, _ = public
     response = await client.post(path, json={'model': model, 'messages': [], 'prompt': 'x', 'options': {name: value}})

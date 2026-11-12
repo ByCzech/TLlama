@@ -24,6 +24,7 @@ Ctrl+C cancels input or the active request; Ctrl+D exits at an empty prompt.
 /forget NAME              Remove one local save
 /show model|parameters|system
 /set parameter NAME JSON  Set a request option (e.g. temperature 0.7)
+/set parameter spec_type "none"|"draft-mtp"|"draft-dflash"  Select speculation (TLlama)
 /set system TEXT          Replace the session system prompt and clear conversation
 /set think VALUE          true, false, or a server-supported level
 /set format VALUE         json, a schema object, or off

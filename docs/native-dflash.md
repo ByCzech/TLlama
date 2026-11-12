@@ -31,12 +31,16 @@ two draft artifacts while sharing the same target weights.
 | `draft-dflash` with an imported draft | `--spec-type draft-dflash --spec-draft-model PATH --spec-draft-n-max N` |
 | `none` or an unset strategy | No external draft path; no draft weights/context requested |
 | `draft-mtp` with a declared external draft | Embedded MTP only; no external draft path |
+| Request `spec_type` | Explicitly selects `none`, `draft-mtp` or `draft-dflash` over configuration |
 | Request `draft_num_predict=0` | Selects `none`; omits external draft path and native draft limit |
 | Positive request `draft_num_predict=N` | Adjusts the configured active strategy's length; with no active strategy retains the existing MTP fallback |
 
 An omitted request inherits the model configuration. The request does not
 rewrite TOML or stored model identity. `draft_n_max=0` is just a native limit;
 use `spec_type="none"` or request `draft_num_predict=0` to disable speculation.
+Explicit request `spec_type="none"` stays off even with a positive draft count.
+Request `draft_num_predict=0` also overrides an explicitly requested active
+strategy. Only a request without `spec_type` retains the legacy MTP fallback.
 Missing bindings/files/shards and a known non-`dflash` architecture fail before
 worker startup. Unknown metadata is not proof of pair compatibility: the native
 loader validates target/draft tensors and tokenizer compatibility. Startup
@@ -94,10 +98,26 @@ numeric override. Invalid types, unsupported KV names and out-of-range integers
 are rejected even when dormant. Active explicit `draft_device="none"` accepts
 only layer `auto` or 0; positive/all GPU layers conflict with that explicit choice.
 
+In an interactive TLlama session, select the method and length independently:
+
+```text
+/set parameter spec_type "draft-dflash"
+/set parameter draft_num_predict 3
+```
+
+Use `/set parameter spec_type "none"` to switch off, or `"draft-mtp"` for MTP.
+An earlier `draft_num_predict 0` remains off until changed to a positive value.
+The next request acquires the selected worker configuration; a changed effective
+launch reloads the worker and loses its in-memory prompt cache. Repeated identical
+settings reuse the worker. Session overrides do not edit the definition.
+
 These external controls are omitted from native argv for `none`, an unset
 strategy and embedded MTP. They do not activate speculation or change MTP's
 settings. HTTP inference `options` rejects these load keys, as it already rejects
-direct `spec_type`/`draft_n_max`; use configuration rather than new API options.
+direct `draft_n_max`; use configuration for draft placement/KV/batch settings.
+Only the agreed `options.spec_type` exception is accepted on `/api/chat` and
+`/api/generate`, not embedding routes. It is a TLlama extension; support by
+an Ollama daemon is not guaranteed. No new endpoint or OpenAI field is added.
 
 Automatic main-backend attempts retain explicit draft selectors and layer
 settings. Omitted draft selectors continue to follow each main attempt, including
