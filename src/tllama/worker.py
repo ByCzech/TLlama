@@ -99,7 +99,8 @@ class NativeWorker:
         self._load_bytes = 0
         self._capture_load = True
         self.runtime_fingerprint: str | None = None
-        self.memory = NativeMemory(None, projector=spec.mmproj is not None)
+        self.memory = NativeMemory(None, projector=spec.mmproj is not None,
+                                   external_draft=spec.draft is not None)
         self.telemetry = MemoryTelemetry(self.memory, mode=spec.memory_source, compare=spec.memory_compare)
         self._memory_client: httpx.AsyncClient | None = None
         self._memory_task: asyncio.Task | None = None

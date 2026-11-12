@@ -201,6 +201,39 @@ The optional tensor-diagnostics parser is integrated as described above.
 Raw captures and validated selected telemetry remain independent observations;
 parser support alone does not qualify a native GPU backend.
 
+## External drafts and log fallback (1.5)
+
+An active external draft makes the load-log inventory incomplete. Repeated
+unscoped compute-buffer lines can describe replacement reservations for one
+context or independent allocations for the target and draft. Summing every line
+would overcount reservations; retaining only the latest can omit draft/target
+memory. The logs also lack the native inventory's snapshot-local buffer IDs and
+shared-weight relationships. An apparently complete main-model log is therefore
+not evidence of complete target-plus-draft coverage.
+
+For these launches, `memory.source=native_load_log` reports `status=partial`,
+`reason=draft_allocation_unverified`, and null allocated/host/device totals.
+Consequently compact and detailed ps keep SIZE/PROCESSOR unknown. Parsed buffers
+remain diagnostic observations, not a complete inventory; an unscoped offload
+summary cannot prove placement of both models. Earlier pending/malformed/missing
+log reasons take precedence. The parser still drains and freezes at the normal
+load boundary, and uncertainty never stops inference.
+
+This guard is enabled by the active draft launch path, not the stored `[draft]`
+declaration. `none` and embedded MTP do not gain this external-draft guard.
+Native memory API reports remain independently selected and validated: unique
+buffer capacities and occupied weight ranges count once, including shared
+target/draft relationships and separate draft KV/compute. A CPU draft prevents a
+false full-GPU weight summary even with an accelerated target. A valid partial
+native report remains authoritative; a failed read discards stale totals and
+uses only the configured fallback. Later valid reads can restore native totals.
+
+Regression tests use synthetic native reports and real stub worker transports.
+They establish adapter/accounting behavior, not completeness of a particular
+DFlash/DFlash2 producer on hardware. Real target/draft captures are still needed
+to qualify native owner coverage, memory fit and performance. No log-role grammar
+or new reporting fields are invented to substitute for that evidence.
+
 The following historical 06a checkpoint describes the load-log source before
 native inventory and the full-offload compatibility policy were added.
 

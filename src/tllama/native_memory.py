@@ -65,9 +65,10 @@ def _bytes(value: str) -> int:
 class NativeMemory:
     """Observe one initial load, close it on a known marker, and never recount it."""
 
-    def __init__(self, runtime_fingerprint=RUNTIME_FINGERPRINT, *, projector=False):
+    def __init__(self, runtime_fingerprint=RUNTIME_FINGERPRINT, *, projector=False, external_draft=False):
         self.runtime_fingerprint = runtime_fingerprint
         self.projector = projector
+        self.external_draft = external_draft
         self._buffers: dict[tuple[str, str], int] = {}
         self._ended = False
         self._invalid = None
@@ -165,6 +166,11 @@ class NativeMemory:
                 # weight buffer (which includes backend alignment/padding).
                 # Keep the summary visible without calling it an allocation.
                 reason = 'projector_allocation_unreported'
+            elif self.external_draft:
+                # Unscoped compute lines cannot distinguish a replacement
+                # reservation from an independent target/draft allocation.
+                # Keep observations, but require native inventory for totals.
+                reason = 'draft_allocation_unverified'
         buffers = {}
         for (backend, kind), size in self._buffers.items():
             buffers.setdefault(backend, {})[kind] = size
@@ -181,6 +187,6 @@ class NativeMemory:
                 'status':'known' if reason is None else 'partial' if buffers else 'unavailable',
                 'reason':reason, 'buffers':buffers, 'allocated_bytes':allocated,
                 'device_bytes':device, 'host_bytes':host, 'physical_residency_bytes':None,
-                'layer_offload':dict(self._layer_offload) if self._layer_offload is not None else None,
+                'layer_offload':dict(self._layer_offload) if self._layer_offload is not None and not self.external_draft else None,
                 'projector_weights':dict(self._projector_weights),
                 'projector_weights_source':'native_model_size_summary' if self._projector_weights else None}

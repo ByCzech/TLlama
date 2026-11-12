@@ -126,5 +126,9 @@ read inactive artifacts; this is not loading them into native inference memory.
 Automated tests cover argv, configuration, public request selection, generation
 ownership, group cleanup, shards and failures using GGUF headers and synthetic
 native processes. They do not qualify real DFlash/DFlash2 generation or GPU
-memory accounting. Native memory-report/log audit and hardware qualification
-with compatible target/draft pairs remain follow-up work.
+memory accounting. The adapter memory audit checks independent/shared buffers,
+occupied ranges, draft KV/compute and source failure/recovery. For active drafts
+the unscoped log fallback keeps totals unknown (`draft_allocation_unverified`);
+use the native memory API for complete inventory, as described in
+[native-memory.md](native-memory.md). Real producer captures and hardware
+qualification with compatible target/draft pairs remain follow-up work.
