@@ -582,7 +582,9 @@ async def mtp_request(reader, writer, body):
     if state_mode:
         cached = body.get('cache_prompt') is True
         timings['cache_n'] = 19 if cached and state_mode != 'no-reuse' else 0
-        if state_mode == 'unknown-cache':
+        if state_mode == 'reused-cold' and not cached and 'sequence' in prompt:
+            timings['cache_n'] = 1
+        if state_mode == 'unknown-cache' or state_mode == 'unknown-cached' and cached:
             timings.pop('cache_n')
         if enabled and cached and state_mode == 'stale-state':
             content += ' STALE'

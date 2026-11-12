@@ -188,6 +188,31 @@ producer is a stub, not a target/draft compatibility or correctness oracle.
 Actual DFlash/DFlash2 vision/FIM quality, context operations, supported loaders,
 sampling and performance need separate captures on the selected native build.
 
+## Prefix cache and context controls
+
+The physical capture tool's `--state-only` mode compares cached repeat,
+continuation, branch, shorter-input and post-cancellation paths with cold native
+controls. See [the capture guide](../scripts/dflash-qualification-smoke.md).
+Positive native cache telemetry alone is not proof of correct rollback. Missing
+cache telemetry or a cold control that reused cache fails; differences and a
+run without positive reuse remain explicitly reviewable observations.
+
+`tests/test_dflash_cache_context.py` separately checks existing public adapters:
+repeated requests retain native cache defaults, `num_keep` changes keep the
+same worker when only the per-request count changes, and the existing
+`num_predict=-2` disables shifting while retaining the selected draft method.
+Context flags change the effective generation; they do not silently switch
+off DFlash. Oversized chat drops whole old tool exchanges or rejects an
+oversized latest turn. Raw completion retains BOS, requested prefix and recent
+tail. FIM still rejects an oversized literal prompt against the live effective
+context, rather than clipping it to accommodate speculation. Explicit
+multimodal shifting keeps its existing refusal without retiring a resident worker.
+
+The public API does not gain `cache_prompt` or a new context flag. Stub-backed
+tests prove mapping, counters and ownership, not actual C++ KV reuse or shifting.
+Real architecture/backend constraints remain native startup/request errors;
+there is no fallback to another speculative method or disabled speculation.
+
 For real pair captures use
 [dflash-qualification-smoke.md](../scripts/dflash-qualification-smoke.md).
 It checks uncached off/on native inference, owner/weight evidence, cancellation

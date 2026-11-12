@@ -56,6 +56,7 @@ def parser():
     result.add_argument('--request-timeout', type=float, default=600)
     result.add_argument('--transport', choices=('uds', 'tcp'), default='uds')
     result.add_argument('--no-mmap', action='store_true')
+    result.add_argument('--state-only', action='store_true', help='Compare cached repeats, continuations and branches with cold controls')
     result.add_argument('--dry-run', action='store_true', help='Print argv only; no GGUF reads, output or worker')
     return result
 
@@ -164,7 +165,7 @@ async def observe(worker, capture, stage, active, baseline=None):
     return payloads[0]
 
 
-async def collect(worker, body, stream, record, **labels):
+async def collect(worker, body, stream, record, *, uncached=True, **labels):
     def generic(metrics):
         return {key:value for key, value in metrics.items() if key != 'mtp_observed'}
     def emit(stage, **values):
@@ -172,7 +173,7 @@ async def collect(worker, body, stream, record, **labels):
             values['metrics'] = generic(values['metrics'])
         record(stage, **values)
     result = await NATIVE['collect'](worker, body, stream, emit, **labels)
-    if result['metrics']['cache_n'] != 0:
+    if uncached and result['metrics']['cache_n'] != 0:
         raise WorkerError('Cache-disabled request needs measured cache_n=0')
     return {**result, 'metrics':generic(result['metrics'])}
 
@@ -192,6 +193,8 @@ async def exercise(args, specs, capture, files):
         worker, results, primary = NativeWorker(spec), {}, None
         active = profile == 'dflash'
         def record(stage, **values):
+            if 'metrics' in values:
+                values['metrics'] = {key:value for key, value in values['metrics'].items() if key != 'mtp_observed'}
             capture.write('raw.jsonl' if stage in {'request', 'native-event', 'native-response'} else 'summary.jsonl',
                           stage, profile=profile, **values)
         try:
@@ -202,7 +205,17 @@ async def exercise(args, specs, capture, files):
             control_body = NATIVE['request']('Reply exactly READY.', 16)
             control = await collect(worker, control_body, False, record, probe='control')
             capture.check(profile + ':control', bool(control['content'].strip()) and control['finish_reason'] == 'stop')
-            for probe, prompt in NATIVE['PROMPTS'].items():
+            state_base = None
+            if args.state_only:
+                state_observations = []
+                results, state_base, state_control = await NATIVE['state_checks'](worker, args, record, state_observations)
+                for (label, stream), result in results.items():
+                    result['metrics'].pop('mtp_observed', None)
+                    capture.check(f'{profile}:{label}:cache-known', result['metrics']['cache_n'] is not None)
+                    if label.endswith('-cold'):
+                        capture.check(f'{profile}:{label}:cache-disabled', result['metrics']['cache_n'] == 0)
+                observations.extend({'stage':profile + ':state', 'observation':item} for item in state_observations)
+            for probe, prompt in (() if args.state_only else NATIVE['PROMPTS'].items()):
                 for stream in (False, True):
                     result = await collect(worker, NATIVE['request'](prompt, args.predict), stream, record, probe=probe)
                     capture.check(f'{profile}:{probe}:{stream}:content', bool(result['content'].strip()))
@@ -213,14 +226,26 @@ async def exercise(args, specs, capture, files):
                           metrics=[{'probe':key[0], 'stream':key[1], **value['metrics']} for key, value in results.items()])
             await observe(worker, capture, profile + ':after-inference', active, payloads)
             pid = worker.pid
-            async with worker.chat_stream(NATIVE['request'](NATIVE['CANCEL'], 512)) as events:
+            cancel_body = (NATIVE['state_request'](state_base + [{'role':'user', 'content':NATIVE['CANCEL']}], 512, True)
+                           if args.state_only else NATIVE['request'](NATIVE['CANCEL'], 512))
+            record('request', probe='cancel', stream=True, body=cancel_body)
+            async with worker.chat_stream(cancel_body) as events:
                 first = await asyncio.wait_for(LIFECYCLE['first_content'](events), args.request_timeout)
                 record('cancel-after-content', pid=pid, first=first,
                        native_stop_proof='Review worker.log; transport closure alone does not prove early native task stop')
-            recovered = await collect(worker, control_body, False, record, probe='after-cancel')
+            recovered = await collect(worker,
+                NATIVE['state_request'](state_base, args.predict, True) if args.state_only else control_body,
+                args.state_only, record, uncached=not args.state_only, probe='after-cancel')
             capture.check(profile + ':cancel-reuse', worker.pid == pid and bool(recovered['content'].strip())
-                          and recovered['finish_reason'] == 'stop')
-            compare(profile + ':recovery-comparison', control, recovered)
+                          and (args.state_only or recovered['finish_reason'] == 'stop'))
+            if args.state_only:
+                capture.check(profile + ':recovery:cache-known', recovered['metrics']['cache_n'] is not None)
+                compare(profile + ':recovery-comparison', state_control, recovered)
+                fresh = await collect(worker, NATIVE['state_request'](state_base, args.predict, False),
+                                      False, record, probe='after-cancel-cold')
+                compare(profile + ':recovery-cold-comparison', state_control, fresh)
+            else:
+                compare(profile + ':recovery-comparison', control, recovered)
             await observe(worker, capture, profile + ':after-cancel', active, payloads)
             profiles[profile] = results
         except BaseException as exc:
@@ -283,10 +308,12 @@ def main(argv=None):
         error = f'{type(exc).__name__}: {exc}'
     passed = error is None and bool(capture.checks) and all(item['ok'] for item in capture.checks)
     result = {'ok':passed, 'protocol_ok':passed, 'review_required':True,
-              'manual_review':['semantic_quality', 'early_native_task_stop', 'draft_export_provenance'],
+              'manual_review':['semantic_quality', 'early_native_task_stop', 'draft_export_provenance']
+                              + (['native_cache_rollback'] if args.state_only else []),
               'observations':observations, 'error':error, 'checks':capture.checks,
               'expected_fingerprint':args.expected_fingerprint, 'output':str(output),
-              'public_api':'not_exercised', 'scope':'native_protocol_and_telemetry'}
+              'public_api':'not_exercised', 'scope':'native_protocol_and_telemetry',
+              'mode':'state' if args.state_only else 'reference'}
     (output / 'result.json').write_text(json.dumps(result, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
     print(json.dumps(result, ensure_ascii=False))
     return 0 if passed else 1

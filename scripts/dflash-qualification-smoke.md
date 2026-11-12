@@ -92,9 +92,34 @@ within streaming pairs, off/on pairs and cancellation controls are retained in
 actual answers, timing distributions and native logs; deterministic inputs do
 not guarantee bit-identical quantized-backend output or speedup.
 
+## Prefix-cache state capture
+
+Add `--state-only` to the same invocation, with a new `--output` directory, to
+replace the copy/code reference probes with a state sequence in each fresh off/on
+worker. Launch flags and all memory, identity, counter and cleanup checks remain
+the same. No daemon definitions or public API options are changed.
+
+The sequence compares a cached repeat, an extended conversation with the actual
+first answer, a changed branch, and a return to the shorter base against each
+path's own cache-disabled control. It records native `cache_n`; cold controls
+must report zero, and every completed state request must provide cache telemetry.
+After interrupting a live cached stream, it compares both a cached recovery and
+another cold request against the original base. Memory/weight coverage is still
+checked after those operations. A positive `cache_n` proves reported reuse, not
+checkpoint restoration or correctness of internal target/draft rollback.
+
+Text, finish or output-count differences are observations requiring review;
+they are not automatically a model defect. No positive reuse is also explicitly
+reported for review: a run with all cache counts zero has not qualified reuse,
+even when protocol checks pass. Missing telemetry or nonzero cache in a cold
+control fails the automated checks. `manual_review` additionally lists
+`native_cache_rollback`; inspect raw answers and the native log. This mode does
+not enable context shifting or certify speculative context-shift support.
+
 This diagnostic exercises the private native protocol, **not public HTTP API**.
 Public DFlash adapter/client transport is separately covered by regression tests.
-It does not qualify tools, vision, FIM, prefix-cache reuse or arbitrary pairs.
+It does not qualify tools, vision, FIM or arbitrary pairs. Reference mode does
+not exercise prefix-cache reuse; state mode supplies evidence for manual review.
 DFlash and DFlash2 use the same native method; run separate captures with the
 actual compatible exports. The script does not infer the variant from its name
 or certify both formats after one successful run. Keep the full capture for
@@ -109,5 +134,5 @@ If the capture belongs to the service account, archive it under that account
 as well. Test this harness without real inference hardware using:
 
 ```bash
-pytest -q tests/test_dflash_qualification_smoke.py tests/test_native_dflash.py
+pytest -q tests/test_dflash_qualification_smoke.py tests/test_dflash_cache_context.py tests/test_native_dflash.py
 ```
