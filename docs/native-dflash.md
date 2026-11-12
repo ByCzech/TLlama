@@ -141,6 +141,29 @@ subsequent off request without stale counters. Actual drafting/acceptance on a
 compatible DFlash/DFlash2 pair still requires hardware qualification; successful
 startup or the presence of a draft path is not proof of measured activity.
 
+## Tools and structured-output adapter coverage
+
+`tests/test_dflash_tools_structured.py` runs production TLlama routes and owned
+native subprocesses with synthetic Tools/JSON replies. It checks an active,
+sharded draft alongside the caller-owned two-tool cycle, escaped arguments and
+replayed reasoning/history, full/streamed Ollama and OpenAI chat, and terminal
+draft counters without double counting OpenAI's optional usage frame. An
+explicit Ollama off request can continue the tool conversation in a replacement
+worker without replaying stale speculative statistics.
+
+The same adapter suite checks schema forwarding and JSON replies through chat,
+rendered/raw generate, and OpenAI chat, full/streamed. Corrupted/truncated Tools
+streams must not publish successful completion, speculative statistics or
+unverified Ollama calls. Actual TCP client disconnect must cancel the pending
+native stream and release its lease while retaining the worker/draft pin for a
+following request. These tests add no public fields or strategy fallback.
+
+This is adapter/lifecycle regression coverage, not native model qualification.
+The synthetic producer does not prove that a real target/draft pair supports
+Tools templates, grammar-constrained verification or every sampling mode.
+Those combinations still require real backend/model captures. Vision, FIM and
+prefix-cache/context-shift qualification remain separate work.
+
 For real pair captures use
 [dflash-qualification-smoke.md](../scripts/dflash-qualification-smoke.md).
 It checks uncached off/on native inference, owner/weight evidence, cancellation

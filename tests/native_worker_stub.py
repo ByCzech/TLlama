@@ -896,9 +896,9 @@ async def handle(reader, writer):
                 await reader.read()
                 mark("cancelled", "non-stream")
                 return
+            constrained = 'response_format' in body or 'json_schema' in body
+            text = vision_text or ('{"answer":42}' if constrained else "Ahoj světe")
             if not body["stream"] or mode == "json-stream":
-                constrained = 'response_format' in body or 'json_schema' in body
-                text = vision_text or ('{"answer":42}' if constrained else "Ahoj světe")
                 if chat:
                     result = {"choices": [{"message": {"content": text, "reasoning_content": "myšlenka"},
                                            "finish_reason": "stop"}], "usage": USAGE, "timings": TIMINGS}
@@ -911,8 +911,8 @@ async def handle(reader, writer):
                          b"Connection: close\r\n\r\n")
             await writer.drain()
             await stream_bytes(writer, b": ping\r\n\r\n")
-            chunk = {"choices": [{"delta": {"content": vision_text or "Ahoj světe"}, "finish_reason": None}]} if chat else {
-                "content": "Ahoj světe", "stop": False}
+            chunk = {"choices": [{"delta": {"content": text}, "finish_reason": None}]} if chat else {
+                "content": text, "stop": False}
             await stream_bytes(writer, event(chunk))
             if mode == "hold":
                 mark("started", "stream")
