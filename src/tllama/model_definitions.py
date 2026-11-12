@@ -14,8 +14,7 @@ def definition_path(manager, name):
 
 def validate_definition(manager, text):
     spec = parse_model_toml(text)
-    for section, model, source in (('llm', spec.llm_model, spec.llm_from),
-                                   ('mmproj', spec.mmproj_model, spec.mmproj_from)):
+    for section, model, source in spec.components:
         if source is not None:
             raise ValueError(f'[{section}].from must be uploaded with create before publication.')
         if model is not None:
@@ -54,8 +53,7 @@ def create_definition(manager, name, text, uploads, *, force=False, dry_run=Fals
     if target.exists() and not force:
         raise FileExistsError('Destination already exists.')
     spec = parse_model_toml(text)
-    for section, model, source in (('llm', spec.llm_model, spec.llm_from),
-                                   ('mmproj', spec.mmproj_model, spec.mmproj_from)):
+    for section, model, source in spec.components:
         if source is None and model is not None:
             require_data_reference(manager, model)
     if 'lora_path' in spec.runtime:
@@ -64,10 +62,10 @@ def create_definition(manager, name, text, uploads, *, force=False, dry_run=Fals
         if uploads:
             raise ValueError('Preflight checks definition/name/existing references; do not supply uploads.')
         return {'status': 'ready', 'model': name}
-    expected = {section for section, source in (('llm', spec.llm_from), ('mmproj', spec.mmproj_from))
+    expected = {section for section, model, source in spec.components
                 if source is not None}
     if set(uploads) != expected:
-        raise ValueError('Uploads must match exactly the [llm]/[mmproj] sections containing from.')
+        raise ValueError('Uploads must match exactly the [llm]/[mmproj]/[draft] sections containing from.')
     groups = []
     for section, files in uploads.items():
         if not 1 <= len(files) <= 2048:

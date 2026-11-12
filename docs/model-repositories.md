@@ -29,6 +29,36 @@ they include weights, projector/adapter and non-default parameters. Copying a
 definition shares files; identical uploads/downloads reuse complete groups.
 Published data is immutable and existing groups are verified before reuse.
 
+### Helper definition foundation (1.5 development)
+
+A standalone helper has one `[mmproj]` or `[draft]` section and no `[llm]`.
+It uses the same definition branches, public-name codec, managed groups and
+`model`/`from` import convention as a main model. For example:
+
+```toml
+[mmproj]
+model = "data/<group-sha256>/weights.gguf"
+```
+
+Standalone helpers contain only their data reference. Runtime, sampling,
+prompt/template and projector context settings belong to the main definition
+which uses them. A standalone helper is not an inference worker and is hidden
+from the default runnable-model listing. Filtered discovery and detailed show,
+client import and attachment commands follow in the management patches.
+
+A main definition may contain `[llm]`, `[mmproj]` and one `[draft]` reference.
+Declaring a draft does not activate speculative decoding. This foundation
+does not yet enable native DFlash loading; unsupported strategies remain
+rejected. Declared draft shards contribute to stored-model SIZE and identity,
+even when inactive. Models without a draft retain their existing public IDs.
+
+Each explicit TOML independently protects all its groups from pruning. A
+composite create publishes only its requested definition: attaching/importing
+a helper does not implicitly register a second TOML. Removing the last
+reference reclaims the complete group and optional `.inf` files; other
+definitions and live reservations keep it protected. No repository-format
+migration or additional copies of weights are required.
+
 ### Optional original filenames
 
 Each managed GGUF can have a companion with the same basename and `.inf`

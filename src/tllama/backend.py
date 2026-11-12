@@ -249,6 +249,9 @@ class ModelManager:
         for _ in range(3):
             before = self._toml_fingerprint_for_reference(model_name)
             spec = self._resolve_virtual_model_spec(model_name)
+            if spec is not None and spec.model_type != 'main':
+                raise TomlModelError(f"Model '{model_name}' is a {spec.model_type} helper; "
+                                     "attach it to a main model before inference")
             if spec is None or spec.llm_model is None:
                 raise FileNotFoundError(f"Model '{model_name}' is not registered/imported in {self.models_dir}")
             model = resolve_repo_relative_path(spec.llm_model, self.models_dir)
@@ -609,9 +612,12 @@ class ModelManager:
         llm = group(artifacts.llm)
         projector = group(artifacts.projector) if artifacts.projector else ''
         adapter = group(artifacts.adapter) if artifacts.adapter else None
-        if (artifacts.projector and not projector) or (artifacts.adapter and not adapter):
+        draft = group(artifacts.draft) if artifacts.draft else ''
+        if ((artifacts.projector and not projector) or (artifacts.adapter and not adapter)
+                or (artifacts.draft and not draft)):
             return ''
-        return model_digest(llm, projector, parameter_changes(spec, metadata, adapter_digest=adapter))
+        return model_digest(llm, projector, parameter_changes(spec, metadata, adapter_digest=adapter),
+                            draft=draft)
 
     def _listing_identity(self, model_name):
         for _ in range(3):
@@ -835,6 +841,13 @@ class ModelManager:
 
     def _model_artifacts(self, spec, target_path, source, *, metadata=None):
         projector = self.resolve_mmproj_path(spec, str(source))
+        draft = None
+        if spec.draft_from is not None:
+            raise TomlModelError(f'{source}: [draft].from has not been imported')
+        if spec.draft_model is not None:
+            draft = resolve_repo_relative_path(spec.draft_model, self.models_dir)
+            if not draft.is_file():
+                raise TomlModelError(f'{source}: [draft].model does not name an existing file')
         adapter = ()
         if 'lora_path' in spec.runtime:
             path = Path(spec.runtime['lora_path'])
@@ -849,6 +862,7 @@ class ModelManager:
             gguf_files(target_path, read, self.models_dir),
             gguf_files(projector, self._read_metadata_for_path, self.models_dir) if projector else (),
             adapter,
+            gguf_files(draft, self._read_metadata_for_path, self.models_dir) if draft else (),
         )
 
     def _list_local_models_sync(self) -> List[Dict[str, Any]]:
@@ -866,6 +880,9 @@ class ModelManager:
             try:
                 text = toml_path.read_text(encoding="utf-8")
                 spec = parse_model_toml(text, source=str(toml_path))
+
+                if spec.model_type != 'main':
+                    continue
 
                 target_path = self._resolve_virtual_model_target_path(spec, toml_path)
                 if target_path is None:

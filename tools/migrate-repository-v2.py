@@ -260,7 +260,7 @@ def build_plan(root, *, progress=None):
             raise ValueError(f'Definition exceeds 2 MiB: {relative}')
         spec = parse_model_toml(raw.decode('utf-8'), source=relative)
         refs = {}
-        for key, value in (('llm', spec.llm_model), ('mmproj', spec.mmproj_model),
+        for key, value in (('llm', spec.llm_model), ('mmproj', spec.mmproj_model), ('draft', spec.draft_model),
                            ('lora', spec.runtime.get('lora_path'))):
             if value is not None:
                 ref = resolve_reference(root, value)
@@ -311,15 +311,17 @@ def build_plan(root, *, progress=None):
             return None  # Pending client-side from= is preserved, not imported.
         main = groups[all_groups[refs['llm']]]
         projector = groups[all_groups[refs['mmproj']]] if 'mmproj' in refs else None
+        draft = groups[all_groups[refs['draft']]] if 'draft' in refs else None
         adapter = groups[all_groups[refs['lora']]] if 'lora' in refs else None
         changes = parameter_changes(spec, main['metadata'][0],
                                     adapter_digest=file_group_digest(adapter['digests']) if adapter else None)
         return model_digest(file_group_digest(main['digests']),
-                            file_group_digest(projector['digests']) if projector else '', changes)
+                            file_group_digest(projector['digests']) if projector else '', changes,
+                            draft=file_group_digest(draft['digests']) if draft else '')
 
     for entry, (spec, refs) in zip(definitions, pending):
         entry['id'] = identity(spec, refs)
-        for key in ('llm', 'mmproj'):
+        for key in ('llm', 'mmproj', 'draft'):
             if key in refs:
                 spec.document[key]['model'] = mapping[refs[key]]
         if 'lora' in refs:
@@ -332,7 +334,7 @@ def build_plan(root, *, progress=None):
         rewritten = text.encode('utf-8')
         changed = parse_model_toml(text, source=entry['target'])
         changed_refs = {key: value for key, value in
-                        (('llm', changed.llm_model), ('mmproj', changed.mmproj_model),
+                        (('llm', changed.llm_model), ('mmproj', changed.mmproj_model), ('draft', changed.draft_model),
                          ('lora', changed.runtime.get('lora_path'))) if value is not None}
         if identity(changed, changed_refs) != entry['id']:
             raise ValueError(f'Migration changes model identity: {entry["name"]}')

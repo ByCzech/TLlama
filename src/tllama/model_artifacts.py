@@ -37,12 +37,13 @@ class ModelArtifacts:
     llm: tuple[Path, ...]
     projector: tuple[Path, ...] = ()
     adapter: tuple[Path, ...] = ()
+    draft: tuple[Path, ...] = ()
 
     @property
     def files(self):
         # Shared paths/hard links contribute once within one definition.
         found = {}
-        for path in self.llm + self.projector + self.adapter:
+        for path in self.llm + self.projector + self.adapter + self.draft:
             stat = path.stat()
             found.setdefault((stat.st_dev, stat.st_ino), path)
         return tuple(found.values())

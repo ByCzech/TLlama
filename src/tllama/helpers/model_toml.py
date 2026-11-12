@@ -53,6 +53,8 @@ class VirtualModelSpec:
     llm_from: Optional[str] = None
     mmproj_model: Optional[str] = None
     mmproj_from: Optional[str] = None
+    draft_model: Optional[str] = None
+    draft_from: Optional[str] = None
     mmproj_context: Dict[str, Any] = field(default_factory=dict)
     runtime: Dict[str, Any] = field(default_factory=dict)
     sampling: Dict[str, Any] = field(default_factory=dict)
@@ -61,6 +63,23 @@ class VirtualModelSpec:
     system_prompt: Optional[str] = None
     document: Any = field(default=None, repr=False, compare=False)
     fim_order: str = "auto"
+
+    @property
+    def model_type(self) -> str:
+        if self.llm_model is not None or self.llm_from is not None:
+            return "main"
+        if self.mmproj_model is not None or self.mmproj_from is not None:
+            return "mmproj"
+        if self.draft_model is not None or self.draft_from is not None:
+            return "draft"
+        return "main"
+
+    @property
+    def components(self):
+        """Declared roles, including imports not yet published by create."""
+        return (("llm", self.llm_model, self.llm_from),
+                ("mmproj", self.mmproj_model, self.mmproj_from),
+                ("draft", self.draft_model, self.draft_from))
 
 
 def _require_xor(section: str, model_value: Any, from_value: Any, source: str) -> None:
@@ -106,14 +125,12 @@ def parse_model_toml(text: str, *, source: str = "<toml>") -> VirtualModelSpec:
     _reject_unknown_sections(document, source)
 
     llm = document.get("llm")
-    if llm is None:
-        raise TomlModelError(f"{source}: missing required [llm] section.")
-
-    _reject_unknown_keys(llm, "llm", _LLM_KEYS, source)
-
-    llm_model = _as_optional_str(llm.get("model"), field_name="llm.model", source=source)
-    llm_from = _as_optional_str(llm.get("from"), field_name="llm.from", source=source)
-    _require_xor("llm", llm_model, llm_from, source)
+    llm_model = llm_from = None
+    if llm is not None:
+        _reject_unknown_keys(llm, "llm", _LLM_KEYS, source)
+        llm_model = _as_optional_str(llm.get("model"), field_name="llm.model", source=source)
+        llm_from = _as_optional_str(llm.get("from"), field_name="llm.from", source=source)
+        _require_xor("llm", llm_model, llm_from, source)
 
     mmproj = document.get("mmproj")
     mmproj_model: Optional[str] = None
@@ -125,6 +142,22 @@ def parse_model_toml(text: str, *, source: str = "<toml>") -> VirtualModelSpec:
         mmproj_model = _as_optional_str(mmproj.get("model"), field_name="mmproj.model", source=source)
         mmproj_from = _as_optional_str(mmproj.get("from"), field_name="mmproj.from", source=source)
         _require_xor("mmproj", mmproj_model, mmproj_from, source)
+
+    draft = document.get("draft")
+    draft_model = draft_from = None
+    if draft is not None:
+        _reject_unknown_keys(draft, "draft", _LLM_KEYS, source)
+        draft_model = _as_optional_str(draft.get("model"), field_name="draft.model", source=source)
+        draft_from = _as_optional_str(draft.get("from"), field_name="draft.from", source=source)
+        _require_xor("draft", draft_model, draft_from, source)
+
+    if llm is None:
+        helpers = [role for role in ("mmproj", "draft") if role in document]
+        if len(helpers) != 1:
+            raise TomlModelError(f"{source}: expected [llm] or exactly one standalone [mmproj]/[draft].")
+        if set(document) != set(helpers) or mmproj_context:
+            raise TomlModelError(f"{source}: standalone helpers only contain a model/from reference; "
+                                 "inference settings belong to a main [llm] definition.")
 
     runtime = dict(document.get("runtime") or {})
     _reject_unknown_runtime_keys(runtime, source)
@@ -176,6 +209,8 @@ def parse_model_toml(text: str, *, source: str = "<toml>") -> VirtualModelSpec:
         llm_from=llm_from,
         mmproj_model=mmproj_model,
         mmproj_from=mmproj_from,
+        draft_model=draft_model,
+        draft_from=draft_from,
         mmproj_context=mmproj_context,
         runtime=runtime,
         sampling=sampling_table,
@@ -194,7 +229,7 @@ def parse_model_toml(text: str, *, source: str = "<toml>") -> VirtualModelSpec:
 # missing feature. The cost is that a .toml written for a later TLlama is
 # refused by an earlier one, which is the intended outcome.
 _KNOWN_SECTIONS = frozenset({
-    "llm", "mmproj", "runtime", "sampling", "template", "system", "fim",
+    "llm", "mmproj", "draft", "runtime", "sampling", "template", "system", "fim",
 })
 
 # The vocabularies parse_model_toml reads out of the three sections that

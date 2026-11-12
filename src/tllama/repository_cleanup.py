@@ -47,10 +47,10 @@ def _reference(value):
 
 def definition_groups(path):
     spec = parse_model_toml(path.read_text(encoding='utf-8'), source=str(path))
-    if spec.llm_from is not None or spec.mmproj_from is not None:
+    if any(source is not None for role, model, source in spec.components):
         raise ValueError(f'Unpublished definition: {path}')
     result = {}
-    for value in (spec.llm_model, spec.mmproj_model, spec.runtime.get('lora_path')):
+    for value in (*[model for role, model, source in spec.components], spec.runtime.get('lora_path')):
         if value is not None:
             group, files = _reference(value)
             if group in result and result[group] != files:

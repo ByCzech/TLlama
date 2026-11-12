@@ -44,6 +44,21 @@ def basic(tmp_path):
     return root, source, definition
 
 
+def test_conversion_preserves_draft_references_and_main_identity(tmp_path):
+    root, _, definition = basic(tmp_path)
+    weight(root / 'Local' / 'draft.gguf', arch='qwen3')
+    original = definition.read_text() + '[draft]\nmodel="Local/draft.gguf"\n'
+    definition.write_text(original)
+    manager = ModelManager(BackendConfig(models_dir=str(root)))
+    before = manager._listing_identity('model')
+    plan = tool.build_plan(root)
+    tool.apply_plan(root, plan)
+    changed = parse_model_toml(definition.read_text())
+    assert changed.draft_model == plan['mapping']['Local/draft.gguf']
+    assert (root / changed.draft_model).is_file()
+    assert manager._listing_identity('model') == before
+
+
 @pytest.mark.parametrize('interrupted', [False, True])
 def test_conversion_finishes_all_empty_runtime_directories_before_marker(tmp_path, monkeypatch, interrupted):
     from tllama.repository_check import check_repository

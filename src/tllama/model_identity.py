@@ -166,12 +166,14 @@ def file_group_digest(digests):
     return sha256(canonical_json({'format': 'tllama-gguf-shards-v1', 'shards': digests})).hexdigest()
 
 
-def model_digest(llm, projector='', changes=None):
+def model_digest(llm, projector='', changes=None, *, draft=''):
     if not llm:
         return ''
     parts = {'format': 'tllama-model-id-v1', 'llm': llm}
     if projector:
         parts['mmproj'] = projector
+    if draft:
+        parts['draft'] = draft
     if changes:
         parts['parameters'] = sha256(canonical_json(changes)).hexdigest()
     if len(parts) == 2:

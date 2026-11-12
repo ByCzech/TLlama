@@ -42,6 +42,13 @@ def test_four_composition_cases_are_distinct_and_roles_are_framed():
     assert model_digest(llm, projector) != model_digest(projector, llm)
 
 
+def test_draft_role_extends_identity_without_changing_existing_ids():
+    assert model_digest('llm', draft='') == model_digest('llm') == 'llm'
+    assert model_digest('llm', 'helper') != model_digest('llm', draft='helper')
+    assert model_digest('llm', draft='a') != model_digest('llm', draft='b')
+    assert model_digest('llm', 'projector', draft='a') != model_digest('llm', 'projector')
+
+
 def test_gguf_defaults_precede_toml_comparison_including_float32():
     metadata = {'arch':'llama', 'context_length':8192, 'recommended_sampling':{'temperature':0.6000000238418579},
                 'template':'GGUF template', 'tool_template':'GGUF template',

@@ -85,6 +85,28 @@ def test_required_adapter_counts_once_even_when_hard_linked(manager, artifact, t
     assert manager._model_artifacts(spec, path, toml).size == path.stat().st_size
 
 
+async def test_inactive_draft_counts_all_shards_in_size_and_changes_model_id(manager, artifact, toml_file):
+    model = artifact('model.gguf')
+    draft = [artifact(f'draft-{number+1:05d}-of-00002.gguf', 'qwen3',
+                      **{'split.count': 2, 'split.no': number}) for number in range(2)]
+    define(toml_file, 'plain')
+    define(toml_file, 'with-draft', extra=f'[draft]\nmodel="Local/{draft[0].name}"\n')
+    rows = {row['id']: row for row in await manager.list_local_models_with_metadata()}
+    assert rows['plain']['size'] == model.stat().st_size
+    assert rows['with-draft']['size'] == sum(path.stat().st_size for path in [model, *draft])
+    assert rows['plain']['digest'] != rows['with-draft']['digest']
+    assert manager.native_snapshot() == []
+
+
+def test_draft_shared_with_main_is_counted_once(manager, artifact, toml_file):
+    model = artifact('model.gguf')
+    draft = model.with_name('draft.gguf')
+    os.link(model, draft)
+    definition = define(toml_file, extra='[draft]\nmodel="Local/draft.gguf"\n')
+    spec = parse_model_toml(definition.read_text())
+    assert manager._model_artifacts(spec, model, definition).size == model.stat().st_size
+
+
 def test_tags_exposes_complete_size(client, manager, artifact, toml_file, monkeypatch):
     from tllama.routers import ollama
     monkeypatch.setattr(ollama, 'model_manager', manager)
