@@ -61,7 +61,13 @@ def build_parser() -> argparse.ArgumentParser:
         command = commands.add_parser(name, aliases=aliases, help=help_text)
         _client_options(command)
         command.set_defaults(operation=name)
-        if name == 'create':
+        if name == 'list':
+            filters = command.add_mutually_exclusive_group()
+            filters.add_argument('--all', dest='model_type', action='store_const', const='all',
+                                 help='Include main models and standalone helpers.')
+            filters.add_argument('--type', dest='model_type', choices=['main', 'mmproj', 'draft'],
+                                 help='List only definitions of the requested type.')
+        elif name == 'create':
             command.add_argument('model')
             command.add_argument('--file', '-f', required=True, help='Client-side TOML definition path.')
             command.add_argument('--force', action='store_true', help='Replace an existing definition; never replace weights.')
@@ -195,8 +201,10 @@ async def _execute(args):
             data = await client.stop(args.model)
             text = f'unload requested: {args.model}'
         elif args.operation == 'list':
-            data = await _wait_for_model_info(client.list_models(), notice=not as_json)
-            text = '' if as_json else models_text(data, decimal_units=args.decimal_units)
+            listing = client.list_models(model_type=args.model_type) if args.model_type is not None else client.list_models()
+            data = await _wait_for_model_info(listing, notice=not as_json)
+            text = '' if as_json else models_text(data, decimal_units=args.decimal_units,
+                                                show_type=args.model_type is not None)
         elif args.operation == 'ps':
             data = await client.ps(detailed=True) if args.detailed else await client.ps()
             text = '' if as_json else processes_text(data, decimal_units=args.decimal_units)

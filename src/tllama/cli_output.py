@@ -30,9 +30,10 @@ def _table(headers, rows):
                      for row in [headers, *rows])
 
 
-def models_text(data, *, decimal_units=False):
-    return _table(['NAME', 'ID', 'SIZE', 'MODIFIED'], [
-        [m.get('name') or m.get('model', '-'), _id(m), size_text(m.get('size'), decimal_units=decimal_units),
+def models_text(data, *, decimal_units=False, show_type=False):
+    return _table(['NAME', *(['TYPE'] if show_type else []), 'ID', 'SIZE', 'MODIFIED'], [
+        [m.get('name') or m.get('model', '-'), *([m['model_definition']['type']] if show_type else []),
+         _id(m), size_text(m.get('size'), decimal_units=decimal_units),
          timestamp_text(m['modified_at']) if m.get('modified_at') else '-']
         for m in data['models']])
 

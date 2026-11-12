@@ -168,9 +168,20 @@ class TLlamaClient:
             raise ClientError('Server response must contain a models array of objects.')
         return models
 
-    async def list_models(self):
-        data = await self._request('GET', 'api/tags', wait_for_server_work=True)
-        self._models(data)
+    async def list_models(self, *, model_type=None):
+        if model_type is not None:
+            if not isinstance(model_type, str) or model_type not in {'main', 'mmproj', 'draft', 'all'}:
+                raise ClientConfigError('Model type must be main, mmproj, draft or all.')
+            await self.require_repository_helpers()
+        controls = {'params': {'type': model_type}} if model_type is not None else {}
+        data = await self._request('GET', 'api/tags', wait_for_server_work=True, **controls)
+        models = self._models(data)
+        if model_type is not None:
+            for model in models:
+                definition = model.get('model_definition')
+                kind = definition.get('type') if isinstance(definition, dict) else None
+                if kind not in ('main', 'mmproj', 'draft') or (model_type != 'all' and kind != model_type):
+                    raise ClientError('Server did not confirm the requested model type filter.')
         return data
 
     async def show(self, model):

@@ -88,15 +88,12 @@ async def test_unsupported_server_stops_before_local_header_hash_or_upload(tmp_p
 
 @pytest.fixture
 async def helper_client(manager, monkeypatch):
-    # The production marker intentionally waits for the remaining list patch.
-    # Simulate that advertised contract only here; mutations use the real app.
+    # Record traffic while exercising the production capability advertisement.
     monkeypatch.setattr(ollama, 'model_manager', manager)
     calls = []
     async with httpx.ASGITransport(app=app) as transport:
         async def handle(request):
             calls.append((request.method, request.url.path))
-            if request.method == 'GET' and request.url.path == '/api/tags':
-                return httpx.Response(200, json={'models': [], 'server_features': ['repository_helpers']})
             return await transport.handle_async_request(request)
         async with TLlamaClient('http://test', transport=httpx.MockTransport(handle)) as client:
             yield client, calls
@@ -210,12 +207,13 @@ async def test_helper_name_conflict_fails_before_source_work(helper_client, mana
     assert (manager.models_dir / definition_path('taken')).read_text() == original
 
 
-async def test_current_server_without_marker_keeps_helper_import_gated(create_client, manager, tmp_path):
+async def test_current_server_advertises_and_accepts_helper_import(create_client, manager, tmp_path):
+    source = gguf_file(tmp_path / 'draft.gguf', arch='dflash')
     definition = tmp_path / 'helper.toml'
-    definition.write_text(section('draft', 'missing.gguf'))
-    with pytest.raises(ClientError, match='repository_helpers'):
-        await create_from_file(create_client, 'helper', definition, as_json=True)
-    assert not list(manager.models_dir.rglob('*.toml'))
+    definition.write_text(section('draft', str(source)))
+    assert (await create_client.list_models())['server_features'] == ['repository_helpers']
+    await create_from_file(create_client, 'helper', definition, as_json=True)
+    assert parse_model_toml(manager.read_model_definition('helper')).model_type == 'draft'
 
 
 def test_definition_only_helper_import_needs_no_local_gguf_or_server_dependencies(tmp_path):

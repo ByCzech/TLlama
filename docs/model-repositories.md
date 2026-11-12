@@ -81,10 +81,18 @@ still supported. Running a helper directly returns HTTP 400 before native
 startup. Helpers have stable content-and-role IDs, shared by aliases of the
 same helper; existing main-model IDs are unchanged.
 
-This read-only checkpoint does not advertise `server_features` support for
-`repository_helpers` yet. That marker confirms the complete agreed helper
-management contract, including attachment and removal controls. CLI list
-filters and capability checks will follow with that complete contract.
+`/api/tags` advertises `server_features: ["repository_helpers"]`, including
+when the repository is empty. This confirms the helper-management contract:
+typed listing/show, standalone import/pull, attachment and removal controls.
+It does not advertise native DFlash inference or activate speculation.
+
+The CLI defaults to main models. Use `tllama list --all` to include helpers or
+`tllama list --type main|mmproj|draft` for one type; `ls` accepts the same flags.
+`--all` and `--type` are mutually exclusive. An explicit filter first checks
+the capability marker, then requests the server filter and validates returned
+row types. A server which ignores the filter cannot silently pass off main
+models as projectors or drafts. The text view adds a `TYPE` column for explicit
+filters; default columns and JSON response fields remain unchanged.
 
 ### Standalone projector pull
 
@@ -105,8 +113,7 @@ optional `.inf` files.
 Repeating a projector pull from 1.4.x can register the missing helper TOML from
 its verified origin and data without downloading the group again. This is
 an explicit pull, not an automatic inventory repair of all old projectors.
-HTTP pull request and response shapes are unchanged. The full
-`repository_helpers` marker follows the remaining management patches.
+HTTP pull request and response shapes are unchanged.
 
 ### Standalone DFlash pull
 
@@ -163,9 +170,9 @@ Standalone helper create and any create containing a draft require the
 `repository_helpers` marker. Both client preflight and final create check it
 before their POST. Unsupported servers are rejected before local GGUF work or
 uploads. Ordinary main create, including its existing projector attachment,
-does not probe capabilities or change its request shape. At this checkpoint,
-the new helper imports remain gated until the remaining list patch advertises
-the complete contract. Server-side native DFlash loading is a separate step.
+does not probe capabilities or change its request shape. A server without the
+marker cannot accept the extended client operation. Server-side native DFlash
+loading is a separate step.
 
 ### Assemble a model from registered helpers
 
@@ -194,9 +201,8 @@ The client controls are `tllama cp SOURCE DEST --mmproj NAME --draft NAME`.
 They first require `repository_helpers` in `/api/tags` `server_features`, even
 for an empty model list. A server which ignores unknown fields cannot silently
 perform an ordinary copy instead. Plain cp sends the original request without
-a capability probe. At this development checkpoint, the server copy operation
-is implemented but the full helper contract is not yet advertised; the new
-CLI controls remain gated until the remaining management patches enable it.
+a capability probe. The server now advertises the complete helper-management
+contract, enabling these controls against a matching TLlama daemon.
 
 ### Removing a model and its helpers
 
@@ -221,8 +227,7 @@ individually. Physical cleanup rechecks references and worker reservations;
 active workers can defer it even after the helper TOML has been removed.
 
 The extended client command requires `repository_helpers` and a structured
-deletion confirmation. It remains gated until the full management contract is
-advertised. Ordinary rm sends its original request and remains compatible with
+deletion confirmation. Ordinary rm sends its original request and remains compatible with
 Ollama; an empty successful reply produces the existing warning once.
 
 ### Optional original filenames

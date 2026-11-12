@@ -78,7 +78,7 @@ async def list_models_ollama(
             }
         })
 
-    return {"models": formatted_models}
+    return {"models": formatted_models, "server_features": ["repository_helpers"]}
 
 
 @router.post("/chat")

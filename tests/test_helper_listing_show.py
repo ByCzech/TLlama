@@ -46,7 +46,7 @@ def test_tags_filters_helper_roles_and_reports_complete_sizes(listing_repo, kind
     assert response.status_code == 200, response.text
     data = response.json()
     assert {row['name'] for row in data['models']} == expected
-    assert 'repository_helpers' not in data.get('server_features', [])
+    assert data['server_features'] == ['repository_helpers']
     for row in data['models']:
         role = row['name'] if row['name'] in {'mmproj', 'draft'} else 'main'
         assert row['model_definition'] == {'type': role}
