@@ -160,8 +160,14 @@ def register_pull(manager, repo_id, filename, paths, metadata, digests, source_f
     index = read_origin(manager, repo_id, filename)
     warnings = []
     name = None
-    model_type = 'mmproj' if metadata.get('is_projector') else 'main'
-    role = 'mmproj' if model_type == 'mmproj' else 'llm'
+    # DFlash and DFlash2 share general.architecture=dflash upstream. This
+    # identifies a stored draft, not an active speculative strategy or a
+    # guarantee that the native loader accepts a particular target pair.
+    if metadata.get('arch') == 'dflash':
+        model_type = 'draft'
+    else:
+        model_type = 'mmproj' if metadata.get('is_projector') else 'main'
+    role = 'llm' if model_type == 'main' else model_type
     base = repo_id + '/' + Path(filename).name[:-5]
     candidates = [base] + [base + f'_{number:02d}' for number in range(1, 100)]
     previous = index.get('model')
@@ -172,7 +178,7 @@ def register_pull(manager, repo_id, filename, paths, metadata, digests, source_f
     for candidate in dict.fromkeys(candidates):
         target = destination(manager, candidate)
         if not target.exists():
-            text = (f'[mmproj]\nmodel = {json.dumps(relative)}\n' if model_type == 'mmproj'
+            text = (f'[{role}]\nmodel = {json.dumps(relative)}\n' if model_type != 'main'
                     else render_model_toml(relative, metadata=metadata))
             write_model_toml(target, text)
             name = candidate

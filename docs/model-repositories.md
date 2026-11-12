@@ -105,8 +105,36 @@ optional `.inf` files.
 Repeating a projector pull from 1.4.x can register the missing helper TOML from
 its verified origin and data without downloading the group again. This is
 an explicit pull, not an automatic inventory repair of all old projectors.
-HTTP pull request and response shapes are unchanged. Automatic draft/DFlash
-classification and the full `repository_helpers` marker follow separately.
+HTTP pull request and response shapes are unchanged. The full
+`repository_helpers` marker follows the remaining management patches.
+
+### Standalone DFlash pull
+
+A GGUF with `general.architecture = "dflash"` is registered as an independent
+`[draft]` definition, using the same naming, collision, sharing and cleanup
+policy as a projector. `/api/tags?type=draft` and ordinary show expose it;
+the default main listing excludes it and standalone inference is rejected.
+The classification uses the header architecture, never a filename or repository
+name containing "draft", "MTP" or "DFlash". Existing metadata and digest cache
+formats already retain this architecture and do not need invalidation.
+
+Upstream uses that architecture for both DFlash and DFlash2; their native
+implementation distinguishes the model variants. TLlama does not invent a
+separate `dflash2` architecture or enable speculation when storing a draft.
+Registration is not validation of native tensor completeness or compatibility
+with a particular target. Native loading and explicit strategy configuration
+follow separately.
+
+If an older pull left an `[llm]` definition at the same public name, repeating
+pull preserves that TOML and registers the helper at the next numbered name.
+The definitions share data; this adds no GGUF copy. The old definition can be
+inspected and explicitly removed. Repeated pull reuses the helper's registered
+name. There is no automatic rewrite of user definitions or repository-wide
+conversion during pull.
+
+Upstream references for the shared architecture and native variant handling:
+[architecture names](https://github.com/ggml-org/llama.cpp/blob/master/gguf-py/gguf/constants.py)
+and [DFlash loader](https://github.com/ggml-org/llama.cpp/blob/master/src/models/dflash.cpp).
 
 ### Assemble a model from registered helpers
 
