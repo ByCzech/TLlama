@@ -189,8 +189,15 @@ class TLlamaClient:
             raise ClientError('Server response is missing its version string.')
         return data['version']
 
-    async def remove(self, model):
-        data = await self._request('DELETE', 'api/delete', accept_empty=True, json={'model': model})
+    async def remove(self, model, *, remove_unused_helpers=False):
+        if type(remove_unused_helpers) is not bool:
+            raise ClientConfigError('remove_unused_helpers must be true or false.')
+        controls = {}
+        if remove_unused_helpers:
+            await self.require_repository_helpers()
+            controls['remove_unused_helpers'] = True
+        data = await self._request('DELETE', 'api/delete', accept_empty=not remove_unused_helpers,
+                                   json={'model': model, **controls})
         if data is None:
             # Ollama's successful DELETE has no body. Keep other endpoints'
             # JSON contracts strict and never use this clue to identify a
@@ -202,6 +209,13 @@ class TLlamaClient:
             return {'status': 'success'}
         if data.get('status') != 'success':
             raise ClientError('Server did not confirm model definition deletion.')
+        if remove_unused_helpers:
+            cleanup = data.get('cleanup')
+            if (not isinstance(cleanup, dict) or any(
+                    not isinstance(cleanup.get(key), list)
+                    or any(not isinstance(name, str) for name in cleanup[key])
+                    for key in ('removed_helpers', 'unused_helpers'))):
+                raise ClientError('Server did not confirm helper cleanup results.')
         return data
 
     async def require_repository_helpers(self):

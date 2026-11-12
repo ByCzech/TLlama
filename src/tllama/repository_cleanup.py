@@ -45,8 +45,9 @@ def _reference(value):
     return path.parts[1], _files(path.parts[2])
 
 
-def definition_groups(path):
-    spec = parse_model_toml(path.read_text(encoding='utf-8'), source=str(path))
+def definition_groups(path, *, spec=None):
+    if spec is None:
+        spec = parse_model_toml(path.read_text(encoding='utf-8'), source=str(path))
     if any(source is not None for role, model, source in spec.components):
         raise ValueError(f'Unpublished definition: {path}')
     result = {}
@@ -132,8 +133,8 @@ def remember_definition(store, path):
         return [f'Cannot schedule physical cleanup: {exc}']
 
 
-def _references(store):
-    references = set()
+def _definitions(store):
+    """Read every definition or fail, sharing the collector's path checks."""
     def walk(directory):
         # Path.glob/os.walk can silently suppress access errors or skip links.
         # Explicit traversal must either read every definition or fail closed.
@@ -142,17 +143,64 @@ def _references(store):
             if stat.S_ISLNK(info.st_mode):
                 raise ValueError(f'Symlink in definition tree: {path}')
             if stat.S_ISDIR(info.st_mode):
-                walk(path)
+                yield from walk(path)
             elif path.name.lower().endswith('.toml'):
                 if not stat.S_ISREG(info.st_mode):
                     raise ValueError(f'Definition is not a regular file: {path}')
-                definition_name(path.relative_to(store.root).as_posix())
-                references.update(definition_groups(path))
+                name = definition_name(path.relative_to(store.root).as_posix())
+                spec = parse_model_toml(path.read_text(encoding='utf-8'), source=str(path))
+                yield path, name, spec, definition_groups(path, spec=spec)
     for branch in ('Local', 'TLlama', 'HuggingFace'):
         directory = store.root / branch
         if _directory(directory):
-            walk(directory)
-    return references
+            yield from walk(directory)
+
+
+def _references(store):
+    return {group for path, name, spec, groups in _definitions(store) for group in groups}
+
+
+def unused_helper_definitions(store, removed_path, removed_spec):
+    """Select only helpers attached to this main. Caller holds the store lock.
+
+    The result belongs to this transaction, not to a later cleanup attempt.
+    Worker pins protect physical data after definition deletion independently.
+    """
+    if removed_spec is None or removed_spec.model_type != 'main':
+        return [], [], []
+    attached = {}
+    for role, value, source in removed_spec.components:
+        if role != 'llm' and value is not None:
+            group, files = _reference(value)
+            attached.setdefault(group, set()).add(role)
+    if not attached:
+        return [], [], []
+    expected = definition_groups(removed_path, spec=removed_spec)
+    excluded = removed_path.resolve()
+    used, helpers = set(), {}
+    for path, name, spec, groups in _definitions(store):
+        for group in attached.keys() & groups.keys():
+            if groups[group] != expected[group]:
+                raise ValueError('Definitions disagree about attached helper shards.')
+        if path == excluded:
+            continue
+        if spec.model_type == 'main':
+            used.update(groups)
+        else:
+            group, files = _reference(spec.primary_model)
+            helpers.setdefault(group, []).append((name, spec.model_type))
+    unused, removable, ambiguous = [], [], []
+    for group, roles in attached.items():
+        if group in used:
+            continue
+        aliases = helpers.get(group, [])
+        names = [name for name, role in aliases if role in roles]
+        unused.extend(names)
+        if len(aliases) == 1:
+            removable.extend(names)
+        elif names:
+            ambiguous.extend(name for name, role in aliases)
+    return sorted(set(unused)), sorted(set(removable)), sorted(set(ambiguous))
 
 
 def _plan_group(store, group, files, pins):

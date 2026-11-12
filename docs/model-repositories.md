@@ -117,6 +117,33 @@ a capability probe. At this development checkpoint, the server copy operation
 is implemented but the full helper contract is not yet advertised; the new
 CLI controls remain gated until the remaining management patches enable it.
 
+### Removing a model and its helpers
+
+`tllama rm MAIN` removes the requested definition. Groups without any remaining
+definition or reservation are reclaimed, including attached helpers without
+their own TOML. Independent helper TOMLs remain; the cleanup report lists their
+names in `unused_helpers` when no other main definition uses their data.
+
+`tllama rm MAIN --remove-unused-helpers` also removes attached helper definitions
+which no other main uses. The equivalent `/api/delete` control is the optional
+strict boolean `remove_unused_helpers` (default false). The cleanup report adds
+`removed_helpers` and `unused_helpers` name lists. This operation only considers
+helpers attached to the requested main, never unrelated unused helpers or
+orphan groups. Removing a helper directly still preserves data referenced by
+any other definition.
+
+Reference decisions and definition changes share the repository lock. Multiple
+helper aliases for one group are kept with their names reported for explicit
+removal. An incomplete inventory stops helper removal with a warning. A failed
+helper unlink is reported as kept; successfully removed helpers are reported
+individually. Physical cleanup rechecks references and worker reservations;
+active workers can defer it even after the helper TOML has been removed.
+
+The extended client command requires `repository_helpers` and a structured
+deletion confirmation. It remains gated until the full management contract is
+advertised. Ordinary rm sends its original request and remains compatible with
+Ollama; an empty successful reply produces the existing warning once.
+
 ### Optional original filenames
 
 Each managed GGUF can have a companion with the same basename and `.inf`

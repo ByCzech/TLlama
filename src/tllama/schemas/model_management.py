@@ -3,17 +3,21 @@
 from pydantic import BaseModel, ConfigDict, StrictBool, StrictStr, Field, field_validator
 
 
-class DeleteRequest(BaseModel):
+class ModelReferenceRequest(BaseModel):
     # Keep ignored extension fields; each route owns its historical alias order.
     name: StrictStr | None = None
     model: StrictStr | None = None
 
 
-class ShowRequest(DeleteRequest):
+class DeleteRequest(ModelReferenceRequest):
+    remove_unused_helpers: StrictBool = False
+
+
+class ShowRequest(ModelReferenceRequest):
     runner: StrictStr | None = None
 
 
-class PullRequest(DeleteRequest):
+class PullRequest(ModelReferenceRequest):
     runner: StrictStr | None = None
     username: StrictStr | None = None
     password: StrictStr | None = None

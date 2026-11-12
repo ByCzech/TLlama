@@ -327,7 +327,8 @@ async def delete_model_ollama(request: DeleteRequest):
         raise HTTPException(status_code=400, detail="Missing model name")
 
     try:
-        result = await model_manager.delete_model(model_ref)
+        controls = {'remove_unused_helpers': True} if request.remove_unused_helpers else {}
+        result = await model_manager.delete_model(model_ref, **controls)
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except ValueError as e:

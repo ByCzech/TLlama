@@ -80,6 +80,8 @@ def build_parser() -> argparse.ArgumentParser:
             command.add_argument('model')
         elif name == 'rm':
             command.add_argument('models', nargs='+')
+            command.add_argument('--remove-unused-helpers', action='store_true',
+                                 help='Also remove attached helper definitions unused by other main models.')
         elif name == 'show':
             command.add_argument('model')
             fields = command.add_mutually_exclusive_group()
@@ -117,6 +119,12 @@ def _report_cleanup(data):
     deferred = cleanup.get('deferred_groups')
     if isinstance(deferred, list) and deferred:
         print(f'tllama: physical cleanup deferred for {len(deferred)} group(s)', file=sys.stderr)
+    for key, label in (('removed_helpers', 'removed helper'), ('unused_helpers', 'unused helper kept')):
+        names = cleanup.get(key)
+        if isinstance(names, list):
+            for name in names:
+                if isinstance(name, str):
+                    print(f'tllama: {label}: {name}', file=sys.stderr)
 
 
 async def _execute(args):
@@ -167,7 +175,8 @@ async def _execute(args):
             failed = False
             for model in args.models:
                 try:
-                    data = await client.remove(model)
+                    controls = {'remove_unused_helpers': True} if args.remove_unused_helpers else {}
+                    data = await client.remove(model, **controls)
                 except ClientError as exc:
                     failed = True
                     print(f'tllama: {model}: {exc}', file=sys.stderr)

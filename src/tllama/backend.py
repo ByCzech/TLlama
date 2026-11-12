@@ -1186,31 +1186,40 @@ class ModelManager:
             current = current.parent
 
     @repository_operation
-    def delete_model_definition(self, model_ref: str) -> Dict[str, Any]:
+    def delete_model_definition(self, model_ref: str, *, remove_unused_helpers=False) -> Dict[str, Any]:
         """Remove a definition and reclaim only its unused managed groups.
 
         Other definitions and cross-daemon reservations protect whole groups.
         Broken definitions remain removable; incomplete protection information
         skips physical cleanup and is reported separately from model removal.
         """
-        from tllama.repository_cleanup import remember_definition, collect_pending
+        from tllama.repository_cleanup import remember_definition, collect_pending, unused_helper_definitions
+        if type(remove_unused_helpers) is not bool:
+            raise ValueError('remove_unused_helpers must be boolean.')
         toml_path = destination(self, model_ref)
 
         if not toml_path.is_file():
             raise FileNotFoundError(f"Model not found: {model_ref}")
 
         kept_file: Optional[str] = None
+        spec = None
         try:
             spec = parse_model_toml(
                 toml_path.read_text(encoding="utf-8"), source=str(toml_path)
             )
-            kept_file = spec.llm_model
+            kept_file = spec.primary_model
         except (TomlModelError, OSError):
             # Deleting a definition that will not parse is exactly when
             # someone most wants to be able to delete it.
             pass
 
-        warnings = remember_definition(self.repository, toml_path)
+        unused, removable, ambiguous = [], [], []
+        warnings = []
+        try:
+            unused, removable, ambiguous = unused_helper_definitions(self.repository, toml_path, spec)
+        except (OSError, ValueError) as exc:
+            warnings.append(f'Helper cleanup skipped: {exc}')
+        warnings.extend(remember_definition(self.repository, toml_path))
         toml_path.unlink(missing_ok=True)
         from tllama.repository_store import sync_directory
         sync_directory(toml_path.parent)
@@ -1219,7 +1228,31 @@ class ModelManager:
         repo_root = self._get_repo_root_for_path(toml_path)
         self._remove_empty_parents(toml_path.parent, repo_root)
 
+        removed_helpers = []
+        if remove_unused_helpers:
+            if ambiguous:
+                warnings.append('Ambiguous helper aliases kept; remove explicitly: ' + ', '.join(ambiguous))
+            for name in removable:
+                try:
+                    helper_path = destination(self, name)
+                    scheduling = remember_definition(self.repository, helper_path)
+                    warnings.extend(scheduling)
+                    if scheduling:
+                        continue
+                    helper_path.unlink()
+                except (OSError, ValueError) as exc:
+                    warnings.append(f"Helper '{name}' was kept: {exc}")
+                    continue
+                removed_helpers.append(name)
+                self._invalidate_metadata_cache_entry(name)
+                try:
+                    sync_directory(helper_path.parent)
+                    self._remove_empty_parents(helper_path.parent, self._get_repo_root_for_path(helper_path))
+                except OSError as exc:
+                    warnings.append(f"Helper '{name}' removed but directory sync failed: {exc}")
         cleanup = collect_pending(self.repository, warnings=warnings)
+        cleanup['removed_helpers'] = removed_helpers
+        cleanup['unused_helpers'] = sorted(set(unused) - set(removed_helpers))
         if kept_file is not None and not (self.models_dir / kept_file).is_file():
             kept_file = None
         return {
@@ -1229,11 +1262,14 @@ class ModelManager:
             "cleanup": cleanup,
         }
 
-    async def delete_model(self, model_ref: str) -> Dict[str, Any]:
+    async def delete_model(self, model_ref: str, *, remove_unused_helpers=False) -> Dict[str, Any]:
+        if type(remove_unused_helpers) is not bool:
+            raise ValueError('remove_unused_helpers must be boolean.')
         async def retire_and_delete():
             await self._native.unload(model_ref)
             try:
-                return await asyncio.to_thread(self.delete_model_definition, model_ref)
+                controls = {'remove_unused_helpers': True} if remove_unused_helpers else {}
+                return await asyncio.to_thread(self.delete_model_definition, model_ref, **controls)
             finally:
                 # Cover acquisitions overlapping definition deletion as well.
                 await self._native.unload(model_ref)
