@@ -86,6 +86,28 @@ This read-only checkpoint does not advertise `server_features` support for
 management contract, including attachment and removal controls. CLI list
 filters and capability checks will follow with that complete contract.
 
+### Standalone projector pull
+
+Pulling a GGUF identified as a projector by its header now creates an independent
+`[mmproj]` TOML in `HuggingFace/`. It uses the same public-name codec, basename
+and numbered collision variants as a main-model pull. It is hidden from the
+default listing, available through `/api/tags?type=mmproj` and ordinary `show`,
+and its definition protects all shards from orphan cleanup. Attach it by name
+with helper copy controls or use the relative artifact path in a main TOML.
+
+Repeated pull reuses verified complete data and preserves the existing helper
+TOML verbatim. A changed remote group updates only its previously registered,
+unchanged binding; user-repointed definitions remain intact and receive the
+same collision handling as main models. Other definitions still protect old
+data. Original names continue to be recorded separately for every shard in
+optional `.inf` files.
+
+Repeating a projector pull from 1.4.x can register the missing helper TOML from
+its verified origin and data without downloading the group again. This is
+an explicit pull, not an automatic inventory repair of all old projectors.
+HTTP pull request and response shapes are unchanged. Automatic draft/DFlash
+classification and the full `repository_helpers` marker follow separately.
+
 ### Assemble a model from registered helpers
 
 The extended `POST /api/copy` accepts optional `mmproj` and `draft` fields,

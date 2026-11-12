@@ -160,34 +160,39 @@ def register_pull(manager, repo_id, filename, paths, metadata, digests, source_f
     index = read_origin(manager, repo_id, filename)
     warnings = []
     name = None
-    if not metadata.get('is_projector'):
-        base = repo_id + '/' + Path(filename).name[:-5]
-        candidates = [base] + [base + f'_{number:02d}' for number in range(1, 100)]
-        previous = index.get('model')
-        if isinstance(previous, str) and previous in candidates:
-            candidates.insert(0, previous)
-        else:
-            previous = None
-        for candidate in dict.fromkeys(candidates):
-            target = destination(manager, candidate)
-            if not target.exists():
-                write_model_toml(target, render_model_toml(relative, metadata=metadata))
-                name = candidate
-                break
-            spec = parse_model_toml(target.read_text(encoding='utf-8'), source=str(target))
-            if spec.llm_model == relative:
-                name = candidate
-                break
-            if candidate == previous and spec.llm_model == index.get('path'):
-                from tllama.repository_cleanup import remember_definition
-                warnings = remember_definition(manager.repository, target)
-                spec.document['llm']['model'] = relative
-                write_model_toml(target, spec.document.as_string(), overwrite=True)
-                name = candidate
-                break
-        if name is None:
-            raise ValueError('Pull definition name and its numbered variants are already taken.')
-        manager._invalidate_metadata_cache_entry(name)
+    model_type = 'mmproj' if metadata.get('is_projector') else 'main'
+    role = 'mmproj' if model_type == 'mmproj' else 'llm'
+    base = repo_id + '/' + Path(filename).name[:-5]
+    candidates = [base] + [base + f'_{number:02d}' for number in range(1, 100)]
+    previous = index.get('model')
+    if isinstance(previous, str) and previous in candidates:
+        candidates.insert(0, previous)
+    else:
+        previous = None
+    for candidate in dict.fromkeys(candidates):
+        target = destination(manager, candidate)
+        if not target.exists():
+            text = (f'[mmproj]\nmodel = {json.dumps(relative)}\n' if model_type == 'mmproj'
+                    else render_model_toml(relative, metadata=metadata))
+            write_model_toml(target, text)
+            name = candidate
+            break
+        spec = parse_model_toml(target.read_text(encoding='utf-8'), source=str(target))
+        if spec.model_type != model_type:
+            continue
+        if spec.primary_model == relative:
+            name = candidate
+            break
+        if candidate == previous and spec.primary_model == index.get('path'):
+            from tllama.repository_cleanup import remember_definition
+            warnings = remember_definition(manager.repository, target)
+            spec.document[role]['model'] = relative
+            write_model_toml(target, spec.document.as_string(), overwrite=True)
+            name = candidate
+            break
+    if name is None:
+        raise ValueError('Pull definition name and its numbered variants are already taken.')
+    manager._invalidate_metadata_cache_entry(name)
     write_json(manager.repository, origin_path(repo_id, filename),
                {'repo_id': repo_id, 'filename': filename, 'model': name, 'path': relative,
                 'digests': list(digests), 'files': source_files})

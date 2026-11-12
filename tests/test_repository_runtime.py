@@ -265,7 +265,10 @@ def test_repeat_pull_uses_store_root_for_every_member(manager, hf, monkeypatch, 
         copy_definition(aliased, 'ns/repo/' + Path(names[0]).stem, 'copy')
         assert aliased.read_model_definition('copy') == custom
     else:
-        assert not list(root.rglob('*.toml'))
+        spec = parse_model_toml(definition.read_text())
+        assert spec.model_type == 'mmproj' and spec.mmproj_model == before['path']
+        assert before['model'] == 'ns/repo/' + Path(names[0]).stem
+        assert not aliased._list_local_models_sync()
     assert not list((root / '.tllama/downloads').iterdir())
 
 
@@ -346,12 +349,16 @@ def test_pulls_from_different_origins_share_identical_weights(manager, hf):
     assert len(list(manager.models_dir.rglob('*.toml'))) == 2
 
 
-def test_projector_pull_is_available_as_data_without_becoming_a_model(manager, hf):
+def test_projector_pull_registers_a_helper_without_becoming_a_main_model(manager, hf):
     raw = hf.add('mmproj.gguf', arch='clip')
     target = manager._pull_hf_file_sync('ns/repo', 'mmproj.gguf')
     assert Path(target).read_bytes() == raw
     assert manager._list_local_models_sync() == []
-    assert not list(manager.models_dir.rglob('*.toml'))
+    definition = manager.models_dir / definition_path('ns/repo/mmproj')
+    spec = parse_model_toml(definition.read_text())
+    assert spec.model_type == 'mmproj'
+    assert spec.mmproj_model == Path(target).relative_to(manager.repository.root).as_posix()
+    assert [row['id'] for row in manager._list_local_models_sync('mmproj')] == ['ns/repo/mmproj']
 
 
 def test_pull_completes_shards_and_rechecks_every_remote_member(manager, hf):
