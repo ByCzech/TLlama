@@ -346,9 +346,10 @@ async def delete_model_ollama(request: DeleteRequest):
 
 @router.post('/copy')
 async def copy_model(request: CopyRequest):
+    helpers = {role: getattr(request, role) for role in ('mmproj', 'draft') if role in request.model_fields_set}
     try:
         return await _settle_owned(asyncio.create_task(asyncio.to_thread(
-            copy_definition, model_manager, request.source, request.destination, force=request.force)))
+            copy_definition, model_manager, request.source, request.destination, force=request.force, **helpers)))
     except FileExistsError as exc:
         raise HTTPException(409, 'Destination already exists; use force to replace it.') from exc
     except FileNotFoundError as exc:

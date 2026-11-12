@@ -86,6 +86,37 @@ This read-only checkpoint does not advertise `server_features` support for
 management contract, including attachment and removal controls. CLI list
 filters and capability checks will follow with that complete contract.
 
+### Assemble a model from registered helpers
+
+The extended `POST /api/copy` accepts optional `mmproj` and `draft` fields,
+each containing the public name of a registered helper of the matching type:
+
+```json
+{"source":"main","destination":"with-helpers","mmproj":"projector","draft":"draft"}
+```
+
+Omitted fields preserve the corresponding source binding. Empty strings and
+explicit null are errors, not detach instructions. The source must be a main
+definition when attaching helpers; ordinary copy of a helper remains supported.
+Only requested bindings change. Runtime/sampling settings, projector context,
+other attachments and comments stay with the source definition.
+
+The server resolves all helper names under the repository lock, validates the
+final references and complete managed groups, checks known projector/model
+roles, then atomically publishes the requested target TOML. A matching helper
+TOML role is required; filename similarity does not establish compatibility.
+The native loader remains authoritative for target/draft pair compatibility.
+The destination stores direct `data/...` paths and never depends on helper
+names remaining present. Copy creates no additional helper TOMLs or GGUF copies.
+
+The client controls are `tllama cp SOURCE DEST --mmproj NAME --draft NAME`.
+They first require `repository_helpers` in `/api/tags` `server_features`, even
+for an empty model list. A server which ignores unknown fields cannot silently
+perform an ordinary copy instead. Plain cp sends the original request without
+a capability probe. At this development checkpoint, the server copy operation
+is implemented but the full helper contract is not yet advertised; the new
+CLI controls remain gated until the remaining management patches enable it.
+
 ### Optional original filenames
 
 Each managed GGUF can have a companion with the same basename and `.inf`

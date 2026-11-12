@@ -204,9 +204,27 @@ class TLlamaClient:
             raise ClientError('Server did not confirm model definition deletion.')
         return data
 
-    async def copy(self, source, destination, *, force=False):
+    async def require_repository_helpers(self):
+        """Confirm the advertised contract before sending a helper mutation."""
+        data = await self.list_models()
+        features = data.get('server_features')
+        if (not isinstance(features, list) or any(not isinstance(value, str) for value in features)
+                or 'repository_helpers' not in features):
+            raise ClientError('Server does not advertise repository_helpers; this operation requires '
+                              'a TLlama server with complete helper management support.')
+
+    async def copy(self, source, destination, *, force=False, mmproj=None, draft=None):
+        helpers = {role: name for role, name in (('mmproj', mmproj), ('draft', draft)) if name is not None}
+        if helpers:
+            from tllama.helpers.model_toml import validate_definition_name
+            try:
+                for name in helpers.values():
+                    validate_definition_name(name)
+            except ValueError as exc:
+                raise ClientConfigError(str(exc)) from None
+            await self.require_repository_helpers()
         data = await self._request('POST', 'api/copy', wait_for_server_work=True,
-                                   json={'source': source, 'destination': destination, 'force': force})
+                                   json={'source': source, 'destination': destination, 'force': force, **helpers})
         if data.get('status') != 'success':
             raise ClientError('Server did not confirm definition copy.')
         return data

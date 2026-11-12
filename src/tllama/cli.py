@@ -71,6 +71,8 @@ def build_parser() -> argparse.ArgumentParser:
             command.add_argument('source')
             command.add_argument('destination')
             command.add_argument('--force', action='store_true', help='Replace an existing destination definition.')
+            command.add_argument('--mmproj', metavar='NAME', help='Attach/replace a registered projector helper.')
+            command.add_argument('--draft', metavar='NAME', help='Attach/replace a registered draft helper.')
         elif name == 'run':
             from tllama.cli_run import add_run_options
             add_run_options(command)
@@ -129,7 +131,8 @@ async def _execute(args):
             from tllama.cli_run import run
             return await run(client, args, notifier=notifier)
         if args.operation == 'cp':
-            data = await client.copy(args.source, args.destination, force=args.force)
+            helpers = {role: getattr(args, role) for role in ('mmproj', 'draft') if getattr(args, role) is not None}
+            data = await client.copy(args.source, args.destination, force=args.force, **helpers)
             _report_cleanup(data)
             print(json.dumps(data, ensure_ascii=False) if as_json else f'copied: {args.source} -> {args.destination}')
             return 0

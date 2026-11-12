@@ -26,15 +26,51 @@ def validate_definition(manager, text):
     return spec
 
 
+def _attach_helpers(manager, text, helpers):
+    spec = parse_model_toml(text)
+    if spec.model_type != 'main':
+        raise ValueError('Attaching helpers requires a main model source.')
+    for role, name in helpers.items():
+        helper_path = definition_path(manager, name)
+        helper_text = helper_path.read_text(encoding='utf-8')
+        helper = parse_model_toml(helper_text, source=str(helper_path))
+        if helper.model_type != role:
+            raise ValueError(f"'{name}' is a {helper.model_type} definition, not a {role} helper.")
+        if helper.primary_model is None:
+            raise ValueError(f"'{name}' has not been imported; create it before attachment.")
+        if role not in spec.document:
+            spec.document[role] = {}
+        table = spec.document[role]
+        table.pop('from', None)
+        table['model'] = helper.primary_model
+    changed = spec.document.as_string()
+    if '\r\n' in text:
+        changed = changed.replace('\r\n', '\n').replace('\n', '\r\n')
+    final = validate_definition(manager, changed)
+    # Check known roles without inventing target/draft compatibility from
+    # filenames or guessed metadata. The native loader qualifies the pair.
+    for role, model, source in final.components:
+        if model is not None:
+            path = manager.repository.root / model  # Validated managed reference above.
+            metadata = manager._read_metadata_for_path(path)
+            if bool(metadata.get('is_projector')) != (role == 'mmproj'):
+                raise ValueError(f'[{role}].model points at incompatible projector/model weights.')
+    return changed
+
+
 @repository_operation
-def copy_definition(manager, source, destination, *, force=False):
+def copy_definition(manager, source, destination, *, force=False, mmproj=None, draft=None):
     source_path = definition_path(manager, source)
     target = definition_path(manager, destination)
     if source_path.resolve() == target.resolve():
         raise ValueError('Source and destination name the same definition.')
     with source_path.open('r', encoding='utf-8', newline='') as source_file:
         text = source_file.read()
-    validate_definition(manager, text)
+    helpers = {role: name for role, name in (('mmproj', mmproj), ('draft', draft)) if name is not None}
+    if helpers:
+        text = _attach_helpers(manager, text, helpers)
+    else:
+        validate_definition(manager, text)
     warnings = remember_definition(manager.repository, target) if force else []
     write_model_toml(target, text, overwrite=force)
     manager._invalidate_metadata_cache_entry(destination)

@@ -1,6 +1,6 @@
 """Explicit local model-definition operations, independent of inference options."""
 
-from pydantic import BaseModel, ConfigDict, StrictBool, StrictStr, Field
+from pydantic import BaseModel, ConfigDict, StrictBool, StrictStr, Field, field_validator
 
 
 class DeleteRequest(BaseModel):
@@ -25,6 +25,18 @@ class CopyRequest(BaseModel):
     source: StrictStr = Field(min_length=1)
     destination: StrictStr = Field(min_length=1)
     force: StrictBool = False
+    mmproj: StrictStr | None = Field(default=None, min_length=1)
+    draft: StrictStr | None = Field(default=None, min_length=1)
+
+    @field_validator('mmproj', 'draft')
+    @classmethod
+    def helper_reference(cls, value):
+        # Omission preserves the source role; explicit null is not detach.
+        if value is None:
+            raise ValueError('A helper name must not be null; omit the field to preserve the source binding.')
+        from tllama.helpers.model_toml import validate_definition_name
+        validate_definition_name(value)
+        return value
 
 
 class UploadedFile(BaseModel):
