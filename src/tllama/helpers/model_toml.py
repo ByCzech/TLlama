@@ -75,6 +75,11 @@ class VirtualModelSpec:
         return "main"
 
     @property
+    def primary_model(self) -> Optional[str]:
+        role = 'llm' if self.model_type == 'main' else self.model_type
+        return getattr(self, role + '_model')
+
+    @property
     def components(self):
         """Declared roles, including imports not yet published by create."""
         return (("llm", self.llm_model, self.llm_from),

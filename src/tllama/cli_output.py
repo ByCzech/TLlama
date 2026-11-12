@@ -71,10 +71,27 @@ def show_text(model, data, field=None):
     caps = data.get('capabilities') or []
     if not isinstance(caps, list) or any(not isinstance(c, str) for c in caps):
         raise ClientError('Server returned invalid model capabilities.')
+    extra = []
+    capabilities = ', '.join(caps) or 'unknown'
+    definition = data.get('model_definition')
+    if definition is not None:
+        if (not isinstance(definition, dict) or not isinstance(definition.get('type'), str)
+                or definition['type'] not in {'main', 'mmproj', 'draft'}
+                or not isinstance(definition.get('artifacts'), dict)
+                or any(role not in {'llm', 'mmproj', 'draft'} or not isinstance(path, str)
+                       for role, path in definition['artifacts'].items())):
+            raise ClientError('Server returned invalid model definition details.')
+        kind = definition['type']
+        extra += [f'Type: {kind}']
+        extra += [f'{role.upper()} path (repository-relative): {path}'
+                  for role, path in definition['artifacts'].items()]
+        if kind != 'main':
+            capabilities = 'none (helper model)'
+            extra += [f'Usage: attach to a main model using its [{kind}].model reference.']
     lines = [f'Model: {model}', f'Architecture: {details.get("family", "unknown")}',
              f'Parameters: {details.get("parameter_size", "unknown")}',
              f'Quantization: {details.get("quantization_level", "unknown")}',
-             f'Capabilities: {", ".join(caps) or "unknown"}']
+             f'Capabilities: {capabilities}', *extra]
     if data.get('system'):
         lines += ['', 'System:', str(data['system'])]
     if data.get('parameters'):

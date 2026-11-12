@@ -1,8 +1,9 @@
 import asyncio
 import json
+from typing import Annotated, Literal
 
 from datetime import datetime, timezone
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 from starlette.requests import ClientDisconnect
 from fastapi.responses import StreamingResponse, JSONResponse
 from tllama.schemas.ollama import OllamaChatRequest, OllamaGenerateRequest
@@ -50,8 +51,10 @@ async def get_version():
 
 @router.head("/tags")
 @router.get("/tags")
-async def list_models_ollama():
-    local_models = await model_manager.list_local_models_with_metadata()
+async def list_models_ollama(
+        model_type: Annotated[Literal['main', 'mmproj', 'draft', 'all'], Query(alias='type')] = 'main'):
+    local_models = (await model_manager.list_local_models_with_metadata() if model_type == 'main'
+                    else await model_manager.list_local_models_with_metadata(model_type))
 
     formatted_models = []
     for m in local_models:
@@ -63,6 +66,7 @@ async def list_models_ollama():
             "modified_at": datetime.fromtimestamp(m["mtime"], timezone.utc).isoformat(),
             "size": m["size"],
             "digest": m.get("digest", ""),
+            "model_definition": {'type': m.get('model_definition', {}).get('type', 'main')},
             "details": {
                 "parent_model": "",
                 "format": "gguf",
@@ -114,8 +118,11 @@ async def show_model_info(request: ShowRequest):
         model_info = model_manager._build_model_file_info(model_name)
         if not model_info:
             raise HTTPException(status_code=404, detail="Model doesn't exist")
+        metadata_info['model_definition'] = model_info.get('model_definition', {'type': 'main', 'artifacts': {}})
 
-    template = metadata_info.get("template") or "{{ .System }}\nUser: {{ .Prompt }}\nAssistant: "
+    definition_info = metadata_info.get('model_definition', {'type': 'main', 'artifacts': {}})
+    helper = definition_info['type'] != 'main'
+    template = '' if helper else metadata_info.get("template") or "{{ .System }}\nUser: {{ .Prompt }}\nAssistant: "
 
     family = metadata_info.get("arch", "unknown")
 
@@ -142,6 +149,8 @@ async def show_model_info(request: ShowRequest):
     if has_decision_head(metadata_info):
         # Text Decision is a separate extension, never a generation capability.
         capabilities = ['decision'] if decision_capable(metadata_info) else []
+    if helper:
+        capabilities = []
     # Ollama's own `show --modelfile` hands back the definition a model
     # was built from, and the workflow that makes it worth having is
     # fetching it, editing it and putting it back. So this is the .toml
@@ -154,6 +163,8 @@ async def show_model_info(request: ShowRequest):
     # only asked what a model is.
     modelfile = model_manager.read_model_definition(model_name)
     if modelfile is None:
+        if helper:
+            raise HTTPException(status_code=404, detail="Helper definition no longer exists")
         modelfile = f'FROM {model_name}\nTEMPLATE """{template}"""'
 
     definition = model_manager._toml_fingerprint_for_reference(model_name)
@@ -168,7 +179,7 @@ async def show_model_info(request: ShowRequest):
         # synthesized license text. An absent identifier stays empty.
         "license": (metadata_info.get("metadata_raw") or {}).get("general.license") or "",
         **modified,
-        "parameters": format_ollama_parameters(metadata_info),
+        "parameters": '' if helper else format_ollama_parameters(metadata_info),
         "template": template,
         "details": {
             "parent_model": "",
@@ -190,6 +201,7 @@ async def show_model_info(request: ShowRequest):
         "model_info": metadata_info.get("metadata_raw") or {},
         "projector_info": metadata_info.get("projector_info") or {},
         "capabilities": capabilities,
+        "model_definition": definition_info,
     }
 
 

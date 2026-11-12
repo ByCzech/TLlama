@@ -43,8 +43,8 @@ model = "data/<group-sha256>/weights.gguf"
 Standalone helpers contain only their data reference. Runtime, sampling,
 prompt/template and projector context settings belong to the main definition
 which uses them. A standalone helper is not an inference worker and is hidden
-from the default runnable-model listing. Filtered discovery and detailed show,
-client import and attachment commands follow in the management patches.
+from the default runnable-model listing. Client import and attachment commands
+follow in the remaining management patches.
 
 A main definition may contain `[llm]`, `[mmproj]` and one `[draft]` reference.
 Declaring a draft does not activate speculative decoding. This foundation
@@ -58,6 +58,33 @@ a helper does not implicitly register a second TOML. Removing the last
 reference reclaims the complete group and optional `.inf` files; other
 definitions and live reservations keep it protected. No repository-format
 migration or additional copies of weights are required.
+
+### Discovering helper definitions
+
+`GET /api/tags` defaults to `type=main`. The optional `type` query accepts
+`main`, `mmproj`, `draft` or `all`. Main includes existing generation, embedding
+and Decision definitions; helpers are returned only by an explicit filter.
+Each returned model has `model_definition.type`. `/v1/models` continues to
+return main models only.
+
+`POST /api/show` accepts the existing model/name request and returns
+`model_definition` with `type` and an `artifacts` map. Map keys are `llm`,
+`mmproj` and `draft`; values are paths relative to the repository root,
+with the first shard as the input for a split group. A main definition can
+contain all three roles. No server-absolute paths are introduced in this block.
+The original TOML remains verbatim in `modelfile`.
+
+A helper reports an empty `capabilities` list, template and inference parameters.
+`tllama show HELPER` displays its type, relative paths and how to reference it
+in a main TOML. Ordinary show output from Ollama without the extension is
+still supported. Running a helper directly returns HTTP 400 before native
+startup. Helpers have stable content-and-role IDs, shared by aliases of the
+same helper; existing main-model IDs are unchanged.
+
+This read-only checkpoint does not advertise `server_features` support for
+`repository_helpers` yet. That marker confirms the complete agreed helper
+management contract, including attachment and removal controls. CLI list
+filters and capability checks will follow with that complete contract.
 
 ### Optional original filenames
 

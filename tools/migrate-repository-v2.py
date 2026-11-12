@@ -26,7 +26,7 @@ from tllama.helpers.gguf_metadata import read_gguf_metadata
 from tllama.helpers.model_toml import parse_model_toml
 from tllama.helpers.metadata_cache import SCHEMA_VERSION, DIGEST_SCHEMA_VERSION, CACHE_FORMAT_VERSION
 from tllama.helpers.repository_files import repository_tempfile
-from tllama.model_identity import file_group_digest, model_digest, parameter_changes
+from tllama.model_identity import file_group_digest, helper_digest, model_digest, parameter_changes
 from tllama.repository_layout import REPOSITORY_FORMAT
 from tllama.repository_names import definition_path, check_portable_collisions
 from tllama.repository_info import validate_original_name
@@ -307,6 +307,9 @@ def build_plan(root, *, progress=None):
     all_groups = {**source_group, **target_groups}
 
     def identity(spec, refs):
+        if spec.model_type != 'main':
+            group = groups[all_groups[refs[spec.model_type]]] if spec.model_type in refs else None
+            return helper_digest(spec.model_type, file_group_digest(group['digests'])) if group else None
         if 'llm' not in refs:
             return None  # Pending client-side from= is preserved, not imported.
         main = groups[all_groups[refs['llm']]]

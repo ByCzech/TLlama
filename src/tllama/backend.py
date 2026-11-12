@@ -30,7 +30,7 @@ from tllama.model_artifacts import ModelArtifacts, gguf_files
 from tllama.repository_store import RepositoryStore
 from tllama.repository_names import definition_path, definition_name, encode_component
 from tllama.repository_runtime import destination, repository_operation
-from tllama.model_identity import file_group_digest, model_digest, parameter_changes
+from tllama.model_identity import file_group_digest, helper_digest, model_digest, parameter_changes
 from tllama.residency import NativeResidency, ModelDefinition, ResidencyClosed, _settle_owned
 from tllama.worker import NativeWorker
 from tllama.helpers.metadata_cache import (
@@ -250,8 +250,8 @@ class ModelManager:
             before = self._toml_fingerprint_for_reference(model_name)
             spec = self._resolve_virtual_model_spec(model_name)
             if spec is not None and spec.model_type != 'main':
-                raise TomlModelError(f"Model '{model_name}' is a {spec.model_type} helper; "
-                                     "attach it to a main model before inference")
+                raise ValueError(f"Model '{model_name}' is a {spec.model_type} helper; "
+                                 "attach it to a main model before inference")
             if spec is None or spec.llm_model is None:
                 raise FileNotFoundError(f"Model '{model_name}' is not registered/imported in {self.models_dir}")
             model = resolve_repo_relative_path(spec.llm_model, self.models_dir)
@@ -480,20 +480,23 @@ class ModelManager:
             return None
 
         if virtual_spec is not None:
-            if virtual_spec.llm_model is None:
+            if virtual_spec.primary_model is None:
                 # 'from =' has not been imported into the repo yet (spec
                 # §5): there is no physical file inside the repo to report
                 # on until that happens.
                 return None
 
-            target = resolve_repo_relative_path(virtual_spec.llm_model, self.models_dir)
+            target = resolve_repo_relative_path(virtual_spec.primary_model, self.models_dir)
 
             # Raised, not skipped: a name asked for by hand is a single
             # specific request, and reporting what is wrong with it beats
             # reporting that it does not exist.
             self.resolve_mmproj_path(virtual_spec, model_name)
 
-            return self._build_model_file_info_from_path(target)
+            info = self._build_model_file_info_from_path(target)
+            if info is not None:
+                info['model_definition'] = self._definition_details(virtual_spec)
+            return info
 
         # No .toml names this reference at all. Per the strict policy (spec
         # §3) that applies to loading exactly as it does to listing: a bare
@@ -613,6 +616,8 @@ class ModelManager:
         projector = group(artifacts.projector) if artifacts.projector else ''
         adapter = group(artifacts.adapter) if artifacts.adapter else None
         draft = group(artifacts.draft) if artifacts.draft else ''
+        if spec.model_type != 'main':
+            return helper_digest(spec.model_type, projector if spec.model_type == 'mmproj' else draft)
         if ((artifacts.projector and not projector) or (artifacts.adapter and not adapter)
                 or (artifacts.draft and not draft)):
             return ''
@@ -623,9 +628,9 @@ class ModelManager:
         for _ in range(3):
             before = self._toml_fingerprint_for_reference(model_name)
             spec = self._resolve_virtual_model_spec(model_name)
-            if spec is None or spec.llm_model is None:
+            if spec is None or spec.primary_model is None:
                 raise TomlModelError(f'{model_name}: model is not imported')
-            path = resolve_repo_relative_path(spec.llm_model, self.models_dir)
+            path = resolve_repo_relative_path(spec.primary_model, self.models_dir)
             artifacts = self._model_artifacts(spec, path, model_name)
             files_before = tuple(build_model_file_fingerprint(file) for file in artifacts.files)
             try:
@@ -678,7 +683,16 @@ class ModelManager:
             virtual_spec = None
 
         if virtual_spec is not None:
+            definition = self._definition_details(virtual_spec)
+            if virtual_spec.model_type != 'main':
+                # Global inference defaults and a helper's raw template do
+                # not turn an independently registered artifact into a worker.
+                return {**metadata, 'model_definition': definition,
+                        'template': '', 'tool_template': '',
+                        'embedding_configured': False, 'has_projector': False,
+                        'vision_configured': False, 'projector_info': {}}
             overrides = {}
+            overrides['model_definition'] = definition
             global_runtime = coerce_runtime_overrides(self.config.runtime_overrides)
             overrides["embedding_configured"] = virtual_spec.runtime.get("embedding", global_runtime.get("embedding", False))
             overrides["embedding_pooling_type"] = int(virtual_spec.runtime.get("pooling_type", global_runtime.get("pooling_type", -1)))
@@ -839,6 +853,11 @@ class ModelManager:
 
         return metadata
 
+    def _definition_details(self, spec):
+        return {'type': spec.model_type, 'artifacts': {
+            role: resolve_repo_relative_path(model, self.models_dir).relative_to(self.repository.root).as_posix()
+            for role, model, source in spec.components if model is not None}}
+
     def _model_artifacts(self, spec, target_path, source, *, metadata=None):
         projector = self.resolve_mmproj_path(spec, str(source))
         draft = None
@@ -859,13 +878,13 @@ class ModelManager:
         def read(path):
             return metadata if metadata is not None and path == target_path else self._read_metadata_for_path(path)
         return ModelArtifacts(
-            gguf_files(target_path, read, self.models_dir),
+            gguf_files(target_path, read, self.models_dir) if spec.model_type == 'main' else (),
             gguf_files(projector, self._read_metadata_for_path, self.models_dir) if projector else (),
             adapter,
             gguf_files(draft, self._read_metadata_for_path, self.models_dir) if draft else (),
         )
 
-    def _list_local_models_sync(self) -> List[Dict[str, Any]]:
+    def _list_local_models_sync(self, model_type='main') -> List[Dict[str, Any]]:
         """
         Scan all known repositories for virtual model .toml files.
 
@@ -874,6 +893,8 @@ class ModelManager:
         truth for what shows up here). One broken .toml must not break the
         whole listing.
         """
+        if model_type not in {'main', 'mmproj', 'draft', 'all'}:
+            raise ValueError('Model type must be main, mmproj, draft or all.')
         model_list: List[Dict[str, Any]] = []
 
         for toml_path in self._iter_repository_toml_files():
@@ -881,7 +902,7 @@ class ModelManager:
                 text = toml_path.read_text(encoding="utf-8")
                 spec = parse_model_toml(text, source=str(toml_path))
 
-                if spec.model_type != 'main':
+                if model_type != 'all' and spec.model_type != model_type:
                     continue
 
                 target_path = self._resolve_virtual_model_target_path(spec, toml_path)
@@ -913,6 +934,7 @@ class ModelManager:
                     "mtime": model_info["mtime"],
                     "sha256": model_info["sha256"],
                     "repository": model_info["repository"],
+                    "model_definition": {'type': spec.model_type},
                 })
             except TomlModelError as e:
                 logger.warning("Ignoring %s: %s", toml_path, e)
@@ -921,10 +943,12 @@ class ModelManager:
 
         return model_list
 
-    async def list_local_models(self) -> List[Dict[str, Any]]:
-        return await asyncio.to_thread(self._list_local_models_sync)
+    async def list_local_models(self, model_type='main') -> List[Dict[str, Any]]:
+        if model_type == 'main':
+            return await asyncio.to_thread(self._list_local_models_sync)
+        return await asyncio.to_thread(self._list_local_models_sync, model_type)
 
-    async def list_local_models_with_metadata(self) -> List[Dict[str, Any]]:
+    async def list_local_models_with_metadata(self, model_type='main') -> List[Dict[str, Any]]:
         """
         Return local models enriched with GGUF metadata and content digest.
 
@@ -945,7 +969,8 @@ class ModelManager:
         The model is dropped, matching what the scan does with a file it
         cannot parse.
         """
-        models = await self.list_local_models()
+        models = (await self.list_local_models() if model_type == 'main'
+                  else await self.list_local_models(model_type))
         enriched: List[Dict[str, Any]] = []
 
         for model in models:
@@ -959,6 +984,10 @@ class ModelManager:
 
             if metadata:
                 item.update(metadata)
+
+            # A definition can change role between the scan and metadata read.
+            if model_type != 'all' and item.get('model_definition', {}).get('type', 'main') != model_type:
+                continue
 
             try:
                 item['digest'], item['size'] = await asyncio.to_thread(self._listing_identity, model['id'])
@@ -1303,7 +1332,7 @@ class ModelManager:
     def _resolve_virtual_model_target_path(
         self, spec: VirtualModelSpec, toml_path: Path
     ) -> Optional[Path]:
-        """Resolve a virtual model's [llm] section to a physical file.
+        """Resolve a definition's primary component to a physical file.
 
         Returns None (never raises) when the .toml isn't ready to be listed
         yet -- 'from =' with no matching import performed, a 'model =' that
@@ -1311,7 +1340,7 @@ class ModelManager:
         bad .toml must not break the rest of the listing (matches
         _list_local_models_sync's existing per-file isolation).
         """
-        if spec.llm_model is None:
+        if spec.primary_model is None:
             # 'from =' is only ever meant to be transient (spec §5): it
             # gets rewritten to 'model =' once an import runs. Until that
             # happens there is no physical file inside the repo yet.
@@ -1323,7 +1352,7 @@ class ModelManager:
             return None
 
         try:
-            target = resolve_repo_relative_path(spec.llm_model, self.models_dir)
+            target = resolve_repo_relative_path(spec.primary_model, self.models_dir)
         except TomlModelError as exc:
             logger.warning("Ignoring %s: %s", toml_path, exc)
             return None
@@ -1331,7 +1360,7 @@ class ModelManager:
         if not target.is_file():
             logger.warning(
                 "Ignoring %s: model = %r does not point at an existing file",
-                toml_path, spec.llm_model,
+                toml_path, spec.primary_model,
             )
             return None
 

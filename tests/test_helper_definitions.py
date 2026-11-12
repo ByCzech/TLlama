@@ -78,7 +78,7 @@ def test_standalone_helper_protects_complete_group_from_prune_and_is_removable(
     preview = prune_repository(manager.repository)
     assert preview['ok'] and preview['candidates'] == []
     assert manager._list_local_models_sync() == []
-    with pytest.raises(TomlModelError, match=f'{role} helper'):
+    with pytest.raises(ValueError, match=f'{role} helper'):
         manager._resolve_native_definition_sync('helper', None)
     assert manager.native_snapshot() == []
     copy_definition(manager, 'helper', 'helper-alias')

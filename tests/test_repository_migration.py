@@ -59,6 +59,20 @@ def test_conversion_preserves_draft_references_and_main_identity(tmp_path):
     assert manager._listing_identity('model') == before
 
 
+@pytest.mark.parametrize('role, arch', [('mmproj', 'clip'), ('draft', 'qwen3')])
+def test_conversion_preserves_standalone_helper_identity(tmp_path, role, arch):
+    root = tmp_path / 'legacy'
+    weight(root / 'Local' / 'helper.gguf', arch=arch)
+    definition = root / 'Local' / 'helper.toml'
+    definition.write_text(f'[{role}]\nmodel="Local/helper.gguf"\n')
+    manager = ModelManager(BackendConfig(models_dir=str(root)))
+    before = manager._listing_identity('helper')
+    plan = tool.build_plan(root)
+    assert plan['definitions'][0]['id'] == before[0]
+    tool.apply_plan(root, plan)
+    assert manager._listing_identity('helper') == before
+
+
 @pytest.mark.parametrize('interrupted', [False, True])
 def test_conversion_finishes_all_empty_runtime_directories_before_marker(tmp_path, monkeypatch, interrupted):
     from tllama.repository_check import check_repository

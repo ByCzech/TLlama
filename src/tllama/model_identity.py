@@ -166,6 +166,14 @@ def file_group_digest(digests):
     return sha256(canonical_json({'format': 'tllama-gguf-shards-v1', 'shards': digests})).hexdigest()
 
 
+def helper_digest(role, weights):
+    """A helper's role and complete content, independent of names and paths."""
+    if not weights:
+        return ''
+    return sha256(canonical_json({'format': 'tllama-helper-id-v1',
+                                 'type': role, 'weights': weights})).hexdigest()
+
+
 def model_digest(llm, projector='', changes=None, *, draft=''):
     if not llm:
         return ''
