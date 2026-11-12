@@ -88,6 +88,10 @@ def resolve_worker_config(
             if key == "type_kv":
                 continue
             runtime[key] = _plain(value)
+            if key in ("draft_type_k", "draft_type_v"):
+                runtime[key] = kv_type_name(value)
+            elif key == "draft_n_gpu_layers" and value == "all":
+                runtime[key] = -1
             sources[key] = origin
         # Expand each layer independently. A TOML shorthand must override
         # both global sides; explicit sides only override their own shorthand.

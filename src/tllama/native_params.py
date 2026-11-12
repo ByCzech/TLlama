@@ -11,7 +11,17 @@ from typing import Any, Mapping
 from types import MappingProxyType
 
 
+EXTERNAL_DRAFT_TYPES = {
+    "draft_device": "str", "draft_n_gpu_layers": "Union[str,int]",
+    "draft_type_k": "Union[str,int]", "draft_type_v": "Union[str,int]",
+    "draft_n_ubatch": "int",
+}
+# Captured b11850 --help defaults. Omission still leaves these to native CLI.
+EXTERNAL_DRAFT_DEFAULTS = {"draft_n_gpu_layers": "auto", "draft_type_k": "f16",
+                           "draft_type_v": "f16", "draft_n_ubatch": 0}
+
 RUNTIME_TYPES = {
+    **EXTERNAL_DRAFT_TYPES,
     "device": "str", "n_ctx": "int", "n_gpu_layers": "int",
     "fit": "bool", "fit_target_mib": "int",
     "split_mode": "int", "main_gpu": "int", "tensor_split": "List[float]",
@@ -134,13 +144,24 @@ def runtime_problem(name: str, value: Any) -> str | None:
         return "'seed' must be -1 (random) or uint32"
     if name == "device":
         return device_problem(value)
+    if name == "draft_device":
+        problem = device_problem(value)
+        return f"'draft_device': {problem}" if problem else None
+    if name == "draft_n_gpu_layers":
+        if isinstance(value, str):
+            if value not in {"auto", "all"}:
+                return "'draft_n_gpu_layers' must be auto, all, -1 (all) or a nonnegative int32"
+        elif not -1 <= value < 2**31:
+            return "'draft_n_gpu_layers' must be auto, all, -1 (all) or a nonnegative int32"
+    if name == "draft_n_ubatch" and value < 0:
+        return "'draft_n_ubatch' must be nonnegative; 0 inherits the main physical batch size"
     if name == "pooling_type" and value not in POOLING_TYPES:
         return "'pooling_type' must be -1 (model default), 1 (mean), 2 (cls) or 3 (last); token vectors and reranking are separate tasks"
     if name == "spec_type" and value not in {"none", "draft-mtp", "draft-dflash"}:
         return "'spec_type' must be none, draft-mtp or draft-dflash; other speculative strategies are not integrated"
     if name == "draft_n_max" and value < 0:
         return "'draft_n_max' must be nonnegative; use spec_type=none to disable speculation"
-    if name.startswith("type_"):
+    if name.startswith("type_") or name in ("draft_type_k", "draft_type_v"):
         try:
             kv_type_name(value)
         except ValueError as exc:

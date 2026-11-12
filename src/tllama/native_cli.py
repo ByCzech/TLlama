@@ -4,7 +4,7 @@ import csv
 import io
 from pathlib import Path
 
-from tllama.native_params import NUMA_MODES, ROPE_MODES, SPLIT_MODES, SPEC_DRAFT_N_MAX_DEFAULT, runtime_problem
+from tllama.native_params import NUMA_MODES, ROPE_MODES, SPLIT_MODES, SPEC_DRAFT_N_MAX_DEFAULT, runtime_problem, kv_type_name
 
 
 VALUE_FLAGS = {
@@ -26,7 +26,12 @@ BOOL_FLAGS = {
 ENUM_FLAGS = {"split_mode": ("--split-mode", SPLIT_MODES),
               "rope_scaling_type": ("--rope-scaling", ROPE_MODES),
               "numa": ("--numa", NUMA_MODES)}
-RUNTIME_OPTION_NAMES = frozenset(VALUE_FLAGS) | frozenset(BOOL_FLAGS) | frozenset(ENUM_FLAGS) | {
+EXTERNAL_DRAFT_FLAGS = {
+    "draft_device": "--spec-draft-device", "draft_n_gpu_layers": "--spec-draft-ngl",
+    "draft_type_k": "--spec-draft-type-k", "draft_type_v": "--spec-draft-type-v",
+    "draft_n_ubatch": "--spec-draft-n-ubatch",
+}
+RUNTIME_OPTION_NAMES = frozenset(VALUE_FLAGS) | frozenset(BOOL_FLAGS) | frozenset(ENUM_FLAGS) | frozenset(EXTERNAL_DRAFT_FLAGS) | {
     "use_mmap", "use_mlock", "tensor_split", "swa_full", "kv_overrides",
     "lora_path", "lora_scale", "spm_infill",
     "spec_type", "draft_n_max",
@@ -55,6 +60,19 @@ def runtime_cli_args(options) -> tuple[str, ...]:
         args += ["--spec-type", options["spec_type"]]
     if options.get("spec_type") in {"draft-mtp", "draft-dflash"}:
         args += ["--spec-draft-n-max", str(options.get("draft_n_max", SPEC_DRAFT_N_MAX_DEFAULT))]
+    if options.get("spec_type") == "draft-dflash":
+        if (options.get("draft_device") == "none"
+                and options.get("draft_n_gpu_layers", "auto") not in ("auto", 0)):
+            raise ValueError("draft_device 'none' conflicts with explicit draft_n_gpu_layers; use 0 or auto")
+        for name, flag in EXTERNAL_DRAFT_FLAGS.items():
+            if name not in options:
+                continue
+            value = options[name]
+            if name in ("draft_type_k", "draft_type_v"):
+                value = kv_type_name(value)
+            elif name == "draft_n_gpu_layers" and value == -1:
+                value = "all"
+            args += [flag, str(value)]
     for name, flag in VALUE_FLAGS.items():
         if name in options:
             args += [flag, str(options[name])]

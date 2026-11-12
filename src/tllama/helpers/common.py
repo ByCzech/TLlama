@@ -1,6 +1,6 @@
 import json
 from datetime import datetime, timedelta, timezone
-from tllama.native_params import SAMPLING_TYPES, sampling_problem
+from tllama.native_params import SAMPLING_TYPES, sampling_problem, EXTERNAL_DRAFT_TYPES
 from tllama.ollama_options import validate_ollama_options
 
 
@@ -114,7 +114,7 @@ def sampling_value_problem(name: str, value) -> str | None:
 def validate_sampling_options(opts: dict) -> None:
     """Reject unsupported requested samplers before loading/unloading a model."""
     validate_ollama_options(opts)
-    for name in ("spec_type", "draft_n_max"):
+    for name in ("spec_type", "draft_n_max", *EXTERNAL_DRAFT_TYPES):
         if name in opts:
             raise ValueError(f"{name} is a worker load setting; use [runtime] or TLLAMA_RUNTIME_{name.upper()}")
     if "tfs_z" in opts:

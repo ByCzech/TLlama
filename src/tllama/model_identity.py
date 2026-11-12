@@ -12,7 +12,8 @@ from collections.abc import Mapping
 
 from tllama.helpers.common import build_sampling_kwargs
 from tllama.native_config import builtin_runtime_defaults
-from tllama.native_params import RUNTIME_TYPES, SAMPLING_TYPES, kv_type_name, SPEC_DRAFT_N_MAX_DEFAULT
+from tllama.native_params import (RUNTIME_TYPES, SAMPLING_TYPES, kv_type_name, SPEC_DRAFT_N_MAX_DEFAULT,
+                                  EXTERNAL_DRAFT_TYPES, EXTERNAL_DRAFT_DEFAULTS)
 
 
 def canonical_json(value):
@@ -90,6 +91,15 @@ def parameter_changes(spec, metadata, *, adapter_digest=None):
     sentinels = {'n_ctx': 0, 'pooling_type': -1, 'rope_scaling_type': -1,
                  'rope_freq_base': 0, 'rope_freq_scale': 0, 'yarn_orig_ctx': 0}
     for key, value in runtime.items():
+        if key in EXTERNAL_DRAFT_TYPES:
+            if runtime.get('spec_type', 'none') != 'draft-dflash':
+                continue
+            if key in ('draft_type_k', 'draft_type_v'):
+                value = kv_type_name(value)
+            elif key == 'draft_n_gpu_layers' and value == 'all':
+                value = -1
+            if key in EXTERNAL_DRAFT_DEFAULTS and value == EXTERNAL_DRAFT_DEFAULTS[key]:
+                continue
         if key == 'lora_path':
             if adapter_digest:
                 changes['runtime.lora'] = adapter_digest

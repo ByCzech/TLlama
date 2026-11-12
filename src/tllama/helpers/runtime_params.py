@@ -107,6 +107,13 @@ def _coerce(
     if kind == "str":
         return value
 
+    if kind == "Union[str,int]":
+        # Native draft layers accept auto/all; KV types accept names/enums.
+        try:
+            return int(raw)
+        except ValueError:
+            return value
+
     if kind == "Union[bool,int]":
         # numa is spelled this way: False, or one of the numa strategy
         # numbers. A word picks the bool reading, digits the int one, so
