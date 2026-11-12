@@ -12,7 +12,7 @@ from collections.abc import Mapping
 
 from tllama.helpers.common import build_sampling_kwargs
 from tllama.native_config import builtin_runtime_defaults
-from tllama.native_params import RUNTIME_TYPES, SAMPLING_TYPES, kv_type_name, MTP_DRAFT_N_MAX_DEFAULT
+from tllama.native_params import RUNTIME_TYPES, SAMPLING_TYPES, kv_type_name, SPEC_DRAFT_N_MAX_DEFAULT
 
 
 def canonical_json(value):
@@ -105,7 +105,7 @@ def parameter_changes(spec, metadata, *, adapter_digest=None):
         if key == 'numa':
             value = int(value)
         if key == 'draft_n_max':
-            if runtime.get('spec_type', 'none') != 'draft-mtp' or value == MTP_DRAFT_N_MAX_DEFAULT:
+            if runtime.get('spec_type', 'none') not in {'draft-mtp', 'draft-dflash'} or value == SPEC_DRAFT_N_MAX_DEFAULT:
                 continue
         value = _typed(value, RUNTIME_TYPES.get(key))
         default = baseline.get(key)

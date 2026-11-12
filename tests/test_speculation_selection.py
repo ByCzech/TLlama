@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from tllama.config import BackendConfig, ConfigError
-from tllama.helpers.model_toml import parse_model_toml, TomlModelError
+from tllama.helpers.model_toml import parse_model_toml
 from tllama.native_config import resolve_worker_config
 from tllama.ollama_options import ollama_runtime_overrides, resolve_ollama_speculation
 from test_native_manager import native_manager
@@ -15,8 +15,6 @@ from test_native_public_api import public, request_body
 @pytest.mark.parametrize('value', [0, 1, 7])
 @pytest.mark.parametrize('strategy', [None, 'none', 'draft-mtp', 'draft-dflash'])
 def test_deferred_request_resolution_preserves_selected_method_without_mutation(value, strategy):
-    # draft-dflash checks the selector in isolation. Native launch support is
-    # deliberately still rejected until draft resources are wired separately.
     public_options = {'num_batch': 128, 'draft_num_predict': value}
     overrides = ollama_runtime_overrides(public_options)
     assert overrides == {'n_batch': 128, 'n_ubatch': 128, 'draft_num_predict': value}
@@ -71,9 +69,10 @@ def test_direct_native_draft_limit_does_not_implicitly_activate_a_strategy(value
     assert '--spec-type' not in args and '--spec-draft-n-max' not in args
 
 
-def test_external_dflash_strategy_remains_rejected_before_native_wiring():
-    with pytest.raises(TomlModelError, match='not integrated'):
-        parse_model_toml('[llm]\nmodel="Local/model.gguf"\n[runtime]\nspec_type="draft-dflash"\n')
+def test_external_dflash_requires_a_resolved_draft():
+    spec = parse_model_toml('[llm]\nmodel="Local/model.gguf"\n[runtime]\nspec_type="draft-dflash"\n')
+    with pytest.raises(ConfigError, match='requires a resolved'):
+        resolve_worker_config(BackendConfig(), Path('/models/main.gguf'), spec)
 
 
 @pytest.mark.parametrize('path', ['/api/chat', '/api/generate'])

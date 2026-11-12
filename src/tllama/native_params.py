@@ -30,7 +30,7 @@ RUNTIME_TYPES = {
     "embedding": "bool", "pooling_type": "int", "context_shift": "bool",
 }
 
-MTP_DRAFT_N_MAX_DEFAULT = 3
+SPEC_DRAFT_N_MAX_DEFAULT = 3  # Captured b11850 help; shared by MTP and DFlash.
 
 SAMPLING_TYPES = {
     "temperature": "float", "top_p": "float", "top_k": "int", "min_p": "float",
@@ -136,8 +136,8 @@ def runtime_problem(name: str, value: Any) -> str | None:
         return device_problem(value)
     if name == "pooling_type" and value not in POOLING_TYPES:
         return "'pooling_type' must be -1 (model default), 1 (mean), 2 (cls) or 3 (last); token vectors and reranking are separate tasks"
-    if name == "spec_type" and value not in {"none", "draft-mtp"}:
-        return "'spec_type' must be none or draft-mtp; other speculative strategies are not integrated"
+    if name == "spec_type" and value not in {"none", "draft-mtp", "draft-dflash"}:
+        return "'spec_type' must be none, draft-mtp or draft-dflash; other speculative strategies are not integrated"
     if name == "draft_n_max" and value < 0:
         return "'draft_n_max' must be nonnegative; use spec_type=none to disable speculation"
     if name.startswith("type_"):

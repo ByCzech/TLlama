@@ -55,7 +55,7 @@ a shell; paths and serialized values stay individual argv elements.
 
 | TLlama runtime setting | Native CLI | Scope |
 |---|---|---|
-| Model / projector paths | `--model`, `--mmproj` | Resolved storage paths |
+| Model / projector / active draft paths | `--model`, `--mmproj`, `--spec-draft-model` | Resolved storage paths; draft only for DFlash |
 | `device`, `n_gpu_layers`, `n_ctx` | `--device`, `--n-gpu-layers`, `--ctx-size` | Load |
 | `fit_target_mib` | `--fit-target` | Load; nonnegative integer MiB, broadcast to all devices |
 | `fit` | `--fit on/off` | Load; optional boolean override, CPU attempts always off |
@@ -77,8 +77,8 @@ a shell; paths and serialized values stay individual argv elements.
 | `no_perf` | `--no-perf` / `--perf` | Internal libllama perf; server request wall-clock timings remain separate |
 | `kv_overrides` | Typed CSV `--override-kv` entries | TOML-only; bool/int64/finite float/string |
 | `lora_path`, `lora_scale` | `--lora` / `--lora-scaled` | Resolved inside model store; no new `[lora]` section |
-| `spec_type` | Omitted when unset; `--spec-type none/draft-mtp` when explicit | Load; embedded MTP is opt-in |
-| `draft_n_max` | `--spec-draft-n-max` only with MTP; default 3 when enabled | Load; see [native-mtp.md](native-mtp.md) |
+| `spec_type` | Omitted when unset; `--spec-type none/draft-mtp/draft-dflash` when explicit | Load; speculative methods are opt-in |
+| `draft_n_max` | `--spec-draft-n-max` only with MTP/DFlash; default 3 when enabled | Load; see [native-mtp.md](native-mtp.md) and [native-dflash.md](native-dflash.md) |
 | `embedding` | `--embeddings` when true; speculation explicitly disabled | Load mode; see [native-embeddings.md](native-embeddings.md) |
 | `pooling_type` -1/1/2/3 | Omit / `--pooling mean/cls/last` | Embedding load only; -1 retains the model default |
 | `[template].jinja` | `--jinja --chat-template-file` | Private 0600 file owned and removed by worker |

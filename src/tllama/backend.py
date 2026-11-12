@@ -258,6 +258,9 @@ class ModelManager:
             if not model.is_file():
                 raise FileNotFoundError(f"Model '{model_name}' does not point at an existing GGUF")
             mmproj = self.resolve_mmproj_path(spec, model_name)
+            draft = self.resolve_draft_path(spec, model_name)
+            draft_files = gguf_files(draft, self._read_metadata_for_path, self.models_dir) if draft else ()
+            draft_before = tuple(build_model_file_fingerprint(path) for path in draft_files)
             file_before = {"model": build_model_file_fingerprint(model),
                            "projector": build_model_file_fingerprint(mmproj) if mmproj else None}
             info = self._build_model_file_info_from_path(model)
@@ -279,8 +282,13 @@ class ModelManager:
             # merely to compute their public identity.
             resolved = resolve_worker_config(self.config, model.resolve(), spec, num_ctx=num_ctx,
                                              mmproj=mmproj.resolve() if mmproj else None,
+                                             draft=draft.resolve() if draft else None,
                                              metadata=metadata, runtime_overrides=runtime_overrides,
                                              **self._native_launch_options)
+            if resolved.launch.draft is not None:
+                arch = self._read_metadata_for_path(draft).get('arch')
+                if arch and arch != 'dflash':
+                    raise ValueError(f"Model '{model_name}': draft-dflash requires dflash weights; got {arch!r}")
             artifacts = self._model_artifacts(spec, model, model_name, metadata=metadata)
             identity_before = tuple(build_model_file_fingerprint(path) for path in artifacts.files)
             info['model_digest'] = self._artifact_digest(spec, artifacts, metadata)
@@ -289,7 +297,9 @@ class ModelManager:
             file_after = {"model": build_model_file_fingerprint(model),
                           "projector": build_model_file_fingerprint(mmproj) if mmproj else None}
             identity_after = tuple(build_model_file_fingerprint(path) for path in artifacts.files)
-            if before != after or file_before != file_after or identity_before != identity_after:
+            draft_after = tuple(build_model_file_fingerprint(path) for path in draft_files)
+            if (before != after or file_before != file_after or identity_before != identity_after
+                    or draft_before != draft_after):
                 continue
             if metadata_scanned:
                 # Admission must warm the same header cache as /api/show.
@@ -299,6 +309,8 @@ class ModelManager:
                 save_metadata_cache(self.metadata_cache_dir, model_name, model, metadata,
                                     fingerprint=file_after['model'], repository=self.repository)
             fingerprint = {"toml": after, **file_after}
+            if resolved.launch.draft is not None:
+                fingerprint['draft'] = draft_after
             return ModelDefinition(model_name, resolved, fingerprint, info, metadata)
         raise RuntimeError(f"Model definition '{model_name}' kept changing while it was resolved")
 
@@ -860,13 +872,7 @@ class ModelManager:
 
     def _model_artifacts(self, spec, target_path, source, *, metadata=None):
         projector = self.resolve_mmproj_path(spec, str(source))
-        draft = None
-        if spec.draft_from is not None:
-            raise TomlModelError(f'{source}: [draft].from has not been imported')
-        if spec.draft_model is not None:
-            draft = resolve_repo_relative_path(spec.draft_model, self.models_dir)
-            if not draft.is_file():
-                raise TomlModelError(f'{source}: [draft].model does not name an existing file')
+        draft = self.resolve_draft_path(spec, source)
         adapter = ()
         if 'lora_path' in spec.runtime:
             path = Path(spec.runtime['lora_path'])
@@ -1329,6 +1335,17 @@ class ModelManager:
             )
 
         return metadata
+
+    def resolve_draft_path(self, spec: VirtualModelSpec, source: str) -> Optional[Path]:
+        """Resolve the declared artifact; activation is a separate runtime choice."""
+        if spec.draft_from is not None:
+            raise TomlModelError(f'{source}: [draft].from has not been imported')
+        if spec.draft_model is None:
+            return None
+        path = resolve_repo_relative_path(spec.draft_model, self.models_dir)
+        if not path.is_file():
+            raise TomlModelError(f'{source}: [draft].model does not name an existing file')
+        return path
 
     def resolve_mmproj_path(self, spec: VirtualModelSpec, source: str) -> Optional[Path]:
         """The projector a virtual model names, checked to actually be one.

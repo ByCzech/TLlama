@@ -18,7 +18,7 @@ from tllama.helpers.model_toml import VirtualModelSpec
 from tllama.helpers.runtime_params import coerce_runtime_overrides
 from tllama.helpers.sampling_params import coerce_sampling_overrides
 from tllama.native_cli import RUNTIME_OPTION_NAMES
-from tllama.native_params import freeze_values, kv_type_name, runtime_problem, MTP_DRAFT_N_MAX_DEFAULT
+from tllama.native_params import freeze_values, kv_type_name, runtime_problem, SPEC_DRAFT_N_MAX_DEFAULT
 from tllama.worker_config import WorkerLaunchSpec
 from tllama.decision_contract import decision_type
 from tllama.ollama_options import resolve_ollama_speculation
@@ -66,7 +66,7 @@ def _plain(value):
 
 def resolve_worker_config(
     config: BackendConfig, model: Path, virtual_spec: VirtualModelSpec | None = None, *,
-    num_ctx: int | None = None, mmproj: Path | None = None,
+    num_ctx: int | None = None, mmproj: Path | None = None, draft: Path | None = None,
     environment: Mapping[str, str] | None = None, executable: Path | None = None,
     alias: str = "tllama-worker", load_timeout: float = 600,
     request_timeout: float | None = None,
@@ -120,9 +120,9 @@ def resolve_worker_config(
             runtime[flag], sources[flag] = False, "request CPU placement"
     if (runtime_overrides or {}).get("context_shift") is True and mmproj is not None:
         raise ConfigError("num_keep context shifting is unsupported by the native multimodal runtime")
-    if runtime.get("spec_type") == "draft-mtp" and "draft_n_max" not in runtime:
-        runtime["draft_n_max"] = MTP_DRAFT_N_MAX_DEFAULT
-        sources["draft_n_max"] = "MTP default"
+    if runtime.get("spec_type") in {"draft-mtp", "draft-dflash"} and "draft_n_max" not in runtime:
+        runtime["draft_n_max"] = SPEC_DRAFT_N_MAX_DEFAULT
+        sources["draft_n_max"] = "MTP default" if runtime["spec_type"] == "draft-mtp" else "DFlash default"
     if (runtime_overrides or {}).get("n_gpu_layers") == -1:
         runtime["n_gpu_layers"] = None
     device = runtime.get("device")
@@ -173,6 +173,7 @@ def resolve_worker_config(
         launch = WorkerLaunchSpec(
             model=model, executable=config.runtime_executable if executable is None else executable,
             device=device, alias=alias, mmproj=mmproj,
+            draft=draft if runtime.get("spec_type") == "draft-dflash" else None,
             backend_priority=config.backend_priority,
             version_policy=config.runtime_version_policy,
             memory_source=config.memory_source, memory_compare=config.memory_compare,

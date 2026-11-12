@@ -35,6 +35,7 @@ class WorkerLaunchSpec:
     alias: str = "tllama-worker"
     executable: Path = DEFAULT_EXECUTABLE
     mmproj: Path | None = None
+    draft: Path | None = None
     n_ctx: int = 2048
     n_gpu_layers: int | None = None
     backend_priority: tuple[str, ...] = DEFAULT_BACKEND_PRIORITY
@@ -102,9 +103,9 @@ class WorkerLaunchSpec:
             raise ValueError("transport must be uds or tcp")
         if self.transport == "uds" and self.port != 0:
             raise ValueError("port requires transport=tcp")
-        for name in ("model", "executable", "mmproj"):
+        for name in ("model", "executable", "mmproj", "draft"):
             value = getattr(self, name)
-            if value is None and name == "mmproj":
+            if value is None and name in ("mmproj", "draft"):
                 continue
             path = Path(value)
             if not path.is_absolute() or "\0" in str(path):
@@ -148,6 +149,11 @@ class WorkerLaunchSpec:
             if value is not None:
                 object.__setattr__(self, name, kv_type_name(value))
         runtime_cli_args(self.runtime_options)
+        if self.runtime_options.get("spec_type") == "draft-dflash":
+            if self.draft is None:
+                raise ValueError("draft-dflash requires a resolved [draft].model path")
+        elif self.draft is not None:
+            raise ValueError("An external draft path requires spec_type=draft-dflash")
         mmproj_cli_args(self.mmproj_options)
         if type(self.embedding) is not bool:
             raise ValueError("embedding must be a boolean")
@@ -230,6 +236,8 @@ class WorkerLaunchSpec:
             args += ["--mmproj", str(self.mmproj)]
             if self.device == "none":
                 args.append("--no-mmproj-offload")
+        if self.draft is not None:
+            args += ["--spec-draft-model", str(self.draft)]
         if self.flash_attn is not None:
             args += ["--flash-attn", "on" if self.flash_attn else "off"]
         for name, flag in (("type_k", "--cache-type-k"), ("type_v", "--cache-type-v")):

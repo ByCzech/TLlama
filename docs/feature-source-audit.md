@@ -58,7 +58,7 @@ Native and packaging paths use the pinned external repositories above.
 | Embeddings | `embedding_contract.py`, `embedding_media.py`, `native_embeddings.py`, schemas/embeddings | Dimensions/pooling/normalization/token accounting, float/base64 and explicit inline-image extension |
 | Text Decision | `decision_contract.py`, `native_decision.py`, schemas/decision | Laya/Nimble/Clef metadata/head/template and typed choice/score/noul response validation |
 | FIM | helpers/fim, `native_fim.py`, schemas/generation, model `[fim]` | Token metadata/order, literal prefix/suffix; quality selection remains separate |
-| Embedded MTP | `native_params.py`, `native_config.py`, `ollama_options.py`, `worker.py` | Only none/draft-mtp strategy exposed; statistics and reviewed off/on captures |
+| Embedded MTP | `native_params.py`, `native_config.py`, `ollama_options.py`, `worker.py` | none/draft-mtp/draft-dflash strategies; embedded MTP statistics and reviewed off/on captures |
 | Client ergonomics | All `cli*.py`, `client.py`, `__main__.py`, `version.py` | Local/remote, REPL/stdin/JSON, human locale/timings/reasoning and clean help/version import boundary |
 | Public schema and operational bounds | schemas, middleware, helpers/cors, errors and routers | Typed inputs/route-specific errors, configured origins and advertised compatibility; no built-in public authentication |
 | Shared fingerprint policy | `runtime_fingerprint.py`, worker startup and qualification scripts | warn/strict and exact diagnostic pins; live protocol checks remain independent |

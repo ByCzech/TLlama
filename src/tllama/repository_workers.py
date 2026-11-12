@@ -9,7 +9,7 @@ from tllama.repository_store import RepositoryStore
 
 
 def resolve_launch(launch):
-    """Group whole shard directories, including an independent projector/LoRA.
+    """Group whole shard directories, including an independent projector/draft/LoRA.
 
     Physical diagnostics can also use ordinary files outside managed data;
     those files are never candidates for repository GC. Only explicitly
@@ -17,7 +17,7 @@ def resolve_launch(launch):
     """
     resources = {}
     paths = [Path(value).resolve() if value is not None else None
-             for value in (launch.model, launch.mmproj, launch.runtime_options.get('lora_path'))]
+             for value in (launch.model, launch.mmproj, launch.runtime_options.get('lora_path'), launch.draft)]
     for value in paths:
         if value is None:
             continue
@@ -34,7 +34,7 @@ def resolve_launch(launch):
     options = dict(launch.runtime_options)
     if paths[2] is not None:
         options['lora_path'] = str(paths[2])
-    launch = replace(launch, model=paths[0], mmproj=paths[1], runtime_options=options)
+    launch = replace(launch, model=paths[0], mmproj=paths[1], draft=paths[3], runtime_options=options)
     return launch, resources
 
 

@@ -19,17 +19,17 @@ normal service use, since ordinary models may not contain an MTP head.
 | `spec_type` unset | No speculative CLI flags added; normal native default remains in force |
 | `spec_type="none"` | Explicit `--spec-type none`; an inherited draft limit stays dormant |
 | `spec_type="draft-mtp"` | `--spec-type draft-mtp`, default draft limit 3 |
-| `draft_n_max=N` | Nonnegative native int32; serialized as `--spec-draft-n-max` only with MTP selected |
+| `draft_n_max=N` | Nonnegative native int32; serialized as `--spec-draft-n-max` only with MTP or DFlash selected |
 | `draft_n_max=0` | MTP context remains allocated; native loop can emit a first candidate before checking the limit; use `spec_type="none"` to disable |
 
-The supported strategy list deliberately contains only `none` and `draft-mtp`.
-No arbitrary CLI passthrough, sidecar downloads, external draft model or
-automatic model-name selection is introduced. Settings are worker-load scope;
+The supported strategies are `none`, `draft-mtp` and external `draft-dflash`
+(see [native-dflash.md](native-dflash.md)). No arbitrary CLI passthrough,
+sidecar downloads or automatic model-name selection is introduced. Settings are worker-load scope;
 Ollama `draft_num_predict` overrides them per request: a positive value adjusts
 the selected strategy's length, falling back to MTP when no strategy is active;
 zero disables the strategy. Selection happens after global/TOML configuration,
-not in the early options-name adapter. This prepares external draft integration;
-DFlash launch remains unsupported at this checkpoint. Direct `spec_type`/`draft_n_max` option spellings
+not in the early options-name adapter. An attached external draft is passed
+only when DFlash is selected. Direct `spec_type`/`draft_n_max` option spellings
 still return HTTP 400. See [ollama-options.md](ollama-options.md).
 Changes participate in normal definition/config identity: active leases retain
 their old worker, which drains, while new requests use the new configuration.

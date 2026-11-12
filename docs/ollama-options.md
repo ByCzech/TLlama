@@ -76,8 +76,9 @@ Direct TOML `draft_n_max=0` remains a native setting, not a guaranteed off switc
 
 The public draft-length request is resolved after global and model TOML
 configuration, so choosing a length does not hard-code a replacement method
-before the model's strategy is known. This is preparation for external draft
-loading; this checkpoint still accepts only native `none` and `draft-mtp`.
+before the model's strategy is known. Native `none`, `draft-mtp` and
+`draft-dflash` are supported; external draft loading follows
+[native-dflash.md](native-dflash.md).
 An omitted request value inherits the configured method and length. Request
 intent never enters the stored TOML, public model ID or native argv as a
 `draft_num_predict` option. Direct internal `draft_n_max` overrides keep native
