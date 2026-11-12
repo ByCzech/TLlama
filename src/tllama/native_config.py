@@ -21,6 +21,7 @@ from tllama.native_cli import RUNTIME_OPTION_NAMES
 from tllama.native_params import freeze_values, kv_type_name, runtime_problem, MTP_DRAFT_N_MAX_DEFAULT
 from tllama.worker_config import WorkerLaunchSpec
 from tllama.decision_contract import decision_type
+from tllama.ollama_options import resolve_ollama_speculation
 
 
 _DEFAULTS = {"n_gpu_layers": -1, "flash_attn": False, "n_batch": 512, "n_ubatch": 512,
@@ -104,7 +105,11 @@ def resolve_worker_config(
         overlay(virtual_spec.runtime, "TOML")
     if num_ctx is not None:
         overlay({"n_ctx": num_ctx}, "request")
-    overlay(runtime_overrides or {}, "request")
+    try:
+        requested_runtime = resolve_ollama_speculation(runtime_overrides or {}, runtime.get("spec_type"))
+    except ValueError as exc:
+        raise ConfigError(f"request runtime: {exc}") from exc
+    overlay(requested_runtime, "request")
     for name in ("n_threads", "n_threads_batch"):
         if name in (runtime_overrides or {}) and runtime_overrides[name] <= 0:
             runtime.pop(name, None)

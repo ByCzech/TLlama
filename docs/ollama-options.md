@@ -20,7 +20,7 @@ Omitting a previously supplied override returns to TOML/environment defaults.
 | `main_gpu` | `--main-gpu`; native split-mode semantics apply, not a backend selector | On change |
 | `use_mmap` | Mmap part of `--load-mode`; configured mlock remains independent | On change |
 | `num_thread` | Positive: `--threads` and `--threads-batch`; nonpositive: native automatic defaults, overriding configured thread counts | On change |
-| `draft_num_predict` | Positive N selects embedded `draft-mtp` with `draft_n_max=N`; 0 selects `none` | On change |
+| `draft_num_predict` | Positive N sets the selected strategy's `draft_n_max=N`; without an active strategy it selects embedded `draft-mtp`. 0 selects `none` | On change |
 | `num_keep` | `n_keep`; -1 preserves the initial prompt, 0 keeps no ordinary prefix tokens | Enables context shifting when first requested; value changes do not reload |
 | `repeat_last_n` | Native repeat window; -1 = context, 0 = disabled; overrides runtime `last_n_tokens_size` | No |
 | `num_predict` | Positive token budget; 0 passes native zero unchanged; -1 is unbounded; -2 fills remaining context with shifting disabled | -2 can change the worker's context-shift mode |
@@ -73,6 +73,15 @@ Ollama `draft_num_predict=0` means no speculative strategy. It is translated to
 `spec_type=none`, not a zero native MTP draft limit: the audited MTP loop allocates
 the MTP context and can produce its first candidate before checking that limit.
 Direct TOML `draft_n_max=0` remains a native setting, not a guaranteed off switch.
+
+The public draft-length request is resolved after global and model TOML
+configuration, so choosing a length does not hard-code a replacement method
+before the model's strategy is known. This is preparation for external draft
+loading; this checkpoint still accepts only native `none` and `draft-mtp`.
+An omitted request value inherits the configured method and length. Request
+intent never enters the stored TOML, public model ID or native argv as a
+`draft_num_predict` option. Direct internal `draft_n_max` overrides keep native
+length semantics and do not implicitly activate speculation.
 
 Public `num_predict=0` is passed unchanged as native zero, including its output
 and measured statistics. In the audited native pin `3144c167ef`, zero can return

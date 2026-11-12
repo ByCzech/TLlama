@@ -25,8 +25,11 @@ normal service use, since ordinary models may not contain an MTP head.
 The supported strategy list deliberately contains only `none` and `draft-mtp`.
 No arbitrary CLI passthrough, sidecar downloads, external draft model or
 automatic model-name selection is introduced. Settings are worker-load scope;
-Ollama `draft_num_predict` overrides them per request: positive values enable MTP,
-zero disables the strategy. Direct `spec_type`/`draft_n_max` option spellings
+Ollama `draft_num_predict` overrides them per request: a positive value adjusts
+the selected strategy's length, falling back to MTP when no strategy is active;
+zero disables the strategy. Selection happens after global/TOML configuration,
+not in the early options-name adapter. This prepares external draft integration;
+DFlash launch remains unsupported at this checkpoint. Direct `spec_type`/`draft_n_max` option spellings
 still return HTTP 400. See [ollama-options.md](ollama-options.md).
 Changes participate in normal definition/config identity: active leases retain
 their old worker, which drains, while new requests use the new configuration.

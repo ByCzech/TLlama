@@ -28,9 +28,9 @@ def ollama_runtime_overrides(options):
         problem = runtime_problem("draft_n_max", value)
         if problem:
             raise ValueError(f"options.draft_num_predict: {problem}")
-        values["spec_type"] = "draft-mtp" if value else "none"
-        if value:
-            values["draft_n_max"] = value
+        # Preserve request intent until the model's strategy has been read.
+        # Choosing MTP here would overwrite an explicitly configured method.
+        values["draft_num_predict"] = value
     if "num_keep" in options:
         value = options["num_keep"]
         if type(value) is not int or not -1 <= value < 2**31:
@@ -38,6 +38,28 @@ def ollama_runtime_overrides(options):
         values["context_shift"] = True
     if options.get("num_predict") == -2:
         values["context_shift"] = False
+    return values
+
+
+def resolve_ollama_speculation(overrides, configured_strategy):
+    """Apply a request's draft length after global/TOML strategy selection.
+
+    The public alias is request-only and never becomes a native launch option.
+    Direct internal draft_n_max overrides retain their native length semantics.
+    """
+    values = dict(overrides)
+    if "draft_num_predict" not in values:
+        return values
+    value = values.pop("draft_num_predict")
+    problem = runtime_problem("draft_n_max", value)
+    if problem:
+        raise ValueError(f"options.draft_num_predict: {problem}")
+    strategy = values.get("spec_type", configured_strategy)
+    if value == 0:
+        values["spec_type"] = "none"
+    else:
+        values["spec_type"] = strategy if strategy not in (None, "none") else "draft-mtp"
+        values["draft_n_max"] = value
     return values
 
 
