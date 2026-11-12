@@ -12,6 +12,7 @@ from tllama.worker import WorkerProtocolError
 from test_native_api import CHAT, RAW, USAGE, TIMINGS, collected, context, read_result, chat_result, sequence
 from test_native_public_api import public, request_body
 from test_native_manager import native_manager
+from test_helper_definitions import publish, reference
 
 
 COUNTERS = {'draft_n': 12, 'draft_n_accepted': 6}
@@ -107,10 +108,15 @@ async def test_incomplete_stream_cannot_publish_successful_speculative_statistic
 @pytest.mark.parametrize('path,raw', [('/api/chat', False), ('/api/generate', False),
                                     ('/api/generate', True), ('/v1/chat/completions', False)])
 @pytest.mark.parametrize('streaming', [False, True])
-async def test_real_native_transport_through_public_routes(public, monkeypatch, path, raw, streaming):
+@pytest.mark.parametrize('strategy', ['draft-mtp', 'draft-dflash'])
+async def test_real_native_transport_through_public_routes(public, monkeypatch, tmp_path, path, raw, streaming, strategy):
     manager, client, name, toml = public
-    monkeypatch.setenv('STUB_PUBLIC_MTP', '1')
-    toml.write_text(toml.read_text() + '\n[runtime]\nspec_type="draft-mtp"\n')
+    monkeypatch.setenv('STUB_PUBLIC_MTP' if strategy == 'draft-mtp' else 'STUB_PUBLIC_DFLASH', '1')
+    extra = ''
+    if strategy == 'draft-dflash':
+        _, draft = publish(manager, tmp_path, 'dflash', count=2)
+        extra = reference('draft', draft)
+    toml.write_text(toml.read_text() + '\n' + extra + f'[runtime]\nspec_type="{strategy}"\n')
     body = request_body(name, path, streaming)
     if raw:
         body['raw'] = True

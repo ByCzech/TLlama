@@ -50,6 +50,10 @@ TIMINGS = {"cache_n": 19, "prompt_n": 6, "prompt_ms": 2.5,
            "predicted_n": 10, "predicted_ms": 200.1}
 if os.environ.get('STUB_PUBLIC_MTP') and arg('--spec-type') == 'draft-mtp':
     TIMINGS.update(draft_n=12, draft_n_accepted=6)
+if (os.environ.get('STUB_PUBLIC_DFLASH') and arg('--spec-type') == 'draft-dflash'
+        and arg('--spec-draft-model')):
+    # Synthetic counters exercise transport, not native DFlash generation.
+    TIMINGS.update(draft_n=12, draft_n_accepted=6)
 USAGE = {"prompt_tokens": 25, "completion_tokens": 10, "total_tokens": 35,
          "prompt_tokens_details": {"cached_tokens": 19}}
 

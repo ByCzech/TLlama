@@ -18,6 +18,26 @@ def _count(value):
     return value if type(value) is int and value >= 0 else None
 
 
+def _speculative_rows(data):
+    extension = data.get('tllama')
+    measured = extension.get('speculative') if isinstance(extension, dict) else None
+    if not isinstance(measured, dict):
+        return []
+    drafted = _count(measured.get('draft_tokens'))
+    accepted = _count(measured.get('accepted_tokens'))
+    if drafted is not None and accepted is not None and accepted > drafted:
+        return []
+    rows = []
+    for count, label in ((drafted, 'Drafted'), (accepted, 'Draft accepted')):
+        if count is not None:
+            rows.append((label, f'{number_text(count)} tokens'))
+    # Derive a percentage only from the same two measured counters. Never
+    # infer drafts from output counts or OpenAI prediction-token statistics.
+    if drafted and accepted is not None:
+        rows.append(('Draft acceptance', f'{number_text(100 * (accepted / drafted), 2)}%'))
+    return rows
+
+
 def statistics(data, *, elapsed, first_text=None):
     rows = [('Client total', f'{number_text(elapsed, 3)} s')]
     if first_text is not None:
@@ -31,6 +51,7 @@ def statistics(data, *, elapsed, first_text=None):
         count = _count(data.get(key))
         if count is not None:
             rows.append((label, f'{number_text(count)} tokens'))
+    rows.extend(_speculative_rows(data))
     usage = data.get('usage')
     if isinstance(usage, dict):
         for key, label in (('input_tokens', 'Input'), ('output_tokens', 'Output')):

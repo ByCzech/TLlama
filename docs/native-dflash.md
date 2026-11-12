@@ -105,6 +105,22 @@ CPU fallback. An explicit draft selector is never rewritten to another GPU/CPU
 to make an attempt work: native startup must report unavailable devices or
 unsupported settings. Real memory fit/performance still needs hardware testing.
 
+## Measured request statistics
+
+The existing request-scoped `tllama.speculative` extension carries native
+`timings.draft_n` / `timings.draft_n_accepted` when provided, through the same
+adapter as embedded MTP. Chat, rendered/raw generate and OpenAI chat retain
+their current streaming/nonstreaming shapes; this adds no HTTP fields.
+`tllama run MODEL --verbose` displays those counters on stderr as `Drafted`,
+`Draft accepted` and, when defined, `Draft acceptance` in percent. It does not
+infer missing values or add accepted drafts to generated-token counts/rates.
+JSON stdout retains the original extension and fractional acceptance value.
+
+Synthetic worker tests cover DFlash transport and client display, including a
+subsequent off request without stale counters. Actual drafting/acceptance on a
+compatible DFlash/DFlash2 pair still requires hardware qualification; successful
+startup or the presence of a draft path is not proof of measured activity.
+
 ## Identity and lifetime
 
 All declared artifacts contribute to stored model SIZE/ID and repository

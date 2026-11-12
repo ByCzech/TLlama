@@ -231,6 +231,12 @@ not use OpenAI `accepted_prediction_tokens` / `rejected_prediction_tokens`,
 which describe a different feature. Invalid native counter types, negatives or
 accepted > drafted are protocol errors, consistent with existing usage checks.
 
+The TLlama client's `run --verbose` now displays these existing terminal
+measurements as `Drafted`, `Draft accepted` and a defined acceptance percentage.
+Counts are not added to generated output or its rate. Missing measurements are
+omitted; zero drafted tokens have no percentage. The formatter also serves
+external DFlash without choosing a strategy or changing the JSON response.
+
 After applying 0051, run:
 
 ```bash

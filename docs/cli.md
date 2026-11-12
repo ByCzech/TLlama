@@ -534,6 +534,22 @@ evaluated/generated counts and measured durations, never cached token counts
 or total wall time. Missing measurements are omitted. Measured zero counts or
 durations remain zero; a zero duration has no calculated rate.
 
+When the reply includes the existing `tllama.speculative` counters, verbose
+output also shows `Drafted` and `Draft accepted` token counts. `Draft acceptance`
+is accepted/drafted as a percentage with two decimal places, only when both
+counts are valid and drafted is positive. Measured zeros remain visible;
+unknown counts and an undefined ratio are omitted. Counts and percentages use
+the client's numeric locale. A reply without this extension, including an
+ordinary Ollama response, adds no draft rows. Invalid optional values are
+ignored; contradictory accepted > drafted counts suppress the draft summary.
+The percentage is computed from those counters, not a standalone ratio field.
+
+These are terminal request measurements, shared by MTP and external DFlash
+when the backend supplies counters. They are not worker totals or evidence of
+speedup. Accepted draft tokens are already included in generated output; they
+are never added again to `Generated` or generation tok/s. OpenAI prediction
+token fields describe a different feature and are not a substitute.
+
 Embedding/Decision results keep their JSON stdout and display only available
 statistics. Decision input/output usage is not presented as generation speed.
 JSON chat output also stays unchanged: explicit verbose output goes to stderr,
