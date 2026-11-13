@@ -205,6 +205,17 @@ the server's existing downloader thread is not guaranteed to stop immediately.
 The client completes cleanup of the HTTP decoding chain before returning,
 including success, malformed progress and early termination.
 
+On an interactive stderr terminal, `pull` reuses the run spinner and updates
+one line while waiting or downloading. Known positive totals also show a
+progress bar when the terminal is wide enough. Each phase leaves only its
+last progress line in the terminal history; changed totals (including shards)
+come directly from the latest server event. Unknown totals keep the spinner.
+Success, failure and Ctrl+C clear and join the indicator before returning.
+Redirected stderr, `TERM=dumb` and terminals without spinner character support
+retain the readable line output without terminal control sequences. `--json`
+stays unchanged and quiet on stderr. This is client presentation only; Ollama
+progress events, HTTP requests and the daemon's download behavior are unchanged.
+
 `rm` deletes definitions on the selected server and reclaims their unused managed
 groups/cache. Other definitions and live reservations protect shared/busy groups.
 Cleanup warnings and deferrals go to stderr, including with `--json`; successful

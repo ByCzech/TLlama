@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from contextlib import aclosing
 import json
 import math
 import sys
@@ -159,20 +158,8 @@ async def _execute(args):
             notifier.notify('create_finished')
             return 0
         if args.operation == 'pull':
-            previous = None
-            async with aclosing(client.pull(args.model)) as progress:
-                async for event in progress:
-                    if as_json:
-                        print(json.dumps(event, ensure_ascii=False), flush=True)
-                    else:
-                        from tllama.cli_output import size_text
-                        text = event['status']
-                        if 'completed' in event:
-                            text += (f": {size_text(event['completed'], decimal_units=args.decimal_units)} / "
-                                     f"{size_text(event.get('total'), decimal_units=args.decimal_units)}")
-                        if text != previous:
-                            print(text, file=sys.stderr, flush=True)
-                            previous = text
+            from tllama.cli_pull import pull_progress
+            await pull_progress(client, args.model, as_json=as_json, decimal_units=args.decimal_units)
             if not as_json:
                 print(f'pulled: {args.model}')
             notifier.notify('pull_finished')

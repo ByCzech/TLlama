@@ -20,6 +20,7 @@ class WaitStatus:
                 self.enabled = False
         self.task = None
         self.drawn = False
+        self.width = 0
         self.stopped = False
 
     async def __aenter__(self):
@@ -30,11 +31,20 @@ class WaitStatus:
     async def _animate(self):
         index = 0
         while not self.stopped:
-            self.output.write(f'\r{FRAMES[index % len(FRAMES)]} {self.label}')
+            text = f'{FRAMES[index % len(FRAMES)]} {self.label}'
+            self.output.write('\r' + text + ' ' * max(0, self.width - len(text)))
             self.output.flush()
             self.drawn = True
+            self.width = len(text)
             index += 1
             await asyncio.sleep(INTERVAL)
+
+    def clear(self):
+        if self.drawn:
+            self.output.write('\r' + ' ' * self.width + '\r')
+            self.output.flush()
+            self.drawn = False
+            self.width = 0
 
     def stop(self):
         # Synchronous clearing ensures the next output chunk cannot race
@@ -42,10 +52,7 @@ class WaitStatus:
         self.stopped = True
         if self.task is not None:
             self.task.cancel()
-        if self.drawn:
-            self.output.write('\r' + ' ' * (len(self.label) + 2) + '\r')
-            self.output.flush()
-            self.drawn = False
+        self.clear()
 
     async def __aexit__(self, *args):
         self.stop()
