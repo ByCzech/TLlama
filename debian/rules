@@ -23,7 +23,7 @@ override_dh_installchangelogs:
 	dh_installchangelogs --keep CHANGELOG.md
 
 override_dh_compress:
-	# Keep the one-shot converter directly readable by python3 in the doc package.
+	# Keep the application package's doc/tools converter directly runnable by python3.
 	dh_compress -Xtools/migrate-repository-v2.py
 
 override_dh_installsystemd:

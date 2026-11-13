@@ -1,4 +1,4 @@
-.TH TLLAMA 1 "October 2026" "TLlama" "User Commands"
+.TH TLLAMA 1 "November 2026" "TLlama" "User Commands"
 .SH NAME
 tllama \- command-line client for a TLlama or Ollama-compatible server
 .SH SYNOPSIS
@@ -10,8 +10,10 @@ connects to an existing server. With no command it displays help.
 It does not launch a daemon.
 .SH COMMANDS
 .TP
-.B list, ls
-List available models.
+.B list, ls [--all | --type main|mmproj|draft]
+List main models by default. --all includes standalone helpers; --type selects
+one definition type. Helper filters require the TLlama repository_helpers
+server capability. Projectors and drafts cannot run independently.
 .TP
 .B show MODEL
 Show a model's definition and metadata.
@@ -20,12 +22,22 @@ Show a model's definition and metadata.
 List loaded models.
 .TP
 .B pull MODEL
-Download a model through the selected server.
+Download a model through the selected server. Interactive progress updates
+one line; redirected output uses plain status lines and JSON retains NDJSON.
+Standalone projector/draft downloads register typed helper definitions.
 .TP
 .B rm MODEL...
 Remove model definitions and reclaim managed weights/cache no longer referenced
 or reserved. Shared or busy groups remain protected. Against an Ollama daemon,
 an empty successful response is accepted with a compatibility warning on stderr.
+Attached standalone helper definitions remain registered by default. Their
+unused weights without any remaining definition are reclaimed automatically.
+.TP
+.B rm MODEL... --remove-unused-helpers
+Also remove unambiguously identified attached helper definitions without other
+main users. This requires TLlama server support, respects sharing/reservations
+and does not perform global repository pruning. Ambiguous aliases remain for
+explicit removal.
 .TP
 .B stop MODEL
 Unload a model.
@@ -34,8 +46,11 @@ Unload a model.
 Run inference, or open an interactive prompt when no prompt or redirected
 input is supplied. Enter /help for interactive commands.
 .TP
-.B cp SOURCE DESTINATION
-Copy a model definition.
+.B cp SOURCE DESTINATION [--mmproj NAME] [--draft NAME]
+Copy a model definition while sharing weights. Optional names bind registered
+helpers of the matching role; the new TOML stores direct weight references.
+Attaching a draft does not enable speculation. Helper options require TLlama
+server support.
 .TP
 .B create MODEL -f FILE
 Create a model from a TOML definition. Referenced client input files use the
@@ -104,7 +119,7 @@ max_file_mib (positive integer, default 256), limiting the complete saved JSON.
 Both limits apply when saving and loading, are local client preferences and
 are not restored from a saved session. Server and model limits still apply.
 .PP
-.I /usr/share/doc/tllama-doc/docs/cli.md
+.I /usr/share/doc/tllama/docs/cli.md
 .SH TERMINAL NOTIFICATIONS
 Notifications are off by default. [notifications] bell=true enables BEL on
 terminal stderr for bell_events (default model_ready and response_finished).
@@ -120,6 +135,17 @@ REPL inputs persist separately per server and model in XDG_STATE_HOME/tllama/his
 Use [history] enabled=false in client.toml or run --no-history to disable
 persistence. run --clear-history removes saved inputs for this scope before
 opening the REPL. Input history does not restore conversation messages.
+.SH SPECULATIVE DECODING
+/set parameter spec_type "none", "draft-mtp" or "draft-dflash" selects one
+strategy for subsequent requests. A changed effective load configuration reloads
+the model worker; an identical configuration can reuse it. DFlash requires an
+attached compatible draft. DFlash2 uses the same strategy name.
+.PP
+/set parameter draft_num_predict N sets draft length. Zero disables speculation;
+it must be made positive again to enable a selected strategy. Session overrides
+do not edit the stored TOML. Placement and draft K/V/batch settings belong to
+server/model configuration. --verbose displays native drafted/accepted counts
+when available; no speedup is guaranteed. spec_type is a TLlama extension.
 .SH INTERACTIVE IMAGES AND SAVES
 /image FILE queues an image for the next prompt; quote paths containing spaces.
 /images lists queued images and /unimage INDEX or /unimage all removes them.

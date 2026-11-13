@@ -78,6 +78,11 @@ def main():
         assert run("tllama", "--version", env=env, cwd=root) == "tllama " + version
         assert run("tllama.daemon", "--version", env=env, cwd=root) == "tllamad " + version
         assert "HTTP client" in run("tllama", "--help", env=env, cwd=root)
+        for command, flags in (("list", ("--all", "--type")),
+                               ("cp", ("--mmproj", "--draft")),
+                               ("rm", ("--remove-unused-helpers",))):
+            help_text = run("tllama", command, "--help", env=env, cwd=root)
+            assert all(flag in help_text for flag in flags), (command, help_text)
         assert "--config" in run("tllama.daemon", "--help", env=env, cwd=root)
         config = root / "server.toml"
         config.write_text('[server]\nhost = "127.0.0.1"\nport = 54801\n', encoding="utf-8")
@@ -98,6 +103,7 @@ def main():
         # No listener or native worker is started, and the store stays temporary.
         probe = '''
 import asyncio
+import json
 import httpx
 from tllama.main import app
 from tllama.version import get_version
@@ -106,6 +112,8 @@ async def check():
         reply = await client.get("/api/version")
         assert reply.status_code == 200, reply.text
         assert reply.json() == {"version": get_version()}, reply.text
+        reply = await client.get("/api/tags")
+        assert reply.json() == {"models": [], "server_features": ["repository_helpers"]}, reply.text
         for path in ('/docs', '/redoc', '/openapi.json', '/docs/oauth2-redirect'):
             reply = await client.get(path)
             assert reply.status_code == 404, (path, reply.text)
@@ -136,6 +144,39 @@ assert store.publish(prepare_group([source])) == (weight,)
 assert info.read_text() == source.name + chr(10)
 assert prune_repository(store, apply=True)['ok']
 assert not weight.parent.exists()
+
+# A helper definition protects its data without becoming a runnable model.
+# This probes the wheel's real parser/store/router contract, not a native loader.
+from tllama.backend import model_manager
+from tllama.model_definitions import create_definition
+draft_source = store.root.parent / 'draft.gguf'
+writer = gguf.GGUFWriter(str(draft_source), 'dflash')
+writer.write_header_to_file()
+writer.write_kv_data_to_file()
+writer.close()
+draft, = store.publish(prepare_group([draft_source]))
+relative = draft.relative_to(store.root).as_posix()
+create_definition(model_manager, 'package-draft', '[draft]' + chr(10)
+                  + 'model=' + json.dumps(relative) + chr(10), {})
+assert prune_repository(store)['candidates'] == []
+async def check_helper():
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        reply = await client.get('/api/tags')
+        assert reply.status_code == 200 and reply.json()['models'] == [], reply.text
+        reply = await client.get('/api/tags', params={'type': 'draft'})
+        assert reply.status_code == 200, reply.text
+        assert [row['name'] for row in reply.json()['models']] == ['package-draft'], reply.text
+        reply = await client.post('/api/show', json={'model': 'package-draft'})
+        assert reply.status_code == 200, reply.text
+        assert reply.json()['model_definition'] == {'type': 'draft', 'artifacts': {'draft': relative}}, reply.text
+        reply = await client.post('/api/chat', json={'model': 'package-draft',
+            'messages': [{'role': 'user', 'content': 'hello'}], 'stream': False})
+        assert reply.status_code == 400 and 'draft helper' in reply.text, reply.text
+        assert model_manager.native_snapshot() == []
+        reply = await client.request('DELETE', '/api/delete', json={'model': 'package-draft'})
+        assert reply.status_code == 200, reply.text
+asyncio.run(check_helper())
+assert not draft.parent.exists()
 '''
         subprocess.run([sys.executable, "-c", probe], env=env, cwd=root, check=True, timeout=30)
     print("TLlama package smoke passed: " + version)

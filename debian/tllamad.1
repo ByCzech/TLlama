@@ -6,7 +6,7 @@ tllamad \- foreground TLlama inference daemon
 .RI [ options ]
 .br
 .B tllamad
-.RI [ options ] " repo check|prune|inspect|stats " [ options ]
+.RI [ options ] " repo check|prune|prune-uploads|inspect|stats " [ options ]
 .SH DESCRIPTION
 .B tllamad
 serves model APIs and supervises private native tllama-server workers.
@@ -69,6 +69,14 @@ cache/upload aliases. --apply performs fresh checks under the repository lock
 through deletion. Interrupted work remains in the durable cleanup retry queue.
 Independent caches and staging/download leftovers are not swept.
 .TP
+.B repo prune-uploads [--apply] [--json]
+Offline preview of abandoned upload staging and associated caches. --apply
+inventories again under the repository lock and removes only checked upload
+files/caches, never published data groups or definitions. Stop every daemon
+and writer sharing the repository first. Active or retained reservations and
+unknown staging entries block deletion. This explicitly discards pending
+imports; there is no automatic time expiry. Ctrl+C returns 130.
+.TP
 .B repo inspect MODEL [--json]
 Explain all component groups, shards, sharing and protection for a definition.
 .TP
@@ -84,7 +92,9 @@ errors, 2 for CLI/configuration errors and 130 for Ctrl+C.
 All daemons sharing a repository must use the current reservation protocol
 before physical reclamation. Old/external readers cannot be detected.
 Existing unmarked repositories require offline conversion with writers stopped;
-the converter is in the optional tllama-doc package.
+the converter is in the tllama application package under
+/usr/share/doc/tllama/tools/. An upgrade from 1.4.1 needs no repository conversion
+or cache reset.
 .SH CONFIGURATION
 Global precedence is command line, environment, server TOML, built-in defaults.
 File selection is --config, TLLAMA_CONFIG, the user's tllama/server.toml under
@@ -113,4 +123,4 @@ Native runtime supplied by the separate tllama-server package.
 .br
 /usr/share/doc/tllama/README.Debian
 .br
-/usr/share/doc/tllama-doc/docs/daemon.md
+/usr/share/doc/tllama/docs/daemon.md

@@ -1,3 +1,23 @@
+tllama (1.5.0-1) unstable; urgency=medium
+
+  * New upstream release:
+    - Register standalone projector/draft definitions, compose shared model
+      variants and expose explicit helper discovery/removal controls.
+    - Support explicit DFlash/DFlash2 strategies, draft placement/KV settings,
+      per-request strategy changes and measured verbose draft statistics.
+    - Render terminal pull progress on one line; reuse published weight groups
+      without permanent upload aliases and add local offline prune-uploads.
+    - Fix root-alias pull reuse and RAM metadata identity; move metadata I/O
+      off the event loop and avoid repeated valid-cache/group work.
+  * Retain repository/cache formats and the separately versioned native runtime.
+    Root unification and further startup optimization are deferred.
+  * Update client/daemon manual pages and source-build release example.
+  * Extend the built-wheel smoke with helper discovery/admission/deletion,
+    new CLI help and the existing optional .inf checks, without native loading.
+  * Keep the converter in /usr/share/doc/tllama/tools/ in the application package.
+
+ -- NemaChybu team APT archive <maintainers@nemachybu.cz>  Fri, 13 Nov 2026 12:00:00 +0100
+
 tllama (1.4.1-1) unstable; urgency=medium
 
   * New upstream bugfix release:
