@@ -4,6 +4,7 @@ import logging
 import threading
 from contextlib import asynccontextmanager
 import itertools
+import json
 
 from dataclasses import dataclass, replace
 import os
@@ -393,19 +394,17 @@ class ModelManager:
         if not file_path.exists():
             return None
 
-        stats = file_path.stat()
-
-        hash_sha256 = sha256()
-        hash_sha256.update(file_path.name.encode("utf-8"))
-        hash_sha256.update(str(stats.st_size).encode("utf-8"))
-        hash_sha256.update(str(stats.st_mtime).encode("utf-8"))
+        fingerprint = build_model_file_fingerprint(file_path)
+        # This is a change key, not the public content digest. Canonical
+        # weights share a basename; include their path and exact ns timestamp.
+        hash_sha256 = sha256(json.dumps(fingerprint, sort_keys=True).encode('utf-8'))
 
         return {
             "id": file_path.stem,
             "filename": file_path.name,
             "path": str(file_path),
-            "size": stats.st_size,
-            "mtime": int(stats.st_mtime),
+            "size": fingerprint['size'],
+            "mtime": int(fingerprint['mtime_ns'] / 1_000_000_000),
             "sha256": hash_sha256.hexdigest(),
         }
 
