@@ -20,15 +20,23 @@ from tllama.errors import (
     validation_exception_handler,
 )
 from tllama.helpers.model_toml import TomlModelError
+from tllama.repository_pins import Reservation
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await model_manager.start()
+    # An idle daemon has no worker/upload pins. Keep a lifetime marker so
+    # offline upload cleanup also refuses between HEAD/POST/create requests.
+    pin = Reservation(model_manager.repository, 'daemon')
     try:
+        await pin.__aenter__()
         yield
     finally:
-        await model_manager.shutdown()
+        try:
+            await model_manager.shutdown()
+        finally:
+            await pin.__aexit__(None, None, None)
 
 app = FastAPI(
     title="Multi AI Proxy Server",

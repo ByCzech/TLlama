@@ -21,6 +21,7 @@ def build_parser() -> argparse.ArgumentParser:
     for name, help_text in (
             ('check', 'Read-only check of the local model repository.'),
             ('prune', 'Preview unused managed groups; --apply removes them locally.'),
+            ('prune-uploads', 'Offline upload cleanup; stop all daemons first. Default is preview.'),
             ('inspect', 'Explain a local model or data group and its sharing.'),
             ('stats', 'Read-only counts and weight byte accounting for the local repository.')):
         command = operations.add_parser(name, help=help_text)
@@ -33,8 +34,8 @@ def build_parser() -> argparse.ArgumentParser:
         command.add_argument('--json', action='store_true', help='Print the full local report as JSON.')
         if name == 'check':
             command.add_argument('--hashes', action='store_true', help='Independently read and verify full GGUF contents.')
-        elif name == 'prune':
-            command.add_argument('--apply', action='store_true', help='Remove currently proved unused groups; default is preview.')
+        elif name in {'prune', 'prune-uploads'}:
+            command.add_argument('--apply', action='store_true', help='Apply the local cleanup; default is preview.')
         elif name == 'inspect':
             command.add_argument('model', nargs='?', help='Public model name.')
             command.add_argument('--group', metavar='SHA256', help='Inspect a data group instead of a model.')
@@ -64,6 +65,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.repo_operation == 'prune':
                 from tllama.repository_check_cli import run_prune
                 return run_prune(config.backend.models_dir, apply=args.apply, as_json=args.json)
+            if args.repo_operation == 'prune-uploads':
+                from tllama.repository_check_cli import run_prune_uploads
+                return run_prune_uploads(config.backend.models_dir, apply=args.apply, as_json=args.json)
             from tllama.repository_check_cli import run_inspection
             return run_inspection(config.backend.models_dir, as_json=args.json,
                 model=getattr(args, 'model', None), group=getattr(args, 'group', None))

@@ -590,7 +590,7 @@ uploads are idempotent and never replace an existing inode. Uploading alone
 does not register a model; create will publish complete groups into data and
 a definition only after its validation succeeds. Completed staging entries
 are retained for reuse if a subsequent create fails; garbage collection is
-separate work. This binary API does not accept multipart/form-data.
+an explicit offline operation described below. This binary API does not accept multipart/form-data.
 
 After successful create, redundant staging links and their caches are removed
 once the same bytes are verified in a complete published data group. This also
@@ -602,6 +602,26 @@ continuation shards, without retaining upload aliases or transferring them again
 Existing locally measured digest caches avoid rereading weights; missing caches
 are rebuilt from actual bytes (a cold shard inventory can require a full read).
 There is no additional persistent blob index or repository-format change.
+
+To discard abandoned uploads, stop **all daemons using this repository** and run
+the local command on the repository host as its owning user:
+
+```sh
+tllamad repo prune-uploads          # read-only preview; normal server configuration
+tllamad repo prune-uploads --apply  # fresh inventory, then unlink
+```
+
+`--models-dir PATH` is optional and overrides the configured root. `--json`
+returns the local report. This deliberately discards complete pending uploads
+and interrupted `.upload-*` temporary files, plus their associated caches;
+it never removes `data/` weights or TOML definitions. A pending create may need
+to upload again. There is no automatic expiration. Unknown files, directories,
+symlinks or invalid protection records prevent deletion. Active or retained
+reservations also refuse preview/apply. New daemons hold an empty lifetime
+reservation even while idle; stop older daemons explicitly because they do not
+publish this marker. Repository locking prevents a new daemon or cooperating
+writer entering during apply. Ctrl+C reports partial progress, and retry starts
+from a new inventory. This command has no HTTP endpoint or client equivalent.
 
 ## Create and import models
 

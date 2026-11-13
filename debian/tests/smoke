@@ -86,7 +86,7 @@ def main():
         assert report["settings"]["server.port"]["value"] == 54801, report
         assert not (root / "models").exists()
 
-        for operation in (("check",), ("prune",), ("stats",), ("inspect", "absent")):
+        for operation in (("check",), ("prune",), ("prune-uploads",), ("stats",), ("inspect", "absent")):
             reply = subprocess.run([sys.executable, "-m", "tllama.daemon", "repo",
                 *operation, "--no-config", "--json"], env=env, cwd=root, capture_output=True,
                 text=True, timeout=30)

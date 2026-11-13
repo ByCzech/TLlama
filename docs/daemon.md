@@ -98,6 +98,17 @@ Independent caches, staging/download leftovers and stale reservation records
 are not swept. See [pruning details](repository-prune.md) for ownership,
 recovery and coordination requirements.
 
+### Offline upload cleanup
+
+`tllamad repo prune-uploads [--apply] [--json] [--models-dir PATH]` is a separate
+operation for abandoned complete/partial uploads and their associated caches.
+Stop every daemon using the repository first; live/retained reservations block
+the command, including a new daemon's lifetime marker while idle. The default
+is read-only preview. Apply rechecks and removes staging entries only, never
+published weights or model definitions. There is no TTL. See
+[upload cleanup details](cli.md#create-and-import-models) for retry consequences
+and the requirement to stop older daemons that do not publish lifetime markers.
+
 ## Local repository inspection and statistics
 
 ```sh

@@ -114,3 +114,32 @@ def run_inspection(root, *, model=None, group=None, as_json=False):
     finally:
         if previous is not None:
             signal.signal(signal.SIGINT, previous)
+
+
+def run_prune_uploads(root, *, apply=False, as_json=False):
+    from tllama.repository_upload_cleanup import prune_uploads
+    stop = threading.Event()
+    previous = None
+    if threading.current_thread() is threading.main_thread():
+        previous = signal.signal(signal.SIGINT, lambda *args: stop.set())
+    try:
+        report = prune_uploads(RepositoryStore(root), apply=apply, stop=stop)
+        if as_json:
+            print(json.dumps(report, ensure_ascii=False, allow_nan=False))
+        else:
+            state = 'CANCELLED' if report['cancelled'] else 'OK' if report['ok'] else 'FAILED'
+            counts = report['summary']
+            print(f"Upload cleanup: {'APPLY' if apply else 'PREVIEW'} {state}")
+            print(f"Blobs: {counts['blobs']}; partial uploads: {counts['partials']}; "
+                  f"staging bytes: {counts['staging_bytes']}; removed paths: {counts['removed_paths']}")
+            for row in report['candidates']:
+                print(f"{row['kind']}: {row['path']}")
+            for issue in report['issues']:
+                print(f"error: {issue['message']}")
+            if not apply and report['can_apply']:
+                print('Preview only. Stop all daemons, then use --apply to recheck and remove these uploads.')
+            print('Published data and definitions are unchanged; a pending create may require uploading again.')
+        return 130 if report['cancelled'] or stop.is_set() else 0 if report['ok'] else 1
+    finally:
+        if previous is not None:
+            signal.signal(signal.SIGINT, previous)
