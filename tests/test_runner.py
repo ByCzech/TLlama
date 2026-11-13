@@ -55,9 +55,6 @@ def policy(manager, monkeypatch):
     async def digest(*args, **kwargs):
         return {"content_sha256": "digest"}
 
-    async def noop(*args, **kwargs):
-        return None
-
     monkeypatch.setattr(manager, "preload_native_model", load)
     monkeypatch.setattr(manager, "unload_native_model", unload)
     monkeypatch.setattr(manager, "get_model_metadata", metadata)
@@ -66,7 +63,6 @@ def policy(manager, monkeypatch):
     monkeypatch.setattr(manager, "fetch_hf_file_info", lookup)
     monkeypatch.setattr(manager, "pull_hf_file", download)
     monkeypatch.setattr(manager, "get_model_digest", digest)
-    monkeypatch.setattr(manager, "ensure_metadata_cache_for_path", noop)
     return configure
 
 
