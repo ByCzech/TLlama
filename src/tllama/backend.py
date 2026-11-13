@@ -693,6 +693,12 @@ class ModelManager:
         if metadata is None:
             return None
 
+        overrides = await _settle_owned(asyncio.create_task(asyncio.to_thread(
+            self._model_metadata_overrides, model_name)))
+        return {**metadata, **overrides} if overrides else metadata
+
+    def _model_metadata_overrides(self, model_name):
+        """Read fresh TOML/projector data in the caller's owned I/O thread."""
         try:
             virtual_spec = self._resolve_virtual_model_spec(model_name)
         except TomlModelError:
@@ -705,7 +711,7 @@ class ModelManager:
             if virtual_spec.model_type != 'main':
                 # Global inference defaults and a helper's raw template do
                 # not turn an independently registered artifact into a worker.
-                return {**metadata, 'model_definition': definition,
+                return {'model_definition': definition,
                         'template': '', 'tool_template': '',
                         'embedding_configured': False, 'has_projector': False,
                         'vision_configured': False, 'projector_info': {}}
@@ -744,10 +750,9 @@ class ModelManager:
             overrides['vision_configured'] = projector is not None and has_encoder is not False
             overrides['projector_info'] = (projector_info or {}).get('metadata_raw') or {}
 
-            if overrides:
-                metadata = {**metadata, **overrides}
+            return overrides
 
-        return metadata
+        return {}
 
     async def _get_raw_model_metadata(
         self,
@@ -757,7 +762,8 @@ class ModelManager:
         The GGUF header's own metadata, unaffected by any .toml override.
         Runs off the event loop and uses a lightweight TTL cache.
         """
-        model_info = self._build_model_file_info(model_name)
+        model_info = await _settle_owned(asyncio.create_task(asyncio.to_thread(
+            self._build_model_file_info, model_name)))
         if not model_info:
             return None
 
@@ -768,11 +774,8 @@ class ModelManager:
             if cached_value is not None:
                 return cached_value
 
-        persistent_cached_value = await asyncio.to_thread(
-            load_metadata_cache,
-            self.metadata_cache_dir,
-            model_info["path"],
-        )
+        persistent_cached_value = await _settle_owned(asyncio.create_task(asyncio.to_thread(
+            load_metadata_cache, self.metadata_cache_dir, model_info["path"])))
 
         if persistent_cached_value is not None:
             async with self._metadata_lock:
@@ -780,9 +783,8 @@ class ModelManager:
             return persistent_cached_value
 
         try:
-            metadata = await asyncio.to_thread(
-                self._get_model_metadata_sync, model_info["path"]
-            )
+            metadata = await _settle_owned(asyncio.create_task(asyncio.to_thread(
+                self._get_model_metadata_sync, model_info["path"])))
         except Exception as exc:
             logger.warning("Metadata scan failed for model %s: %s", model_name, exc)
             return None
@@ -790,14 +792,9 @@ class ModelManager:
         if metadata is None:
             return None
 
-        await asyncio.to_thread(
-            save_metadata_cache,
-            self.metadata_cache_dir,
-            model_name,
-            model_info["path"],
-            metadata,
-            repository=self.repository,
-        )
+        await _settle_owned(asyncio.create_task(asyncio.to_thread(
+            save_metadata_cache, self.metadata_cache_dir, model_name, model_info["path"],
+            metadata, repository=self.repository)))
 
         async with self._metadata_lock:
             self._set_cached_metadata_entry(model_name, fingerprint, metadata)
