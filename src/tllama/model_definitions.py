@@ -1,9 +1,11 @@
 """Publish model definitions while keeping shared weights and comments intact."""
 
+from dataclasses import replace
 from tllama.helpers.model_toml import parse_model_toml, write_model_toml
 from tllama.repository_store import prepare_group
 from tllama.repository_runtime import destination, require_data_reference, repository_operation
-from tllama.model_uploads import verified_blob
+from tllama.model_uploads import blob_path, verified_blob
+from tllama.helpers.gguf_import import shard_names
 from tllama.helpers.metadata_cache import build_model_file_fingerprint
 from tllama.repository_cleanup import remember_definition, collect_pending
 
@@ -83,6 +85,7 @@ def copy_definition(manager, source, destination, *, force=False, mmproj=None, d
 
 @repository_operation
 def create_definition(manager, name, text, uploads, *, force=False, dry_run=False):
+    from tllama.repository_blobs import published_group, verify_file, remove_published_uploads
     if len(text.encode('utf-8')) > 2 * 1024 * 1024:
         raise ValueError('TOML definition exceeds the 2 MiB limit.')
     target = definition_path(manager, name)
@@ -103,6 +106,7 @@ def create_definition(manager, name, text, uploads, *, force=False, dry_run=Fals
     if set(uploads) != expected:
         raise ValueError('Uploads must match exactly the [llm]/[mmproj]/[draft] sections containing from.')
     groups = []
+    existing_groups = []
     for section, files in uploads.items():
         if not 1 <= len(files) <= 2048:
             raise ValueError('An upload group requires 1..2048 files.')
@@ -110,30 +114,41 @@ def create_definition(manager, name, text, uploads, *, force=False, dry_run=Fals
         if any('/' in item or '\\' in item or any(ord(c) < 32 for c in item)
                or item in {'.', '..'} or not item.lower().endswith('.gguf') for item in names):
             raise ValueError('Upload filenames must be plain GGUF basenames.')
-        verified = [verified_blob(manager, item.digest) for item in files]
-        blobs = [path for path, fingerprint in verified]
-        fingerprints = [fingerprint for path, fingerprint in verified]
-        group = prepare_group(blobs, names=names, cache_dir=manager.metadata_cache_dir)
+        staged = [blob_path(manager, item.digest) for item in files]
+        group = published_group(manager.repository, [item.digest[7:] for item in files])
+        if group is not None:
+            if names != shard_names(names[0], {'split.count': len(files), 'split.no': 0}):
+                raise ValueError('Import does not contain the complete ordered GGUF shard set.')
+            group = replace(group, names=tuple(names))
+            existing_groups.append(group)
+        else:
+            verified = [verify_file(manager.repository, path, item.digest[7:]) if path.is_file()
+                        else verified_blob(manager, item.digest) for path, item in zip(staged, files)]
+            blobs = [path for path, fingerprint in verified]
+            fingerprints = [fingerprint for path, fingerprint in verified]
+            group = prepare_group(blobs, names=names, cache_dir=manager.metadata_cache_dir)
+            if fingerprints != [build_model_file_fingerprint(path) for path in blobs]:
+                raise ValueError('Uploaded files changed during header inspection.')
+            groups.append(group)
         if tuple(item.digest[7:] for item in files) != group.digests:
             raise ValueError('Uploaded content does not match its declared digests.')
-        if fingerprints != [build_model_file_fingerprint(path) for path in blobs]:
-            raise ValueError('Uploaded files changed during header inspection.')
-        groups.append(group)
         # Only registered blobs are read. from is a client-side path and
         # must never grant an HTTP caller server filesystem access.
         table = spec.document[section]
         table['from'] = group.relative_paths[0].as_posix()
         table['model'] = table.pop('from')
-    if groups:
+    if groups or existing_groups:
         text = spec.document.as_string()
     for group in groups:
         manager.repository.publish(group, link_owned=True)
+    for group in existing_groups:
+        manager.repository._check_sources(group)
+        manager.repository.record_names(group.sources, group.names)
     validate_definition(manager, text)
     warnings = remember_definition(manager.repository, target) if force else []
     write_model_toml(target, text, overwrite=force)
     manager._invalidate_metadata_cache_entry(name)
     result = {'status': 'success', 'model': name}
-    from tllama.repository_blobs import remove_published_uploads
     warnings.extend(remove_published_uploads(manager.repository))
     cleanup = collect_pending(manager.repository, warnings=warnings)
     if any(cleanup.values()):

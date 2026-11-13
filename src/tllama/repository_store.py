@@ -75,11 +75,13 @@ class PreparedGroup:
         return group_paths(self.digests)
 
 
-def prepare_group(paths, *, names=None, cache_dir=None):
+def prepare_group(paths, *, names=None, cache_dir=None, metadata_reader=None):
     """Validate a complete ordered group and capture its measured identity.
 
     Explicit names allow verified upload blobs to have hash-only staging
     filenames. They describe the original shard names, never output paths.
+    Published-group lookup can supply a reader backed by current header
+    caches; ordinary import/migration still reads every source header.
     """
     sources = tuple(Path(path).absolute() for path in paths)
     if not 1 <= len(sources) <= 2048:
@@ -93,7 +95,7 @@ def prepare_group(paths, *, names=None, cache_dir=None):
     for name in names:
         validate_original_name(name)
     signatures = tuple(file_signature(path) for path in sources)
-    headers = validate_group(names, sources)
+    headers = validate_group(names, sources, metadata_reader=metadata_reader)
     digests = tuple(measured_digest(path, cache_dir) for path in sources)
     metadata = tuple((load_metadata_cache(cache_dir, path) if cache_dir is not None else None)
                      or build_model_metadata_payload(header) for path, header in zip(sources, headers))

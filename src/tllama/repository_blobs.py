@@ -6,11 +6,16 @@ Callers keep the repository lock through use or acquire a group reservation.
 """
 
 import re
+from dataclasses import replace
+from pathlib import Path
 
 from tllama.helpers.metadata_cache import (build_model_file_fingerprint,
-    get_digest_cache_path, get_metadata_cache_path, load_digest_cache, save_digest_cache)
+    get_digest_cache_path, get_metadata_cache_path, load_digest_cache, save_digest_cache,
+    load_metadata_cache, save_metadata_cache)
+from tllama.helpers.gguf_metadata import read_gguf_metadata, build_model_metadata_payload
 from tllama.repository_cleanup import _directory, _files, _regular
 from tllama.repository_info import validate_group_files
+from tllama.repository_layout import group_paths
 from tllama.repository_pins import snapshot
 from tllama.repository_store import measured_digest, prepare_group, sync_directory
 
@@ -22,10 +27,12 @@ def verify_file(store, path, digest):
     if _regular(path) is None:
         raise FileNotFoundError(path)
     before = build_model_file_fingerprint(path)
+    cached = load_digest_cache(store.cache_dir, path)
     if measured_digest(path, store.cache_dir) != digest or before != build_model_file_fingerprint(path):
         raise ValueError('A blob changed or does not match its digest.')
-    save_digest_cache(store.cache_dir, str(path), path,
-        {'content_sha256': digest, 'source': 'local'}, fingerprint=before, repository=store)
+    if (cached or {}).get('content_sha256') != digest or (cached or {}).get('source') != 'local':
+        save_digest_cache(store.cache_dir, str(path), path,
+            {'content_sha256': digest, 'source': 'local'}, fingerprint=before, repository=store)
     return path, before
 
 
@@ -56,11 +63,13 @@ def find_published_blob(store, digest):
     if not isinstance(digest, str) or not _DIGEST.fullmatch(digest):
         raise ValueError('Invalid blob digest.')
     _directory(store.cache_dir)
+    # A single-file group's exact candidate is known without an inventory.
+    group = published_group(store, (digest,))
+    if group is not None:
+        return group.sources[0]
     cold = []
     for paths in _groups(store):
-        # For a single-file group the address narrows the candidate directly;
-        # it still requires byte/cache and header verification below.
-        if len(paths) == 1 and paths[0].parent.name != digest:
+        if len(paths) == 1:
             continue
         cached = [load_digest_cache(store.cache_dir, path) for path in paths]
         values = [(item or {}).get('content_sha256') if (item or {}).get('source') == 'local'
@@ -81,17 +90,65 @@ def find_published_blob(store, digest):
 
 
 def _verify_group(store, paths, digest):
+    group = _prepare_published_group(store, paths)
+    if group is not None and digest in group.digests:
+        return group.sources[group.digests.index(digest)]
+    return None
+
+
+def published_group(store, digests):
+    """Verify the exact complete-group candidate when all digests are known.
+
+    Used by create under its existing repository transaction. No result is
+    retained between requests; the content address only locates a candidate.
+    """
+    digests = tuple(digests)
+    paths = tuple(store.root / relative for relative in group_paths(digests))
+    group = _prepare_published_group(store, paths)
+    return group if group is not None and group.digests == digests else None
+
+
+def _prepare_published_group(store, paths):
     try:
+        if not _directory(store.root / 'data') or not _directory(paths[0].parent):
+            return None
+        validate_group_files(paths[0].parent, [path.name for path in paths])
+        for path in paths:
+            if _regular(path) is None:
+                return None
         fingerprints = [build_model_file_fingerprint(path) for path in paths]
-        group = prepare_group(paths, cache_dir=store.cache_dir)
+        old_digests = [load_digest_cache(store.cache_dir, path) for path in paths]
+        scanned = {}
+        positions = {path: number for number, path in enumerate(paths)}
+        def read(path):
+            path = Path(path)
+            cached = load_metadata_cache(store.cache_dir, path)
+            raw = (cached or {}).get('metadata_raw')
+            if (isinstance(raw, dict) and isinstance(raw.get('general.architecture'), str)
+                    and raw['general.architecture']
+                    and type(raw.get('split.count', 1)) is int
+                    and raw.get('split.count', 1) == len(paths)
+                    and type(raw.get('split.no', 0)) is int
+                    and raw.get('split.no', 0) == positions[path]):
+                return raw
+            raw = read_gguf_metadata(str(path))
+            scanned[path] = build_model_metadata_payload(raw)
+            return raw
+        group = prepare_group(paths, cache_dir=store.cache_dir, metadata_reader=read)
         if tuple(store.root / relative for relative in group.relative_paths) != paths:
             return None
         if fingerprints != [build_model_file_fingerprint(path) for path in paths]:
             return None
-        for path, value, fingerprint in zip(paths, group.digests, fingerprints):
-            save_digest_cache(store.cache_dir, str(path), path,
-                {'content_sha256': value, 'source': 'local'}, fingerprint=fingerprint, repository=store)
-        return paths[group.digests.index(digest)] if digest in group.digests else None
+        metadata = tuple(scanned.get(path, value) for path, value in zip(paths, group.metadata))
+        group = replace(group, metadata=metadata)
+        for path, value, fingerprint, cached in zip(paths, group.digests, fingerprints, old_digests):
+            if (cached or {}).get('content_sha256') != value or (cached or {}).get('source') != 'local':
+                save_digest_cache(store.cache_dir, str(path), path,
+                    {'content_sha256': value, 'source': 'local'}, fingerprint=fingerprint, repository=store)
+            if path in scanned:
+                save_metadata_cache(store.cache_dir, str(path), path, scanned[path],
+                                    fingerprint=fingerprint, repository=store)
+        return group
     except (OSError, ValueError):
         return None
 

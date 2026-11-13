@@ -19,13 +19,14 @@ def shard_names(filename, metadata):
     return [f'{match[1]}-{number:05d}-of-{count:05d}.gguf' for number in range(1, count + 1)]
 
 
-def validate_group(names, paths):
+def validate_group(names, paths, *, metadata_reader=None):
     if not names or len(names) != len(paths):
         raise ValueError('An import group must contain its complete ordered GGUF files.')
     metadata = []
+    read = read_gguf_metadata if metadata_reader is None else metadata_reader
     for path in paths:
         try:
-            metadata.append(read_gguf_metadata(str(path)))
+            metadata.append(read(str(path)))
         except Exception as exc:
             raise ValueError(f'Cannot read uploaded GGUF header {path}: {exc}') from exc
     expected = shard_names(names[0], metadata[0])

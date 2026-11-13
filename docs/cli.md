@@ -602,6 +602,12 @@ continuation shards, without retaining upload aliases or transferring them again
 Existing locally measured digest caches avoid rereading weights; missing caches
 are rebuilt from actual bytes (a cold shard inventory can require a full read).
 There is no additional persistent blob index or repository-format change.
+Warm published blob checks reuse current header/digest caches without rewriting
+them. Create uses the complete ordered digest list to verify the exact published
+group once, records any additional original names, and retains final definition
+validation. New uploads/imports still inspect source headers; missing or unusable
+published header caches fall back to actual GGUF reads. No verification result
+is retained as authority for a subsequent HTTP request.
 
 To discard abandoned uploads, stop **all daemons using this repository** and run
 the local command on the repository host as its owning user:
