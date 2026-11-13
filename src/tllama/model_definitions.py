@@ -133,6 +133,8 @@ def create_definition(manager, name, text, uploads, *, force=False, dry_run=Fals
     write_model_toml(target, text, overwrite=force)
     manager._invalidate_metadata_cache_entry(name)
     result = {'status': 'success', 'model': name}
+    from tllama.repository_blobs import remove_published_uploads
+    warnings.extend(remove_published_uploads(manager.repository))
     cleanup = collect_pending(manager.repository, warnings=warnings)
     if any(cleanup.values()):
         result['cleanup'] = cleanup

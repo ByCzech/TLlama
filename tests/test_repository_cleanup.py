@@ -37,6 +37,14 @@ def text_for(path, projector=None, lora=None):
     return text
 
 
+def legacy_aliases(data):
+    # Modern create already removes these; restore the old layout explicitly
+    # when testing reclamation of repositories written by earlier versions.
+    for weight, blob in zip(data.paths, data.blobs):
+        if not blob.exists():
+            os.link(weight, blob)
+
+
 @pytest.fixture
 def repo(manager, tmp_path):
     def publish(arch='llama', count=1, upload=False):
@@ -182,6 +190,7 @@ def test_broken_removed_definition_is_deleted_without_guessing_its_groups(repo):
 def test_live_reservation_defers_until_release_then_retries_automatically(repo, scope):
     data = repo.test_publish(upload=True)
     create_definition(repo, 'a', text_for(data.relative), {})
+    legacy_aliases(data)
     options = {'groups': [data.group]} if scope == 'group' else (
         {'all_data': True} if scope == 'all-data' else {'paths': ['.tllama/uploads']})
     with Reservation(RepositoryStore(repo.models_dir), 'other daemon', **options):
@@ -273,6 +282,7 @@ sys.stdin.read()
 def test_unexpected_data_or_control_entries_are_preserved_and_reported(repo, tmp_path, fault):
     data = repo.test_publish(upload=True)
     create_definition(repo, 'a', text_for(data.relative), {})
+    legacy_aliases(data)
     outside = tmp_path / 'untouched'
     outside.write_bytes(b'keep me')
     if fault == 'extra-file':
@@ -313,6 +323,7 @@ def test_definition_and_staging_removal_are_durable_before_group_unlink(repo, mo
     import tllama.repository_store as storage
     data, new = repo.test_publish(upload=True), repo.test_publish('qwen3')
     create_definition(repo, 'a', text_for(data.relative), {})
+    legacy_aliases(data)
     flushed = []
     real_sync, real_unlink = storage.sync_directory, Path.unlink
     def sync(path):
@@ -325,6 +336,7 @@ def test_definition_and_staging_removal_are_durable_before_group_unlink(repo, mo
         return real_unlink(path, *args, **kwargs)
     monkeypatch.setattr(storage, 'sync_directory', sync)
     monkeypatch.setattr(cleanup, 'sync_directory', sync)
+    monkeypatch.setattr('tllama.repository_blobs.sync_directory', sync)
     monkeypatch.setattr(Path, 'unlink', unlink)
     create_definition(repo, 'a', text_for(new.relative), {}, force=True)
     assert not data.paths[0].exists()
@@ -344,6 +356,7 @@ def test_delayed_cache_writes_cannot_resurrect_reclaimed_group_cache(repo):
 def test_independent_upload_copy_is_not_an_owned_hardlink_of_reclaimed_group(repo):
     data = repo.test_publish(upload=True)
     create_definition(repo, 'a', text_for(data.relative), {})
+    legacy_aliases(data)
     raw = data.blobs[0].read_bytes()
     data.blobs[0].unlink()
     data.blobs[0].write_bytes(raw)

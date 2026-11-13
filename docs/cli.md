@@ -592,6 +592,17 @@ a definition only after its validation succeeds. Completed staging entries
 are retained for reuse if a subsequent create fails; garbage collection is
 separate work. This binary API does not accept multipart/form-data.
 
+After successful create, redundant staging links and their caches are removed
+once the same bytes are verified in a complete published data group. This also
+handles old aliases whose data files have moved to another inode/filesystem.
+Active upload reservations defer alias cleanup. A cleanup failure is a warning
+after successful create and leaves the alias available for a later retry.
+HEAD and create can reuse individual files from published groups, including
+continuation shards, without retaining upload aliases or transferring them again.
+Existing locally measured digest caches avoid rereading weights; missing caches
+are rebuilt from actual bytes (a cold shard inventory can require a full read).
+There is no additional persistent blob index or repository-format change.
+
 ## Create and import models
 
 ```sh

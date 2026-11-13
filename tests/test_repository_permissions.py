@@ -75,7 +75,7 @@ async def exercise():
     definition = manager.local_models_dir / 'created.toml'
     assert mode(definition) == expected
     imported = manager.models_dir / parse_model_toml(definition.read_text()).llm_model
-    assert os.path.samefile(imported, blob) and mode(imported) == expected
+    assert not blob.exists() and mode(imported) == expected
     assert imported.read_bytes() == payload
     copy_definition(manager, 'created', 'copied')
     assert mode(manager.local_models_dir / 'copied.toml') == expected
@@ -86,7 +86,7 @@ async def exercise():
         definition.chmod(access)
         create_definition(manager, 'created', definition.read_text(), {}, force=True)
         assert mode(definition) == access
-        assert os.path.samefile(imported, blob) and mode(blob) == expected
+        assert not blob.exists() and mode(imported) == expected
 
     # The HF downloader owns GGUF permissions; substitute only that external
     # transfer, then exercise actual /api/pull registration and cache writes.

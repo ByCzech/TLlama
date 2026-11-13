@@ -23,7 +23,7 @@ from tllama.schemas.embeddings import OllamaEmbedRequest, OllamaLegacyEmbeddingR
 from tllama.schemas.model_management import CopyRequest, CreateRequest, DeleteRequest, ShowRequest, PullRequest
 from tllama.model_definitions import copy_definition, create_definition
 from tllama.residency import _settle_owned
-from tllama.model_uploads import blob_path, receive_blob
+from tllama.model_uploads import has_blob as repository_has_blob, receive_blob
 
 router = APIRouter(
     prefix="/api",
@@ -362,8 +362,9 @@ async def copy_model(request: CopyRequest):
 @router.head('/blobs/{digest}')
 async def has_blob(digest: str):
     try:
-        path = blob_path(model_manager, digest)
-        return Response(status_code=200 if path.is_file() else 404)
+        found = await _settle_owned(asyncio.create_task(asyncio.to_thread(
+            repository_has_blob, model_manager, digest)))
+        return Response(status_code=200 if found else 404)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
