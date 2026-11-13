@@ -85,6 +85,11 @@ def test_multimodal_reference_and_cleanup(tmp_path, payload, mode, ok, review, m
     output = tmp_path / 'results'
     command = [sys.executable, str(SCRIPT), '--model', 'a', '--models-dir', str(models.parent),
                '--executable', str(executable), '--output', str(output)]
+    if mode == 'fast':
+        # Exercise completion before cancellation without requiring a real
+        # HTTP round trip to finish within the diagnostic's 5 ms default.
+        # Other modes deliberately hold the response and keep that deadline.
+        command.extend(['--cancel-after-ms', '500'])
     if managed:
         command.append('--public' if managed == 'public' else '--managed')
     environment = {**os.environ, 'PYTHONPATH': str(SCRIPT.parents[1] / 'src'),
