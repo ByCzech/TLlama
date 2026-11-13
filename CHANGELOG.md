@@ -5,6 +5,83 @@ identify the source; the complete history retains tests, refactoring and
 intermediate development steps. TLlama application versions
 are independent of the separately packaged `tllama-server` native runtime.
 
+## 1.5.0 — 2026-11-13
+
+### Added
+
+- Standalone projector and draft model definitions. Pull/create register a
+  helper TOML when importing it independently; composite local imports keep
+  direct helper references in the main definition without creating extra TOMLs.
+  Helpers share content-addressed weights and optional original-name companions.
+- `tllama list --all` and `--type main|mmproj|draft`, typed helper details in
+  show, and `cp SOURCE DEST --mmproj NAME --draft NAME`. Plain list and OpenAI
+  model listings retain runnable main models. Helpers cannot run independently.
+- Explicit `rm --remove-unused-helpers` for attached standalone helpers left
+  without other main users. Default deletion reports and retains their TOMLs;
+  unreferenced component weights without their own definition are reclaimed
+  automatically, subject to shared references and live worker reservations.
+- External DFlash/DFlash2 drafts, one draft reference and one selected strategy
+  per definition. `none`, embedded `draft-mtp` and external `draft-dflash` are
+  explicit choices; attaching a draft does not activate it. DFlash2 uses the
+  same native strategy with its model-specific format handled by the loader.
+- Typed draft device, GPU-layer, K/V precision and physical-batch settings;
+  per-request Ollama `options.spec_type` and REPL `/set parameter spec_type`.
+  Measured drafted/accepted counts and acceptance are shown by `run --verbose`
+  when provided by the native worker. Diagnostic scripts capture off/on and
+  cache/cancellation evidence for review.
+- Local offline `tllamad repo prune-uploads`, preview by default and fresh
+  checks with `--apply`, to discard abandoned upload staging and its caches.
+  It requires stopped daemons/writers and does not delete published weights
+  or definitions. No HTTP maintenance endpoint or automatic upload TTL is added.
+
+### Changed
+
+- Interactive pull progress updates one terminal line with a spinner and,
+  when the total is known and space permits, a progress bar. Redirected/dumb
+  terminals retain readable lines; JSON preserves the original NDJSON stream.
+- Create/blob reuse verifies already published complete groups. Successful
+  creation removes redundant upload aliases instead of retaining a second
+  permanent weight location. Existing local digest/header caches are reused
+  without needless rewrites or per-shard repeated group scans.
+- Inactive external drafts are omitted from worker load/fitting arguments;
+  changing the effective strategy creates the appropriate worker generation.
+  Explicit request `draft_num_predict=0` disables speculation. Positive counts
+  adjust the selected method, retaining the legacy MTP fallback only when no
+  explicit request strategy was supplied. No automatic strategy tuning is added.
+
+### Fixed
+
+- Repeated pull through a configured repository-root symlink reuses published
+  weights without mixing configured and physical roots in relative paths.
+- RAM metadata cache keys distinguish full file fingerprints, including
+  different canonical weight paths with equal size/time and nanosecond changes.
+  Metadata filesystem/GGUF work runs outside the event loop with awaited
+  completion on cancellation. Removed an obsolete, nonfunctional cache helper.
+- Optional draft header-read failures follow the existing target/native-loader
+  admission boundary; known incompatible architectures and invalid shard sets
+  still fail explicitly. Unverified draft allocation in fallback logs remains
+  unknown instead of producing falsely precise memory totals.
+
+### Upgrade notes
+
+- No repository-format conversion, cache schema bump or deliberate cache
+  invalidation is required from 1.4.1. Do not delete valid digest caches merely
+  to upgrade. Older unconverted repositories still need the offline converter.
+- The agreed helper-management API additions advertise `repository_helpers`
+  through `server_features`; model details use `model_definition`. New client helper
+  operations check daemon support. No new HTTP routes or OpenAPI UI are added.
+  See [API compatibility](docs/api-compatibility.md).
+- Existing independently downloaded projectors/drafts can gain a helper
+  definition by explicit repeated pull. Bulk repair of old origins or wrongly
+  classified definitions is not automatic; inspect old TOMLs before removal.
+- Restart the upgraded daemon. This application release does not rebuild or
+  bundle `tllama-server`; the captured DFlash contract uses native
+  `b11850-0e9433bfd3`. GPU/model/backend qualification remains bounded by the
+  evidence in [the release review](docs/release-review-150.md). DFlash is opt-in
+  and can be slower than ordinary decoding; acceleration is not guaranteed.
+- Repository-root unification and further warm-cache startup optimization are
+  deferred to a later cleanup release; they are not part of this update.
+
 ## 1.4.1 — 2026-11-01
 
 ### Fixed

@@ -43,6 +43,7 @@ original build identities and evidence.
 - [Vision and projector integration](docs/native-vision.md).
 - [FIM prefix/suffix completion](docs/native-fim.md).
 - [Embedded MTP](docs/native-mtp.md).
+- [External DFlash/DFlash2 drafts](docs/native-dflash.md).
 - [Embedding API](docs/embedding-api.md).
 - [Native embedding worker contract](docs/native-embeddings.md).
 - [Decision API](docs/decision-api.md).
@@ -63,6 +64,7 @@ original build identities and evidence.
 - [Runtime qualification procedures](docs/runtime-qualification-070.md).
 - [Decision qualification procedures](docs/decision-qualification-070.md).
 - [Pre-1.0.0 documentation review](docs/release-review-100.md).
+- [1.5.0 release scope and qualification](docs/release-review-150.md).
 
 The runtime audit distinguishes accepted hardware/model recipes from source
 support and unresolved release items. A passing protocol comparison is not a

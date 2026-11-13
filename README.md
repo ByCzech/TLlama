@@ -42,8 +42,9 @@ generation, vision, embedding and Decision models.
   backends depend on a suitable build; Windows/macOS builds and installers
   are planned.
 - **More than chat:** compatible Ollama/OpenAI generation and tools, image
-  input, semantic embeddings, text Decision models, FIM and opt-in embedded
-  MTP use the same model lifecycle. Each has its own documented support scope.
+  input, semantic embeddings, text Decision models, FIM, opt-in embedded MTP
+  and external DFlash/DFlash2 drafts use the same model lifecycle. Each has
+  its own documented support scope; speculation does not guarantee acceleration.
 - **Explainable memory reports:** native buffer inventory, deduplicated weight
   payload, CPU/GPU assignment and allocation locality remain separate. Unknown
   data stays unknown; `ps` does not guess placement from the GGUF file size.
@@ -61,7 +62,11 @@ TLlama 1.4.0 introduces portable model definitions, content-addressed shared
 GGUF groups, protected physical reclamation and local repository maintenance.
 Version 1.4.1 records original GGUF filenames in optional plain-text `.inf`
 companions, keeping the same stored weights, content addresses and model IDs.
-Existing repositories require the explicit [offline conversion](tools/README.md)
+Version 1.5.0 adds typed standalone helpers, explicit speculative strategies,
+single-line pull progress and upload staging cleanup/reuse. See the
+[release scope and qualification](docs/release-review-150.md).
+Upgrading from 1.4.1 needs no repository conversion or cache reset. Older
+unconverted repositories require the explicit [offline conversion](tools/README.md)
 with all writers stopped. See the [changelog](CHANGELOG.md) for migration,
 coordination requirements and other release changes.
 These pages distinguish implemented features, tested configurations and planned
