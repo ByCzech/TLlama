@@ -401,7 +401,10 @@ async def test_hardware_smoke_entry_point(factory, case):
     if case == "crash":
         command.append("--crash")
     elif case == "cancel-start":
-        command += ["--cancel-start-after", "0.2"]
+        # This case exercises reaping an existing child, not cancellation
+        # before spawn. Allow the CLI's startup/reservation work to finish;
+        # the hang-load fixture cannot complete its model load meanwhile.
+        command += ["--cancel-start-after", "1.0"]
     child = await asyncio.create_subprocess_exec(
         *command, cwd=repo, env={**os.environ, **worker.spec.environment, "PYTHONPATH": str(repo / "src")},
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, start_new_session=True,
