@@ -126,7 +126,8 @@ class NativeMemory:
             return
         match = _BUFFER.fullmatch(line)
         if not match:
-            if ('buffer size' in line and (line.split(':', 1)[0] in _KINDS or line.startswith('llama_'))
+            if ('buffer size' in line and (line.split(':', 1)[0] in _KINDS
+                    or line.startswith(('llama_', 'layer_inp_dev_alloc:', 'h_nextn_dev_alloc:')))
                     or line.startswith('load_hparams:') and 'model size:' in line):
                 self.invalidate('unrecognized_buffer_report')
             return

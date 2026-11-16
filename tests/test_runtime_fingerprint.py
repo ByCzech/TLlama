@@ -1,6 +1,7 @@
 """Shared warn/strict policy, feature audit boundaries and real worker startup."""
 
 from dataclasses import replace
+import json
 import logging
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from tllama.runtime_fingerprint import evaluate_runtime_fingerprint, RuntimeFing
 from tllama.worker import WorkerStartupError
 from tllama.worker_config import WorkerLaunchSpec, RUNTIME_FINGERPRINT, SUPPORTED_RUNTIME_FINGERPRINTS
 from test_native_worker import factory, records
+from test_native_memory_api import payload
 
 
 BUILD = 'b99999-deadbeef'
@@ -120,7 +122,7 @@ async def test_real_worker_strict_exact_pin_precedes_all_feature_requests(factor
 
 @pytest.mark.parametrize('factory', ['tcp'], indirect=True)
 @pytest.mark.parametrize('mode', MODES)
-@pytest.mark.parametrize('observed', ['b11850-0e9433bfd3', LEGACY_DECISION_BUILD])
+@pytest.mark.parametrize('observed', ['b12359-c0819bbbae', 'b11850-0e9433bfd3', LEGACY_DECISION_BUILD])
 async def test_reviewed_and_legacy_builds_start_without_warning_under_strict(factory, mode, observed, caplog):
     env = {'STUB_BUILD': observed}
     if mode in MODES[2:]:
@@ -143,7 +145,7 @@ async def test_reviewed_and_legacy_builds_start_without_warning_under_strict(fac
 @pytest.mark.parametrize('factory', ['tcp'], indirect=True)
 @pytest.mark.parametrize('mode', MODES)
 async def test_reviewed_identity_does_not_bypass_live_protocol_checks(factory, mode):
-    env = {'STUB_BUILD': 'b11850-0e9433bfd3'}
+    env = {'STUB_BUILD': RUNTIME_FINGERPRINT}
     if mode in MODES[2:]:
         env.update(STUB_DECISION='no-decisions', STUB_DECISION_KIND=mode)
     worker, root = factory('normal' if mode in MODES[2:] else 'wrong-alias',
@@ -163,3 +165,19 @@ def test_general_runtime_evidence_does_not_admit_an_unaudited_decision_build(mod
     with pytest.raises(RuntimeFingerprintMismatch):
         evaluate_runtime_fingerprint(observed, expected_fingerprints=launch(mode).accepted_runtime_fingerprints,
                                      policy='strict')
+
+
+@pytest.mark.parametrize('factory', ['tcp'], indirect=True)
+async def test_100_exact_memory_api_is_used_without_certifying_legacy_logs(factory, payload):
+    worker, root = factory(version_policy='strict', memory_source='native',
+                           environment={'STUB_BUILD': RUNTIME_FINGERPRINT})
+    payload['runtime_fingerprint'] = RUNTIME_FINGERPRINT
+    (root / 'memory-report').write_text(json.dumps(payload))
+    async with worker:
+        await worker.refresh_memory()
+        memory = worker.memory_snapshot()
+        assert memory['source'] == 'native_memory_api'
+        assert memory['measurement']['report']['runtime_fingerprint'] == RUNTIME_FINGERPRINT
+        assert memory['measurement']['totals']['allocated_bytes'] == 1350
+        assert worker.memory.snapshot()['runtime_verified'] is False
+    assert worker.process.returncode is not None and not worker.runtime_directory.exists()

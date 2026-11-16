@@ -21,7 +21,7 @@ CAPTURES = Path(__file__).with_name('fixtures') / 'native-runtime-070'
 @pytest.mark.parametrize('case', json.loads((CAPTURES / 'devices.json').read_text()),
                          ids=lambda case: case['host'])
 def test_reviewed_070_device_tables_preserve_selectors_without_physical_links(case):
-    assert runtime_fingerprint(b'', case['version_stderr'].encode()) == AUDITED_RUNTIME
+    assert runtime_fingerprint(b'', case['version_stderr'].encode()) == 'b11850-0e9433bfd3'
     table = parse_device_list((CAPTURES / case['fixture']).read_bytes())
     assert table['status'] == 'complete' and not table['issues']
     assert [row['selector'] for row in table['devices']] == case['selectors']
@@ -263,7 +263,7 @@ def test_candidate_capture_requires_exact_opt_in_and_never_claims_audit(tmp_path
         assert (output/'devices.stdout').read_bytes() == (TABLE if mode == 'normal' else b'Changed table\n')
 
 
-@pytest.mark.parametrize('mode,expected,ok', [('normal', None, True),
+@pytest.mark.parametrize('mode,expected,ok', [('normal', None, False),
     ('normal', 'b11850-0e9433bfd3', True), ('normal', 'b11552-3144c167ef', False),
     ('drift', None, False)])
 def test_reviewed_discovery_remains_exact_and_rejects_table_drift(tmp_path, mode, expected, ok):
@@ -281,11 +281,29 @@ def test_reviewed_discovery_remains_exact_and_rejects_table_drift(tmp_path, mode
     assert run.returncode == int(not ok), run.stderr
     assert report['protocol_ok'] is ok and report['review_required'] is (not ok)
     assert report['runtime_audited'] is True
-    assert report['audited_runtime'] == report['runtime_fingerprint'] == 'b11850-0e9433bfd3'
-    assert report['audited_runtime_fingerprints'] == ['b11552-3144c167ef', 'b11850-0e9433bfd3']
+    assert report['audited_runtime'] == AUDITED_RUNTIME
+    assert report['runtime_fingerprint'] == 'b11850-0e9433bfd3'
+    assert report['audited_runtime_fingerprints'] == ['b11552-3144c167ef', 'b11850-0e9433bfd3', 'b12359-c0819bbbae']
     assert report['expected_runtime'] == (expected or AUDITED_RUNTIME)
     assert report['private_directory_removed'] and not report['placement_ready']
-    assert len(calls.read_text().splitlines()) == (1 if expected == 'b11552-3144c167ef' else 2)
+    assert len(calls.read_text().splitlines()) == (2 if expected == 'b11850-0e9433bfd3' else 1)
+
+
+@pytest.mark.parametrize('mode,ok', [('normal', True), ('drift', False)])
+def test_100_default_discovery_identity_still_requires_the_actual_table(tmp_path, mode, ok):
+    exe = stub(tmp_path / 'native', mode,
+               version=b'version: 1.0.0-dev (build 12359, commit c0819bbbae)\nbuilt for Linux\n')
+    pci(tmp_path / 'pci')
+    run = subprocess.run([sys.executable, str(SCRIPT), '--executable', str(exe),
+                          '--pci-root', str(tmp_path / 'pci'), '--output', str(tmp_path / 'result')],
+        capture_output=True, text=True, timeout=8,
+        env={**os.environ, 'CAPTURE': str(tmp_path / 'calls'), 'PYTHONPATH': str(SCRIPT.parents[1] / 'src')})
+    report = json.loads(run.stdout)
+    assert run.returncode == int(not ok), run.stderr
+    assert report['runtime_fingerprint'] == report['expected_runtime'] == AUDITED_RUNTIME
+    assert report['runtime_audited'] is True and report['protocol_ok'] is ok
+    assert report['review_required'] is (not ok)
+    assert report['models_loaded'] is report['listener_started'] is report['placement_ready'] is False
 
 
 @pytest.mark.parametrize('arguments', [['--timeout', 'nan'], ['--output-limit', '0'],

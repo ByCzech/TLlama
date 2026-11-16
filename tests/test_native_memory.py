@@ -39,6 +39,8 @@ sched_reserve: Vulkan_Host compute buffer size = 20.30 MiB'''
 
 
 def observe(log=VULKAN, *, end=True, **kwargs):
+    # These are historical captured allocations, not new-runtime evidence.
+    kwargs.setdefault('runtime_fingerprint', 'b11850-0e9433bfd3')
     parser = NativeMemory(**kwargs)
     for line in log.splitlines() + ([END] if end else []):
         parser.observe(line)
@@ -125,6 +127,31 @@ def test_pending_log_and_unverified_runtime_are_explicit():
     assert report['status'] == 'known' and report['runtime_fingerprint'] == 'new-runtime'
     assert report['runtime_verified'] is False
     assert observe().snapshot()['runtime_verified'] is True
+
+
+def test_new_worker_admission_does_not_certify_load_log_coverage():
+    from tllama.worker_config import RUNTIME_FINGERPRINT
+    assert RUNTIME_FINGERPRINT == 'b12359-c0819bbbae'
+    parser = NativeMemory()
+    for line in VULKAN.splitlines() + [END]:
+        parser.observe(line)
+    assert parser.snapshot()['runtime_fingerprint'] == RUNTIME_FINGERPRINT
+    assert parser.snapshot()['runtime_verified'] is False
+
+
+@pytest.mark.parametrize('line', [
+    'layer_inp_dev_alloc: Vulkan0 layer input buffer size = 8.00 MiB (4 layers)',
+    'h_nextn_dev_alloc: ROCm0 h_nextn buffer size = 4.00 MiB',
+    'llama_kv_cache: CUDA0 rotation buffer size = 2.00 MiB',
+])
+def test_100_additional_buffer_lines_never_leave_an_incomplete_log_total_known(line):
+    # Native c0819bbbae adds these allocations. Only the exact V1 inventory
+    # can account for ownership; old log totals must not silently omit them.
+    parser = observe(VULKAN + '\n' + line, runtime_fingerprint='b12359-c0819bbbae')
+    result = parser.snapshot()
+    assert result['status'] == 'partial'
+    assert result['reason'] == 'unrecognized_buffer_report'
+    assert result['allocated_bytes'] is result['device_bytes'] is result['host_bytes'] is None
 
 
 @pytest.mark.parametrize('loader,fingerprint', [

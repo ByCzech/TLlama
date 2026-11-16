@@ -60,7 +60,8 @@ original build identities and evidence.
 
 ## Qualification and release records
 
-- [Current native 0.7.0 runtime audit](docs/runtime-audit-070.md).
+- [Current native 1.0.0 integration audit](docs/runtime-audit-100.md).
+- [Historical native 0.7.0 hardware/runtime audit](docs/runtime-audit-070.md).
 - [Runtime qualification procedures](docs/runtime-qualification-070.md).
 - [Decision qualification procedures](docs/decision-qualification-070.md).
 - [Pre-1.0.0 documentation review](docs/release-review-100.md).
