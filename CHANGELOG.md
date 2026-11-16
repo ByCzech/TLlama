@@ -5,6 +5,30 @@ identify the source; the complete history retains tests, refactoring and
 intermediate development steps. TLlama application versions
 are independent of the separately packaged `tllama-server` native runtime.
 
+## 1.5.1 — 2026-11-16
+
+### Changed
+
+- Adopt the separately built native `tllama-server` 1.0.0 runtime,
+  `b12359-c0819bbbae`, including the project's Memory API V1 changes.
+  Retain exact generation/embedding, text Decision and discovery admission
+  policies and previously supported identities. Diagnostic pins remain exact.
+- Require `tllama-server >= 1.0.0~dev+b12359.1-1` in Debian so the application
+  and reviewed native update are delivered together. Native core and backend
+  modules still require matching versions of their own package set.
+
+### Fixed
+
+- Do not report a complete legacy load-log total when additional layer-input
+  or NextN buffer allocations are observed. Native Memory API V1 remains
+  authoritative; admitting a new worker does not certify its log-only coverage.
+
+No repository conversion, cache reset, reimport or content-hash change is
+required. Sampling, KV, mmap, placement, speculation and public HTTP contracts
+are unchanged. External MTP management, repo/startup cleanup and per-device
+limits remain later work. See [the release review](docs/release-review-151.md)
+for the distinction between source/automated checks and actual hardware smoke.
+
 ## 1.5.0 — 2026-11-13
 
 ### Added

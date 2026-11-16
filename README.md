@@ -65,6 +65,11 @@ companions, keeping the same stored weights, content addresses and model IDs.
 Version 1.5.0 adds typed standalone helpers, explicit speculative strategies,
 single-line pull progress and upload staging cleanup/reuse. See the
 [release scope and qualification](docs/release-review-150.md).
+Version 1.5.1 adopts native `b12359-c0819bbbae` (llama.cpp v1.0.0 plus project
+changes); Debian requires the matching runtime series or newer. It does not
+change model settings or enable additional native features automatically.
+See the [1.5.1 release review](docs/release-review-151.md).
+
 Upgrading from 1.4.1 needs no repository conversion or cache reset. Older
 unconverted repositories require the explicit [offline conversion](tools/README.md)
 with all writers stopped. See the [changelog](CHANGELOG.md) for migration,

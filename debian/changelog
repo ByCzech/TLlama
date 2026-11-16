@@ -1,3 +1,16 @@
+tllama (1.5.1-1) unstable; urgency=medium
+
+  * Native compatibility release:
+    - Adopt b12359-c0819bbbae (llama.cpp v1.0.0 with project changes).
+    - Retain feature-specific exact runtime policies and supported older pins.
+    - Keep incomplete NextN/layer-input load logs from claiming complete totals.
+  * Depend on tllama-server (>= 1.0.0~dev+b12359.1-1) for the coordinated
+    application/runtime upgrade. Keep native plugin/core version matching.
+  * Document the integration evidence and remaining actual hardware smoke.
+    No repository/cache format, public API or inference default changes.
+
+ -- NemaChybu team APT archive <maintainers@nemachybu.cz>  Mon, 16 Nov 2026 22:00:00 +0100
+
 tllama (1.5.0-1) unstable; urgency=medium
 
   * New upstream release:

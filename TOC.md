@@ -66,6 +66,7 @@ original build identities and evidence.
 - [Decision qualification procedures](docs/decision-qualification-070.md).
 - [Pre-1.0.0 documentation review](docs/release-review-100.md).
 - [1.5.0 release scope and qualification](docs/release-review-150.md).
+- [1.5.1 native compatibility release](docs/release-review-151.md).
 
 The runtime audit distinguishes accepted hardware/model recipes from source
 support and unresolved release items. A passing protocol comparison is not a

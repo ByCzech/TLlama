@@ -7,15 +7,19 @@ source installation and [hardware](hardware.md) for selecting a backend.
 
 ## Debian packages
 
-TLlama 1.5.0 builds as Python wheel/source archives and separate Debian
-application/documentation packages (`1.5.0-1`). The maintainer's APT archive
+TLlama 1.5.1 builds as Python wheel/source archives and separate Debian
+application/documentation packages (`1.5.1-1`). The maintainer's APT archive
 supplies published Debian releases. See the [changelog](../CHANGELOG.md) for
 changes and upgrade notes. Application and native runtime versions are
 independent.
 
-Debian runtime packages have already been built and used for project hardware
-qualification. The accepted development set is `0.7.0~dev+b11850.1-1`, using
-native `b11850-0e9433bfd3`. The native project has modular Debian packaging:
+The current native set is `1.0.0~dev+b12359.1-1`, using
+`b12359-c0819bbbae`, with the project's native changes. TLlama 1.5.1's Debian
+package requires at least this runtime version for the coordinated update.
+The set has been built; current application compatibility evidence and the
+remaining actual hardware smoke are distinguished in the
+[native integration audit](runtime-audit-100.md). Historical 0.7.0 hardware
+results are retained separately. The native project has modular Debian packaging:
 
 | Package | Purpose |
 | --- | --- |
