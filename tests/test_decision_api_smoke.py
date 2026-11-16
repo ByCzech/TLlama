@@ -62,10 +62,16 @@ prompt="generation prompt"
     ('laya', 'no-decisions', False, True),
 ])
 def test_independent_managed_public_comparison_and_owned_lifecycle(tmp_path, payload, kind, mode, ok, review):
-    run_comparison(tmp_path, payload, kind, mode, ok, review)
+    rows = run_comparison(tmp_path, payload, kind, mode, ok, review)
+    if mode == 'no-decisions':
+        assert any(row['stage'] == 'error' and 'does not advertise the loaded Decision alias/output' in row['error']
+                   for row in rows)
+    else:
+        # Semantic failure cases must reach the worker, not pass on a startup error.
+        assert any(row['stage'] == 'ready' for row in rows)
 
 
-def run_comparison(tmp_path, payload, kind, mode, ok, review, count=1, *, build='b11850-0e9433bfd3', expected=None):
+def run_comparison(tmp_path, payload, kind, mode, ok, review, count=1, *, build=smoke.AUDITED_FINGERPRINT, expected=None):
     root = tmp_path / 'stub'
     root.mkdir()
     (root / 'memory-report').write_text(json.dumps(dict(payload, runtime_fingerprint=build)))
@@ -149,6 +155,7 @@ def run_comparison(tmp_path, payload, kind, mode, ok, review, count=1, *, build=
         lifecycle = [(r['stage'], r['profile']) for r in rows if r['stage'] in {'ready', 'worker-closed'}]
         assert lifecycle == [(stage, profile) for profile in ('model-0', 'model-1')
                              for stage in ('ready', 'worker-closed', 'ready', 'worker-closed')]
+    return rows
 
 
 def test_models_run_sequentially_without_overlapping_owned_workers(tmp_path, payload):
@@ -243,6 +250,19 @@ def test_unintegrated_metadata_starts_no_worker(tmp_path, kind):
 def test_candidate_exact_build_independent_managed_public(tmp_path, payload, kind):
     run_comparison(tmp_path, payload, kind, 'normal', True, False,
                    build='b99999-deadbeef', expected='b99999-deadbeef')
+
+
+@pytest.mark.parametrize('build', ['b11850-0e9433bfd3', 'b11552-3144c167ef'])
+def test_previous_reviewed_build_runs_when_explicitly_selected(tmp_path, payload, build):
+    run_comparison(tmp_path, payload, 'laya', 'normal', True, False,
+                   build=build, expected=build)
+
+
+@pytest.mark.parametrize('build', ['b11850-0e9433bfd3', 'b11552-3144c167ef'])
+def test_default_pin_refuses_previous_reviewed_build(tmp_path, payload, build):
+    rows = run_comparison(tmp_path, payload, 'laya', 'normal', False, True, build=build)
+    assert not any(r['stage'] in {'ready', 'request', 'native-response', 'managed-response'} for r in rows)
+    assert any(r['stage'] == 'error' and 'Unsupported runtime fingerprint' in r['error'] for r in rows)
 
 
 @pytest.mark.parametrize('observed', ['b11850-0e9433bfd3', 'b11552-3144c167ef'])
