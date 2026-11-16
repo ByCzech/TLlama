@@ -75,6 +75,7 @@ general model-quality guarantee.
 ## Diagnostic recipes
 
 - [Public functional qualification script](scripts/functional-qualification-smoke.py).
+- [Repository listing/startup baseline](scripts/repository-startup-profile.md).
 - [Public API compatibility smoke script](scripts/api-smoke.py).
 - [Tools API and SDK qualification](scripts/tools-api-smoke.md).
 - [Native tools checkpoint](scripts/tools-smoke.md).
