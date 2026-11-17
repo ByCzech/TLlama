@@ -668,14 +668,17 @@ class ModelManager:
         return None
 
     def _artifact_digest(self, spec, artifacts, metadata):
+        files = artifacts.files
         digests = {path: (self._get_content_digest_sync(path) or {}).get('content_sha256', '')
-                   for path in artifacts.files}
+                   for path in files}
         # Hard links still have separate roles, but need only one file hash.
         def group(paths):
             values = []
             for path in paths:
                 if path not in digests:
-                    same = next(item for item in artifacts.files if item.samefile(path))
+                    same = next((item for item in files if item.samefile(path)), None)
+                    if same is None:
+                        raise TomlModelError('Artifact aliases changed during identity computation')
                     digests[path] = digests[same]
                 values.append(digests[path])
             return file_group_digest(values)
@@ -794,9 +797,8 @@ class ModelManager:
             # so this says the capability is usable rather than merely
             # named. A [mmproj] with an unimported 'from' returns None and
             # is correctly not claimed yet.
-            projector = self.resolve_mmproj_path(virtual_spec, model_name)
+            projector, projector_info = self._resolve_mmproj_component(virtual_spec, model_name)
             overrides["has_projector"] = projector is not None
-            projector_info = self._read_metadata_for_path(projector) if projector is not None else {}
             has_encoder = (projector_info or {}).get('metadata_raw', {}).get('clip.has_vision_encoder')
             overrides['vision_configured'] = projector is not None and has_encoder is not False
             overrides['projector_info'] = (projector_info or {}).get('metadata_raw') or {}
@@ -937,8 +939,10 @@ class ModelManager:
 
     async def list_local_models(self, model_type='main') -> List[Dict[str, Any]]:
         if model_type == 'main':
-            return await asyncio.to_thread(self._list_local_models_sync)
-        return await asyncio.to_thread(self._list_local_models_sync, model_type)
+            work = asyncio.create_task(asyncio.to_thread(self._list_local_models_sync))
+        else:
+            work = asyncio.create_task(asyncio.to_thread(self._list_local_models_sync, model_type))
+        return await _settle_owned(work)
 
     async def list_local_models_with_metadata(self, model_type='main') -> List[Dict[str, Any]]:
         """
@@ -978,7 +982,8 @@ class ModelManager:
                     continue
 
                 try:
-                    item['digest'], item['size'] = await asyncio.to_thread(self._listing_identity, model['id'])
+                    item['digest'], item['size'] = await _settle_owned(asyncio.create_task(
+                        asyncio.to_thread(self._listing_identity, model['id'])))
                 except (TomlModelError, OSError, ValueError) as exc:
                     logger.warning('Ignoring %s: %s', model['id'], exc)
                     continue
@@ -1342,8 +1347,12 @@ class ModelManager:
         that has not been imported yet -- the same transient state [llm]
         allows.
         """
+        return self._resolve_mmproj_component(spec, source)[0]
+
+    def _resolve_mmproj_component(self, spec, source):
+        """Return the validated projector and the metadata used to validate it."""
         if spec.mmproj_model is None:
-            return None
+            return None, {}
 
         path = resolve_repo_relative_path(spec.mmproj_model, self.models_dir, repository=self.repository)
 
@@ -1362,7 +1371,7 @@ class ModelManager:
                 "a projector reports 'clip')."
             )
 
-        return path
+        return path, metadata
 
     def _resolve_virtual_model_target_path(
         self, spec: VirtualModelSpec, toml_path: Path

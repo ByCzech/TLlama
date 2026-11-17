@@ -63,6 +63,19 @@ I/O threads, never shared between independent requests or persisted on disk.
 Concurrent requests, errors and cancellation do not retain it in the manager.
 Existing per-file error isolation and content-identity retry checks still apply.
 
+Artifact inspection reuses the first shard's header within one group check;
+the first shard's file revision is checked before/after inspection so a
+concurrent replacement cannot hide behind that reuse. Projector capability
+overrides consume the metadata that validated the projector. Size calculations
+use one fresh inode inventory, counting hardlinks once without retaining file
+stats between calls. Digest calculation freezes its local unique-file list
+while preserving each role's ordered group identity.
+
+Listing inventory and identity I/O threads are owned through cancellation:
+the caller waits for the work to settle before returning cancellation and
+releasing its request context. Publication, GC locks and reservation lifetimes
+continue to use their existing transaction/ownership protocols.
+
 Physical resolution remains necessary for containment checks and for freezing
 native launch inputs before pinning/spawning. A separate physical root anchors
 those checks; it is not the repository's general I/O prefix. Internal symlinks

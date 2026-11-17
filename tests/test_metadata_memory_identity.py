@@ -25,7 +25,7 @@ def publish(owner, path, context):
 
 
 def definition(owner, path):
-    return '[llm]\nmodel=' + json.dumps(path.relative_to(owner.repository.root).as_posix()) + '\n'
+    return '[llm]\nmodel=' + json.dumps(owner.repository.relative_path(path).as_posix()) + '\n'
 
 
 @pytest.mark.parametrize('alias', [False, True])
@@ -44,7 +44,7 @@ async def test_manual_rebind_between_equal_size_and_time_groups_uses_new_metadat
     (manager.local_models_dir / 'model.toml').write_text(definition(manager, second))
     metadata = await manager.get_model_metadata('model')
     assert metadata['context_length'] == 8192
-    assert metadata['model_definition']['artifacts']['llm'] == second.relative_to(manager.repository.root).as_posix()
+    assert metadata['model_definition']['artifacts']['llm'] == manager.repository.relative_path(second).as_posix()
     assert manager._build_model_file_info('model')['sha256'] != key
 
 
