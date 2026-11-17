@@ -249,12 +249,14 @@ def test_repeat_pull_uses_store_root_for_every_member(manager, hf, monkeypatch, 
     before = json.loads(origin.read_text())
     progress = PullProgress()
     second = Path(aliased._pull_hf_file_sync('ns/repo', names[0], progress=progress))
-    assert first == second and first.is_relative_to(root)
+    assert first == second and first.is_relative_to(aliased.models_dir)
+    assert aliased.models_dir == aliased.repository.root == configured.absolute()
+    assert first.resolve().is_relative_to(root)
     assert {path.name: (path.stat().st_ino, path.read_bytes()) for path in members} == signatures
     assert hf.calls == [('ns/repo', name) for name in names]
     assert hf.lookups == [('ns/repo', name) for name in names]
     assert json.loads(origin.read_text()) == before
-    assert before['path'] == first.relative_to(root).as_posix()
+    assert before['path'] == first.relative_to(aliased.models_dir).as_posix()
     assert progress.snapshot() == (sum(path.stat().st_size for path in members),) * 2
     assert len(list((root / 'data').iterdir())) == 1
     for path, name in zip(members, names):

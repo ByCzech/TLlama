@@ -26,9 +26,9 @@ _DIGEST = re.compile('[0-9a-f]{64}')
 def verify_file(store, path, digest):
     if _regular(path) is None:
         raise FileNotFoundError(path)
-    before = build_model_file_fingerprint(path)
-    cached = load_digest_cache(store.cache_dir, path)
-    if measured_digest(path, store.cache_dir) != digest or before != build_model_file_fingerprint(path):
+    before = build_model_file_fingerprint(path, repository=store)
+    cached = load_digest_cache(store.cache_dir, path, repository=store)
+    if measured_digest(path, store.cache_dir, repository=store) != digest or before != build_model_file_fingerprint(path, repository=store):
         raise ValueError('A blob changed or does not match its digest.')
     if (cached or {}).get('content_sha256') != digest or (cached or {}).get('source') != 'local':
         save_digest_cache(store.cache_dir, str(path), path,
@@ -71,7 +71,7 @@ def find_published_blob(store, digest):
     for paths in _groups(store):
         if len(paths) == 1:
             continue
-        cached = [load_digest_cache(store.cache_dir, path) for path in paths]
+        cached = [load_digest_cache(store.cache_dir, path, repository=store) for path in paths]
         values = [(item or {}).get('content_sha256') if (item or {}).get('source') == 'local'
                   else None for item in cached]
         if digest in values:
@@ -116,13 +116,13 @@ def _prepare_published_group(store, paths):
         for path in paths:
             if _regular(path) is None:
                 return None
-        fingerprints = [build_model_file_fingerprint(path) for path in paths]
-        old_digests = [load_digest_cache(store.cache_dir, path) for path in paths]
+        fingerprints = [build_model_file_fingerprint(path, repository=store) for path in paths]
+        old_digests = [load_digest_cache(store.cache_dir, path, repository=store) for path in paths]
         scanned = {}
         positions = {path: number for number, path in enumerate(paths)}
         def read(path):
             path = Path(path)
-            cached = load_metadata_cache(store.cache_dir, path)
+            cached = load_metadata_cache(store.cache_dir, path, repository=store)
             raw = (cached or {}).get('metadata_raw')
             if (isinstance(raw, dict) and isinstance(raw.get('general.architecture'), str)
                     and raw['general.architecture']
@@ -134,10 +134,10 @@ def _prepare_published_group(store, paths):
             raw = read_gguf_metadata(str(path))
             scanned[path] = build_model_metadata_payload(raw)
             return raw
-        group = prepare_group(paths, cache_dir=store.cache_dir, metadata_reader=read)
+        group = prepare_group(paths, cache_dir=store.cache_dir, metadata_reader=read, repository=store)
         if tuple(store.root / relative for relative in group.relative_paths) != paths:
             return None
-        if fingerprints != [build_model_file_fingerprint(path) for path in paths]:
+        if fingerprints != [build_model_file_fingerprint(path, repository=store) for path in paths]:
             return None
         metadata = tuple(scanned.get(path, value) for path, value in zip(paths, group.metadata))
         group = replace(group, metadata=metadata)
@@ -177,8 +177,8 @@ def remove_published_uploads(store):
                     if published is None:
                         continue
                     verify_file(store, path, path.name)
-                    caches = [get_digest_cache_path(store.cache_dir, path),
-                              get_metadata_cache_path(store.cache_dir, path)]
+                    caches = [get_digest_cache_path(store.cache_dir, path, repository=store),
+                              get_metadata_cache_path(store.cache_dir, path, repository=store)]
                     for cache in caches:
                         _regular(cache)
                     for cache in caches:

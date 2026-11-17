@@ -45,8 +45,8 @@ def prune_uploads(store, *, apply=False, stop=None):
                         raise ValueError(f'Upload disappeared during inspection: {path.name}')
                     paths = []
                     if kind == 'blob':
-                        paths.extend(cache for cache in (get_metadata_cache_path(cache_root, path),
-                            get_digest_cache_path(cache_root, path)) if _regular(cache) is not None)
+                        paths.extend(cache for cache in (get_metadata_cache_path(cache_root, path, repository=store),
+                            get_digest_cache_path(cache_root, path, repository=store)) if _regular(cache) is not None)
                     # Cache-first unlink keeps the blob name available as the
                     # retry key until every associated cache is durably gone.
                     paths.append(path)

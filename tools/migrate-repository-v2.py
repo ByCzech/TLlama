@@ -226,7 +226,8 @@ def build_plan(root, *, progress=None):
         path = safe_path(root, relative)
         names = shard_names(path.name, inspect_header(relative) if header is None else header)
         paths = [safe_path(root, (path.parent / name).relative_to(root).as_posix()) for name in names]
-        group = prepare_group(paths, names=names if len(names) > 1 else ['weights.gguf'], cache_dir=store.cache_dir)
+        group = prepare_group(paths, names=names if len(names) > 1 else ['weights.gguf'],
+                              cache_dir=store.cache_dir, repository=store)
         record = group_record(group, root)
         address = record['targets'][0]
         previous = group_permissions.setdefault(address, record['ownership'])

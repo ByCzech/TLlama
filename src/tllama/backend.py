@@ -166,9 +166,10 @@ class ModelManager:
 
         self._metadata_lock = asyncio.Lock()
 
-        self.models_dir = Path(self.config.models_dir)
-        self.metadata_cache_dir = self.models_dir / ".tllama" / "metadata-cache"
-        self.repository = RepositoryStore(self.models_dir)
+        self.repository = RepositoryStore(self.config.models_dir)
+        self.models_dir = self.repository.root
+        self.metadata_cache_dir = self.repository.cache_dir
+        self.config = replace(self.config, models_dir=str(self.models_dir))
 
         self._janitor_task: asyncio.Task | None = None
 
@@ -235,10 +236,10 @@ class ModelManager:
             definition = await self._resolve_native_definition(model_name, num_ctx, runtime_overrides=runtime_overrides)
             groups = await _settle_owned(asyncio.create_task(asyncio.to_thread(
                 launch_groups, definition.resolved.launch)))
-            if any(root != self.repository.root for root in groups):
+            if any(root != self.repository.physical_root for root in groups):
                 raise RuntimeError('Resolved data groups no longer belong to the reserved repository')
             await _settle_owned(asyncio.create_task(asyncio.to_thread(
-                pin.update, groups=groups.get(self.repository.root, ()), all_data=False)))
+                pin.update, groups=groups.get(self.repository.physical_root, ()), all_data=False)))
             result = replace(definition, protection=pin)
             transferred = True
             return result
@@ -255,21 +256,21 @@ class ModelManager:
                                  "attach it to a main model before inference")
             if spec is None or spec.llm_model is None:
                 raise FileNotFoundError(f"Model '{model_name}' is not registered/imported in {self.models_dir}")
-            model = resolve_repo_relative_path(spec.llm_model, self.models_dir)
+            model = resolve_repo_relative_path(spec.llm_model, self.models_dir, repository=self.repository)
             if not model.is_file():
                 raise FileNotFoundError(f"Model '{model_name}' does not point at an existing GGUF")
             mmproj = self.resolve_mmproj_path(spec, model_name)
             draft = self.resolve_draft_path(spec, model_name)
-            draft_files = gguf_files(draft, self._read_metadata_for_path, self.models_dir) if draft else ()
-            draft_before = tuple(build_model_file_fingerprint(path) for path in draft_files)
-            file_before = {"model": build_model_file_fingerprint(model),
-                           "projector": build_model_file_fingerprint(mmproj) if mmproj else None}
+            draft_files = gguf_files(draft, self._read_metadata_for_path, self.models_dir, repository=self.repository) if draft else ()
+            draft_before = tuple(build_model_file_fingerprint(path, repository=self.repository) for path in draft_files)
+            file_before = {"model": build_model_file_fingerprint(model, repository=self.repository),
+                           "projector": build_model_file_fingerprint(mmproj, repository=self.repository) if mmproj else None}
             info = self._build_model_file_info_from_path(model)
             if info is None:
                 raise FileNotFoundError(f"Model '{model_name}' does not point at an existing GGUF")
             metadata_scanned = False
             try:
-                metadata = load_metadata_cache(self.metadata_cache_dir, model)
+                metadata = load_metadata_cache(self.metadata_cache_dir, model, repository=self.repository)
                 if metadata is None:
                     metadata = self._get_model_metadata_sync(str(model))
                     metadata_scanned = metadata is not None
@@ -298,14 +299,14 @@ class ModelManager:
                 if arch not in (None, '', 'unknown', 'dflash'):
                     raise ValueError(f"Model '{model_name}': draft-dflash requires dflash weights; got {arch!r}")
             artifacts = self._model_artifacts(spec, model, model_name, metadata=metadata)
-            identity_before = tuple(build_model_file_fingerprint(path) for path in artifacts.files)
+            identity_before = tuple(build_model_file_fingerprint(path, repository=self.repository) for path in artifacts.files)
             info['model_digest'] = self._artifact_digest(spec, artifacts, metadata)
-            info['content_sha256'] = (load_digest_cache(self.metadata_cache_dir, model) or {}).get('content_sha256', '')
+            info['content_sha256'] = (load_digest_cache(self.metadata_cache_dir, model, repository=self.repository) or {}).get('content_sha256', '')
             after = self._toml_fingerprint_for_reference(model_name)
-            file_after = {"model": build_model_file_fingerprint(model),
-                          "projector": build_model_file_fingerprint(mmproj) if mmproj else None}
-            identity_after = tuple(build_model_file_fingerprint(path) for path in artifacts.files)
-            draft_after = tuple(build_model_file_fingerprint(path) for path in draft_files)
+            file_after = {"model": build_model_file_fingerprint(model, repository=self.repository),
+                          "projector": build_model_file_fingerprint(mmproj, repository=self.repository) if mmproj else None}
+            identity_after = tuple(build_model_file_fingerprint(path, repository=self.repository) for path in artifacts.files)
+            draft_after = tuple(build_model_file_fingerprint(path, repository=self.repository) for path in draft_files)
             if (before != after or file_before != file_after or identity_before != identity_after
                     or draft_before != draft_after):
                 continue
@@ -394,7 +395,7 @@ class ModelManager:
         if not file_path.exists():
             return None
 
-        fingerprint = build_model_file_fingerprint(file_path)
+        fingerprint = build_model_file_fingerprint(file_path, repository=self.repository)
         # This is a change key, not the public content digest. Canonical
         # weights share a basename; include their path and exact ns timestamp.
         hash_sha256 = sha256(json.dumps(fingerprint, sort_keys=True).encode('utf-8'))
@@ -442,7 +443,7 @@ class ModelManager:
         """Identify the revision of the .toml a model would be built from.
 
         Deliberately the same fingerprint the metadata cache already uses
-        for .gguf files -- resolved path, size, mtime_ns -- rather than a
+        for .gguf files -- repo-relative path, size, mtime_ns -- rather than a
         second idiom for the same job. Timestamp alone would do; size comes
         free from the one stat() and costs nothing to compare.
 
@@ -458,7 +459,7 @@ class ModelManager:
             return None
 
         try:
-            return build_model_file_fingerprint(toml_path)
+            return build_model_file_fingerprint(toml_path, repository=self.repository)
         except OSError:
             return None
 
@@ -504,7 +505,7 @@ class ModelManager:
                 # on until that happens.
                 return None
 
-            target = resolve_repo_relative_path(virtual_spec.primary_model, self.models_dir)
+            target = resolve_repo_relative_path(virtual_spec.primary_model, self.models_dir, repository=self.repository)
 
             # Raised, not skipped: a name asked for by hand is a single
             # specific request, and reporting what is wrong with it beats
@@ -603,12 +604,12 @@ class ModelManager:
     def _get_content_digest_sync(self, file_path):
         try:
             for _ in range(3):
-                before = build_model_file_fingerprint(file_path)
-                cached = load_digest_cache(self.metadata_cache_dir, file_path)
+                before = build_model_file_fingerprint(file_path, repository=self.repository)
+                cached = load_digest_cache(self.metadata_cache_dir, file_path, repository=self.repository)
                 if cached is not None:
                     return cached
                 digest = self._build_model_digest_sync(file_path)
-                if before != build_model_file_fingerprint(file_path):
+                if before != build_model_file_fingerprint(file_path, repository=self.repository):
                     continue
                 name = str(file_path)
                 save_digest_cache(self.metadata_cache_dir, name, file_path, digest,
@@ -648,16 +649,16 @@ class ModelManager:
             spec = self._resolve_virtual_model_spec(model_name)
             if spec is None or spec.primary_model is None:
                 raise TomlModelError(f'{model_name}: model is not imported')
-            path = resolve_repo_relative_path(spec.primary_model, self.models_dir)
+            path = resolve_repo_relative_path(spec.primary_model, self.models_dir, repository=self.repository)
             artifacts = self._model_artifacts(spec, path, model_name)
-            files_before = tuple(build_model_file_fingerprint(file) for file in artifacts.files)
+            files_before = tuple(build_model_file_fingerprint(file, repository=self.repository) for file in artifacts.files)
             try:
                 metadata = self._read_metadata_for_path(path)
             except (ValueError, OSError):
                 metadata = {}
             digest = self._artifact_digest(spec, artifacts, metadata)
             if (before == self._toml_fingerprint_for_reference(model_name)
-                    and files_before == tuple(build_model_file_fingerprint(file) for file in artifacts.files)):
+                    and files_before == tuple(build_model_file_fingerprint(file, repository=self.repository) for file in artifacts.files)):
                 return digest, artifacts.size
         raise TomlModelError(f'{model_name}: definition changed during identity computation')
 
@@ -775,7 +776,7 @@ class ModelManager:
                 return cached_value
 
         persistent_cached_value = await _settle_owned(asyncio.create_task(asyncio.to_thread(
-            load_metadata_cache, self.metadata_cache_dir, model_info["path"])))
+            load_metadata_cache, self.metadata_cache_dir, model_info["path"], repository=self.repository)))
 
         if persistent_cached_value is not None:
             async with self._metadata_lock:
@@ -803,7 +804,7 @@ class ModelManager:
 
     def _definition_details(self, spec):
         return {'type': spec.model_type, 'artifacts': {
-            role: resolve_repo_relative_path(model, self.models_dir).relative_to(self.repository.root).as_posix()
+            role: resolve_repo_relative_path(model, self.models_dir, repository=self.repository).relative_to(self.repository.root).as_posix()
             for role, model, source in spec.components if model is not None}}
 
     def _model_artifacts(self, spec, target_path, source, *, metadata=None):
@@ -814,16 +815,16 @@ class ModelManager:
             path = Path(spec.runtime['lora_path'])
             if not path.is_absolute():
                 path = self.models_dir / path
-            if not path.resolve().is_relative_to(self.models_dir.resolve()) or not path.is_file():
+            if not path.resolve().is_relative_to(self.repository.physical_root) or not path.is_file():
                 raise TomlModelError(f'{source}: lora_path must name a file inside the model store')
             adapter = (path,)
         def read(path):
             return metadata if metadata is not None and path == target_path else self._read_metadata_for_path(path)
         return ModelArtifacts(
-            gguf_files(target_path, read, self.models_dir) if spec.model_type == 'main' else (),
-            gguf_files(projector, self._read_metadata_for_path, self.models_dir) if projector else (),
+            gguf_files(target_path, read, self.models_dir, repository=self.repository) if spec.model_type == 'main' else (),
+            gguf_files(projector, self._read_metadata_for_path, self.models_dir, repository=self.repository) if projector else (),
             adapter,
-            gguf_files(draft, self._read_metadata_for_path, self.models_dir) if draft else (),
+            gguf_files(draft, self._read_metadata_for_path, self.models_dir, repository=self.repository) if draft else (),
         )
 
     def _list_local_models_sync(self, model_type='main') -> List[Dict[str, Any]]:
@@ -1255,7 +1256,7 @@ class ModelManager:
         every time is worth avoiding; the cache is keyed by the file and
         invalidates on its own when the file changes.
         """
-        cached = load_metadata_cache(self.metadata_cache_dir, file_path)
+        cached = load_metadata_cache(self.metadata_cache_dir, file_path, repository=self.repository)
         if cached is not None:
             return cached
 
@@ -1278,7 +1279,7 @@ class ModelManager:
             raise TomlModelError(f'{source}: [draft].from has not been imported')
         if spec.draft_model is None:
             return None
-        path = resolve_repo_relative_path(spec.draft_model, self.models_dir)
+        path = resolve_repo_relative_path(spec.draft_model, self.models_dir, repository=self.repository)
         if not path.is_file():
             raise TomlModelError(f'{source}: [draft].model does not name an existing file')
         return path
@@ -1299,7 +1300,7 @@ class ModelManager:
         if spec.mmproj_model is None:
             return None
 
-        path = resolve_repo_relative_path(spec.mmproj_model, self.models_dir)
+        path = resolve_repo_relative_path(spec.mmproj_model, self.models_dir, repository=self.repository)
 
         if not path.is_file():
             raise TomlModelError(
@@ -1341,7 +1342,7 @@ class ModelManager:
             return None
 
         try:
-            target = resolve_repo_relative_path(spec.primary_model, self.models_dir)
+            target = resolve_repo_relative_path(spec.primary_model, self.models_dir, repository=self.repository)
         except TomlModelError as exc:
             logger.warning("Ignoring %s: %s", toml_path, exc)
             return None

@@ -126,8 +126,9 @@ def create_definition(manager, name, text, uploads, *, force=False, dry_run=Fals
                         else verified_blob(manager, item.digest) for path, item in zip(staged, files)]
             blobs = [path for path, fingerprint in verified]
             fingerprints = [fingerprint for path, fingerprint in verified]
-            group = prepare_group(blobs, names=names, cache_dir=manager.metadata_cache_dir)
-            if fingerprints != [build_model_file_fingerprint(path) for path in blobs]:
+            group = prepare_group(blobs, names=names, cache_dir=manager.metadata_cache_dir,
+                                  repository=manager.repository)
+            if fingerprints != [build_model_file_fingerprint(path, repository=manager.repository) for path in blobs]:
                 raise ValueError('Uploaded files changed during header inspection.')
             groups.append(group)
         if tuple(item.digest[7:] for item in files) != group.digests:

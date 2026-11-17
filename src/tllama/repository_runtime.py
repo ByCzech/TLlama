@@ -98,12 +98,12 @@ def repository_operation(function):
 def destination(manager, name):
     relative = definition_path(name)
     target = manager.models_dir / relative
-    current = manager.models_dir.resolve()
+    current = manager.models_dir
     for part in relative.parts:
         current /= part
         if current.is_symlink():
             raise ValueError('Definition path must not contain a symlink.')
-    if not target.resolve().is_relative_to(manager.models_dir.resolve()):
+    if not target.resolve().is_relative_to(manager.repository.physical_root):
         raise ValueError('Definition must stay inside the repository.')
     paths = [path.relative_to(manager.models_dir).as_posix() for path in manager._iter_repository_toml_files()]
     check_portable_collisions([*paths, relative.as_posix()])
@@ -127,10 +127,10 @@ def require_data_reference(manager, value):
         current /= part
         if current.is_symlink():
             raise ValueError('Managed data paths must not contain symlinks.')
-    if not result.resolve().is_relative_to(manager.repository.root) or not result.is_file():
+    if not result.resolve().is_relative_to(manager.repository.physical_root) or not result.is_file():
         raise FileNotFoundError(f'Managed data file does not exist: {value}')
     names = shard_names(result.name, read_gguf_metadata(str(result)))
-    group = prepare_group([result.parent / name for name in names], cache_dir=manager.metadata_cache_dir)
+    group = prepare_group([result.parent / name for name in names], cache_dir=manager.metadata_cache_dir, repository=manager.repository)
     validate_group_files(result.parent, names)
     if group.relative_paths[0].as_posix() != value:
         raise ValueError('Managed data group does not match its content address or complete file set.')
@@ -238,7 +238,7 @@ def pull_sync(manager, repo_id, filename, token=None, revision=None, progress=No
                 try:
                     first = require_data_reference(manager, index['path'])
                     names = shard_names(first.name, read_gguf_metadata(str(first)))
-                    group = prepare_group([first.parent / name for name in names], cache_dir=manager.metadata_cache_dir)
+                    group = prepare_group([first.parent / name for name in names], cache_dir=manager.metadata_cache_dir, repository=manager.repository)
                 except (OSError, KeyError, ValueError, TypeError):
                     pass
                 if group is not None and list(group.digests) == index['digests']:

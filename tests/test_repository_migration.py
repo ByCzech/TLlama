@@ -44,6 +44,33 @@ def basic(tmp_path):
     return root, source, definition
 
 
+async def test_plan_from_alias_applies_after_move_with_portable_caches(tmp_path, monkeypatch):
+    root, source, _ = basic(tmp_path)
+    alias = tmp_path / 'alias'
+    alias.symlink_to(root, target_is_directory=True)
+    plan = tool.build_plan(alias)
+    assert str(root) not in json.dumps(plan)
+    moved = tmp_path / 'moved'
+    root.rename(moved)
+    tool.apply_plan(moved, plan)
+    alias.unlink()
+    alias.symlink_to(moved, target_is_directory=True)
+    manager = ModelManager(BackendConfig(models_dir=str(alias)))
+    def fail(*args, **kwargs):
+        pytest.fail('Migration must warm reusable relative caches')
+    monkeypatch.setattr(manager, '_get_model_metadata_sync', fail)
+    monkeypatch.setattr(manager, '_compute_content_sha256', fail)
+    try:
+        [row] = await manager.list_local_models_with_metadata()
+        assert row['id'] == 'model'
+        spec = parse_model_toml(manager.read_model_definition('model'))
+        assert spec.llm_model == plan['mapping']['Local/old.gguf']
+        assert manager.models_dir == alias
+        assert (alias / spec.llm_model).is_file()
+    finally:
+        await manager.shutdown()
+
+
 def test_conversion_preserves_draft_references_and_main_identity(tmp_path):
     root, _, definition = basic(tmp_path)
     weight(root / 'Local' / 'draft.gguf', arch='qwen3')

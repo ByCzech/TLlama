@@ -200,7 +200,9 @@ def test_repository_root_alias_is_supported(tmp_path):
     source = weight(tmp_path / 'input.gguf')
     store = RepositoryStore(alias)
     [target] = store.publish(prepare_group([source]))
-    assert target.is_relative_to(root)
+    assert store.root == alias and store.physical_root == root
+    assert target.is_relative_to(alias)
+    assert target.resolve().is_relative_to(root)
 
 
 def test_local_digest_and_metadata_caches_are_reused_without_hashing(tmp_path, monkeypatch):

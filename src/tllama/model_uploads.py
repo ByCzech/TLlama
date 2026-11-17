@@ -18,7 +18,7 @@ def blob_path(manager, digest):
     directory = manager.repository.root / '.tllama' / 'uploads'
     path = directory / digest[7:]
     if (directory.is_symlink() or directory.parent.is_symlink() or path.is_symlink()
-            or not path.resolve().is_relative_to(manager.repository.root)):
+            or not path.resolve().is_relative_to(manager.repository.physical_root)):
         raise ValueError('Upload staging must stay inside the model repository.')
     return path
 
@@ -93,8 +93,8 @@ async def _receive_blob(manager, digest, request):
                 output.flush()
                 os.fsync(output.fileno())
             await _settle_owned(asyncio.create_task(asyncio.to_thread(finish)))
-        fingerprint = build_model_file_fingerprint(temporary)
-        fingerprint['path'] = str(target.resolve())
+        fingerprint = build_model_file_fingerprint(temporary, repository=manager.repository)
+        fingerprint['path'] = manager.repository.relative_path(target).as_posix()
         try:
             os.link(temporary, target)
         except FileExistsError:

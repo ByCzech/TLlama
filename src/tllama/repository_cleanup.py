@@ -176,13 +176,13 @@ def unused_helper_definitions(store, removed_path, removed_spec):
     if not attached:
         return [], [], []
     expected = definition_groups(removed_path, spec=removed_spec)
-    excluded = removed_path.resolve()
+    excluded = store.relative_path(removed_path)
     used, helpers = set(), {}
     for path, name, spec, groups in _definitions(store):
         for group in attached.keys() & groups.keys():
             if groups[group] != expected[group]:
                 raise ValueError('Definitions disagree about attached helper shards.')
-        if path == excluded:
+        if path.relative_to(store.root) == excluded:
             continue
         if spec.model_type == 'main':
             used.update(groups)
@@ -230,7 +230,7 @@ def _plan_group(store, group, files, pins):
                     return None
                 uploads.append(path)
     caches = [cache for path in uploads + weights for cache in
-              (get_metadata_cache_path(store.cache_dir, path), get_digest_cache_path(store.cache_dir, path))]
+              (get_metadata_cache_path(store.cache_dir, path, repository=store), get_digest_cache_path(store.cache_dir, path, repository=store))]
     for path in caches:
         _regular(path)
     # Remove staging aliases first: if interrupted after a weight unlink,

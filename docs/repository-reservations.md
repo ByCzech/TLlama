@@ -88,6 +88,12 @@ attaching the original repository's unrelated protection descriptor.
 Each group protects all its shards. Unmarked physical diagnostic inputs are
 outside managed GC and do not acquire repository bookkeeping.
 
+Manager/store bookkeeping uses the configured repository prefix. Native launch
+paths are frozen to physical paths and matched against the separate physical
+root before narrowing the original reservation. A configured alias and a direct
+root therefore protect the same relative group addresses. Alias spelling is
+not stored in a reservation or used as its cross-process identity.
+
 A newly admitted generation takes ownership of that pin. Reusing an existing
 generation releases the unused resolution pin; validation failures, capacity
 retries, cancelled admission and factory failures also release unused pins.

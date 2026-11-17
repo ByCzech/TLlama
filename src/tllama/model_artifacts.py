@@ -8,7 +8,7 @@ from tllama.helpers.gguf_import import shard_names
 from tllama.helpers.model_toml import TomlModelError
 
 
-def gguf_files(path, read_metadata, root):
+def gguf_files(path, read_metadata, root, *, repository=None):
     path = Path(path)
     try:
         header = read_metadata(path)
@@ -25,8 +25,9 @@ def gguf_files(path, read_metadata, root):
         raise TomlModelError(f'Cannot inspect GGUF shard set: {path}')
     names = shard_names(path.name, raw)
     files = tuple(path.parent / name for name in names)
+    physical_root = repository.physical_root if repository is not None else Path(root).resolve()
     for index, file in enumerate(files):
-        if not file.resolve().is_relative_to(Path(root).resolve()) or not file.is_file():
+        if not file.resolve().is_relative_to(physical_root) or not file.is_file():
             raise TomlModelError(f'Missing or external GGUF shard: {file}')
         if len(files) > 1:
             part = read_metadata(file).get('metadata_raw', {})

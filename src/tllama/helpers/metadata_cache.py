@@ -51,39 +51,53 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _relative_path(cache_dir: Path, model_path: Path) -> str:
+def _relative_path(cache_dir: Path, model_path: Path, repository=None) -> str:
     """Identify weights within <repository>/.tllama/metadata-cache.
 
-    Resolve both paths so a symlink to the repository shares its cache, but
-    reject weights outside it. POSIX separators keep the identity portable.
+    A store supplies its physical anchor once; standalone calls derive it
+    from the cache's repository parent. Resolve weights for containment.
+    POSIX separators keep the identity portable.
     """
+    if repository is not None:
+        return repository.relative_path(model_path).as_posix()
     root = cache_dir.parent.parent.resolve()
     return model_path.resolve().relative_to(root).as_posix()
 
 
-def _cache_key(cache_dir: Path, model_path: Path) -> str:
-    return sha256(_relative_path(cache_dir, model_path).encode("utf-8")).hexdigest()
+def _cache_path(cache_dir: Path, relative: str, section: str) -> Path:
+    key = sha256(relative.encode("utf-8")).hexdigest()
+    suffix = '.digest.json' if section == _DIGEST_SECTION else '.json'
+    return cache_dir / (key + suffix)
 
 
-def get_metadata_cache_path(cache_dir: Path, model_path: str | Path) -> Path:
+def get_metadata_cache_path(cache_dir: Path, model_path: str | Path, *, repository=None) -> Path:
     """Return the JSON metadata cache file path for a model file."""
     path = Path(model_path)
-    return cache_dir / f"{_cache_key(cache_dir, path)}.json"
+    return _cache_path(cache_dir, _relative_path(cache_dir, path, repository), _METADATA_SECTION)
 
 
-def get_digest_cache_path(cache_dir: Path, model_path: str | Path) -> Path:
+def get_digest_cache_path(cache_dir: Path, model_path: str | Path, *, repository=None) -> Path:
     """Return the JSON content digest cache file path for a model file."""
     path = Path(model_path)
-    return cache_dir / f"{_cache_key(cache_dir, path)}.digest.json"
+    return _cache_path(cache_dir, _relative_path(cache_dir, path, repository), _DIGEST_SECTION)
 
 
-def build_model_file_fingerprint(model_path: str | Path) -> Dict[str, Any]:
-    """Build a lightweight model file fingerprint for cache invalidation."""
+def build_model_file_fingerprint(model_path: str | Path, *, repository=None,
+                                 relative_path: str | None = None) -> Dict[str, Any]:
+    """Capture a change key, relative when a repository/reference is supplied.
+
+    relative_path is an already checked reference within the caller's store,
+    allowing a cache lookup to share it with its filename calculation.
+    Standalone callers retain the historical absolute-path snapshot.
+    """
     path = Path(model_path)
     stats = path.stat()
+    if relative_path is None:
+        relative_path = (repository.relative_path(path).as_posix() if repository is not None
+                         else str(path.resolve()))
 
     return {
-        "path": str(path.resolve()),
+        "path": relative_path,
         "size": int(stats.st_size),
         "mtime_ns": int(stats.st_mtime_ns),
     }
@@ -121,6 +135,7 @@ def _load_cache_document(
     model_path: Path,
     schema_version: int,
     section: str,
+    repository=None,
 ) -> Optional[Dict[str, Any]]:
     """
     Load one section of a cache document if it exists and is still valid.
@@ -128,12 +143,9 @@ def _load_cache_document(
     Invalid, stale or unreadable cache files are treated as cache misses.
     """
     try:
-        fingerprint = {
-            **build_model_file_fingerprint(model_path),
-            "path": _relative_path(cache_dir, model_path),
-        }
-        path_for = get_digest_cache_path if section == _DIGEST_SECTION else get_metadata_cache_path
-        cache_path = path_for(cache_dir, model_path)
+        relative = _relative_path(cache_dir, model_path, repository)
+        fingerprint = build_model_file_fingerprint(model_path, relative_path=relative)
+        cache_path = _cache_path(cache_dir, relative, section)
         with cache_path.open("r", encoding="utf-8") as handle:
             document = json.load(handle)
             # Read attributes of the same inode as the JSON, even if another
@@ -172,7 +184,7 @@ def _save_cache_document(
     try:
         if repository is not None:
             from tllama.repository_runtime import read_format
-            relative = model_path.resolve().relative_to(repository.root)
+            relative = repository.relative_path(model_path)
             if (read_format(repository) is not None
                     and (relative.parts[:1] == ('data',)
                          or relative.parts[:2] == ('.tllama', 'uploads'))):
@@ -184,18 +196,21 @@ def _save_cache_document(
                         return
                     return _save_cache_document(cache_dir, model_name, model_path,
                         schema_version, section, payload, fingerprint=fingerprint)
-        path_for = get_digest_cache_path if section == _DIGEST_SECTION else get_metadata_cache_path
-        cache_path = path_for(cache_dir, model_path)
+        relative = _relative_path(cache_dir, model_path, repository)
+        cache_path = _cache_path(cache_dir, relative, section)
 
         if fingerprint is None:
-            fingerprint = build_model_file_fingerprint(model_path)
+            fingerprint = build_model_file_fingerprint(model_path, relative_path=relative)
 
         # Preserve the captured size/mtime and path: delayed writes must not
         # label an old scan with the current file's identity.
-        fingerprint = {
-            **fingerprint,
-            "path": Path(fingerprint["path"]).relative_to(cache_dir.parent.parent.resolve()).as_posix(),
-        }
+        captured = Path(fingerprint["path"])
+        if captured.is_absolute():
+            root = repository.physical_root if repository is not None else cache_dir.parent.parent.resolve()
+            captured = captured.relative_to(root)
+        if '..' in captured.parts or captured.as_posix() != relative:
+            return
+        fingerprint = {**fingerprint, "path": captured.as_posix()}
         cache_dir.mkdir(parents=True, exist_ok=True)
 
         document = {
@@ -245,6 +260,8 @@ def _save_cache_document(
 def load_metadata_cache(
     cache_dir: str | Path,
     model_path: str | Path,
+    *,
+    repository=None,
 ) -> Optional[Dict[str, Any]]:
     """Load cached GGUF metadata if the cache file exists and is still valid."""
     cache_dir = Path(cache_dir)
@@ -255,6 +272,7 @@ def load_metadata_cache(
         model_path=model_path,
         schema_version=SCHEMA_VERSION,
         section=_METADATA_SECTION,
+        repository=repository,
     )
 
 
@@ -291,6 +309,8 @@ def save_metadata_cache(
 def load_digest_cache(
     cache_dir: str | Path,
     model_path: str | Path,
+    *,
+    repository=None,
 ) -> Optional[Dict[str, Any]]:
     """Load the cached content digest if the cache file exists and is still valid."""
     cache_dir = Path(cache_dir)
@@ -301,6 +321,7 @@ def load_digest_cache(
         model_path=model_path,
         schema_version=DIGEST_SCHEMA_VERSION,
         section=_DIGEST_SECTION,
+        repository=repository,
     )
 
 

@@ -447,25 +447,25 @@ def _reject_unknown_sampling_keys(sampling: Dict[str, Any], source: str) -> None
             raise TomlModelError(f"{source}: [sampling] {sampling_problem(key, sampling[key])}.")
 
 
-def resolve_repo_relative_path(value: str, models_dir: Path) -> Path:
+def resolve_repo_relative_path(value: str, models_dir: Path, *, repository=None) -> Path:
     """Resolve a .toml path value (e.g. "HuggingFace/ns/repo/model.gguf")
     against the repo root and confirm it does not escape it.
 
-    Mirrors the existing Path.is_relative_to() idiom already used elsewhere
-    in backend.py, so path-safety is checked the same way everywhere in the
-    codebase. Raises TomlModelError (not the caller's problem to remember to
-    check the return value) if the resolved path would land outside
-    models_dir -- the "../../.." escape spec §5 calls out explicitly.
+    Resolve physically for containment, then return the canonical relative
+    reference under the configured I/O prefix. A supplied store reuses its
+    startup physical anchor. Raises TomlModelError if the resolved path lands
+    outside models_dir -- the "../../.." escape spec §5 calls out explicitly.
     """
-    models_dir = models_dir.resolve()
+    models_dir = repository.root if repository is not None else models_dir.absolute()
+    physical_root = repository.physical_root if repository is not None else models_dir.resolve()
     resolved = (models_dir / value).resolve()
 
-    if not resolved.is_relative_to(models_dir):
+    if not resolved.is_relative_to(physical_root):
         raise TomlModelError(
             f"'{value}' resolves outside the models repository ({models_dir})."
         )
 
-    return resolved
+    return models_dir / resolved.relative_to(physical_root)
 
 
 def _toml_string(value: str) -> str:

@@ -44,7 +44,7 @@ def hash_file(path):
     return digest.hexdigest()
 
 
-def measured_digest(path, cache_dir=None):
+def measured_digest(path, cache_dir=None, *, repository=None):
     """Reuse only current, stable caches from actual local measurements.
 
     Old/unknown schemas are misses through the ordinary cache loader. A digest
@@ -52,7 +52,7 @@ def measured_digest(path, cache_dir=None):
     This read-only operation never upgrades or writes an input cache.
     """
     before = file_signature(path)
-    cached = load_digest_cache(cache_dir, path) if cache_dir is not None else None
+    cached = load_digest_cache(cache_dir, path, repository=repository) if cache_dir is not None else None
     value = (cached or {}).get('content_sha256')
     if (not isinstance(value, str) or not re.fullmatch('[0-9a-f]{64}', value)
             or cached.get('source') != 'local'):
@@ -75,7 +75,7 @@ class PreparedGroup:
         return group_paths(self.digests)
 
 
-def prepare_group(paths, *, names=None, cache_dir=None, metadata_reader=None):
+def prepare_group(paths, *, names=None, cache_dir=None, metadata_reader=None, repository=None):
     """Validate a complete ordered group and capture its measured identity.
 
     Explicit names allow verified upload blobs to have hash-only staging
@@ -96,8 +96,8 @@ def prepare_group(paths, *, names=None, cache_dir=None, metadata_reader=None):
         validate_original_name(name)
     signatures = tuple(file_signature(path) for path in sources)
     headers = validate_group(names, sources, metadata_reader=metadata_reader)
-    digests = tuple(measured_digest(path, cache_dir) for path in sources)
-    metadata = tuple((load_metadata_cache(cache_dir, path) if cache_dir is not None else None)
+    digests = tuple(measured_digest(path, cache_dir, repository=repository) for path in sources)
+    metadata = tuple((load_metadata_cache(cache_dir, path, repository=repository) if cache_dir is not None else None)
                      or build_model_metadata_payload(header) for path, header in zip(sources, headers))
     if signatures != tuple(file_signature(path) for path in sources):
         raise ValueError('Weight group changed during preparation.')
@@ -117,10 +117,18 @@ class RepositoryStore:
     def __init__(self, root):
         # A symlink to the whole repository is supported, unlike links from
         # its control/data directories into some unrelated filesystem tree.
-        self.root = Path(root).resolve()
+        # Freeze a relative configuration against the startup cwd, preserving
+        # the configured mount/alias for I/O. Physical resolution is only an
+        # anchor for containment checks and native worker protection.
+        self.root = Path(root).absolute()
+        self.physical_root = self.root.resolve()
         self.cache_dir = self.root / '.tllama' / 'metadata-cache'
         self._mutex = threading.RLock()
         self._depth = 0
+
+    def relative_path(self, path):
+        """Canonical identity within this repository, independent of prefix."""
+        return Path(path).resolve().relative_to(self.physical_root)
 
     def _directory(self, relative):
         self.root.mkdir(parents=True, exist_ok=True)
@@ -227,7 +235,7 @@ class RepositoryStore:
             raise ValueError('Existing data group contains a symlink.')
         signatures = tuple(file_signature(path) for path in paths)
         validate_group([path.name for path in paths], paths)
-        if tuple(measured_digest(path, self.cache_dir) for path in paths) != group.digests:
+        if tuple(measured_digest(path, self.cache_dir, repository=self) for path in paths) != group.digests:
             raise ValueError('Existing data group does not match its content address.')
         if signatures != tuple(file_signature(path) for path in paths):
             raise ValueError('Existing data group changed during verification.')
@@ -266,7 +274,7 @@ class RepositoryStore:
                     for number, (source, target, digest) in enumerate(zip(group.sources, paths, group.digests)):
                         staged = temporary / target.name
                         if link_owned:
-                            if not source.resolve().is_relative_to(self.root):
+                            if not source.resolve().is_relative_to(self.physical_root):
                                 raise ValueError('Only repository-owned files may be hard-linked into data.')
                             self._check_sources(group)
                             os.link(source, staged, follow_symlinks=False)
@@ -298,7 +306,7 @@ class RepositoryStore:
             self.record_names(paths, group.names)
             self._directory('.tllama/metadata-cache')
             for path, digest, metadata in zip(paths, group.digests, group.metadata):
-                fingerprint = build_model_file_fingerprint(path)
+                fingerprint = build_model_file_fingerprint(path, repository=self)
                 name = path.relative_to(self.root).as_posix()
                 save_digest_cache(self.cache_dir, name, path,
                                   {'content_sha256': digest, 'source': 'local'}, fingerprint=fingerprint,

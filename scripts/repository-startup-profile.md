@@ -1,7 +1,7 @@
 # Repository startup baseline
 
 Run from a checkout with its Python dependencies. This local diagnostic measures
-the existing repository code before A5 or cache optimizations. It does not load
+the repository code before and after path/cache optimizations. It does not load
 a native worker, contact a daemon or discover a daemon configuration file.
 Use `--config /etc/tllama/server.toml` when the definition preparation should
 include those explicit global settings; `--models-dir` always selects the root.

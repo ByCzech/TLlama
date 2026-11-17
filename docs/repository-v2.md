@@ -39,6 +39,31 @@ Group publication must validate complete GGUF headers and stable file hashes,
 then publish atomically. Published groups are immutable. Merely calculating
 paths is not validation or publication.
 
+## Configured prefix and portable references
+
+The manager and transactional store use one configured absolute prefix for
+repository I/O, including definitions, data, caches, journals and reservations.
+A relative configuration is anchored to the startup working directory once.
+A symlink to the repository (or to its parent) keeps that configured spelling;
+it does not produce a second identity for the same weights.
+
+File change keys in manager RAM and definition snapshots use canonical
+repository-relative paths, size and nanosecond mtime. Metadata/digest cache
+documents and filenames retain their existing relative identities and schema
+versions. This change needs no cache reset, repository conversion or weight
+rehash. Standalone file-fingerprint callers outside the manager can still
+capture an absolute path; cache writers accept both forms without replacing
+the captured size or mtime with attributes from a newer file.
+
+Physical resolution remains necessary for containment checks and for freezing
+native launch inputs before pinning/spawning. A separate physical root anchors
+those checks; it is not the repository's general I/O prefix. Internal symlinks
+are still rejected in managed publication/control directories. Do not retarget
+the configured root symlink while a daemon is running; restart after changing
+the root. Moving a stopped repository with its cache preserves valid entries.
+The offline converter continues to resolve its root for its own stopped-world
+safety checks; its plan/journal references remain relative and portable.
+
 ## Transition and ownership
 
 Format 2 is explicitly recorded in `.tllama/repository.json`. The daemon has
