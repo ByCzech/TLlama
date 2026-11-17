@@ -32,7 +32,7 @@ def test_explicit_method_beats_configuration_and_never_falls_back(configured, st
     original = dict(options)
     resolved = resolve_worker_config(BackendConfig(runtime_overrides={'device': 'none'}),
         Path('/models/main.gguf'), spec, draft=Path('/models/draft.gguf'),
-        runtime_overrides=ollama_runtime_overrides(options))
+        runtime_overrides=ollama_runtime_overrides(options), draft_metadata={'arch': 'dflash'})
     args = resolved.launch.command(Path('/private/key'))
     expected = 'none' if length == 0 else strategy
     assert args[args.index('--spec-type') + 1] == expected

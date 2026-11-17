@@ -1,4 +1,4 @@
-# Embedded MTP configuration, state, statistics and rejection
+# MTP configuration, state, statistics and rejection
 
 Enable the embedded multi-token-prediction head only for a compatible model:
 
@@ -29,7 +29,8 @@ Ollama `draft_num_predict` overrides them per request: a positive value adjusts
 the selected strategy's length, falling back to MTP when no strategy is active;
 zero disables the strategy. Selection happens after global/TOML configuration,
 not in the early options-name adapter. An attached external draft is passed
-only when DFlash is selected. TLlama also accepts request `options.spec_type`
+when external MTP or DFlash is selected (see the external MTP section below).
+TLlama also accepts request `options.spec_type`
 to explicitly select the method. Explicit `none` stays off with a positive
 draft count; count zero disables any requested method. Direct `draft_n_max`
 still returns HTTP 400. See [ollama-options.md](ollama-options.md).
@@ -41,6 +42,103 @@ error with cleanup. TLlama never retries that load with MTP silently disabled.
 Default permissive runtime fingerprint policy still permits experimental builds;
 no fingerprint whitelist was added for MTP. Unconfigured ordinary inference does
 not gain a new requirement for the engine to understand speculative flags.
+
+## External MTP (0235, native b12359-c0819bbbae)
+
+Use the existing single `[draft]` slot for a self-contained external MTP GGUF:
+
+```toml
+[llm]
+model = "data/MAIN_HASH/weights.gguf"
+[draft]
+model = "data/MTP_HASH/weights.gguf"
+[runtime]
+spec_type = "draft-mtp"
+draft_n_max = 3
+```
+
+Import the helper with ordinary `pull`, or `create` using `[draft].from`.
+A standalone import containing only `[llm].from` is automatically registered
+as `[draft]` when its complete GGUF group is positively identified as a helper.
+Attach an already registered helper through the existing `cp --draft` flow.
+No new pull type option, endpoint, or request field is needed. Unknown formats
+remain main imports; a knowledgeable user can manually change their standalone
+TOML from `[llm]` to `[draft]`, preserving its relative model reference. Repeat
+pull preserves the origin's still-owned manual role and comments, even when
+automatic recognition later changes. It does not create a conflicting alias.
+
+Attaching a helper does not activate speculation. With `draft-mtp`, an attached
+MTP takes precedence over the integrated head; a load failure stays a failure.
+To compare integrated and external heads, use two definitions sharing the main
+weights, one without `[draft]`. An attached DFlash stays dormant under MTP,
+preserving the existing integrated-MTP selection. `draft-dflash` still requires
+DFlash weights. Known DSpark weights are not accepted as DFlash.
+`options.spec_type=none` or `draft_num_predict=0` omits the external model and
+its tuning from the new worker launch. A positive count preserves the selected
+strategy, defaulting to MTP only when no strategy is active.
+
+The existing `draft_device`, `draft_n_gpu_layers`, `draft_type_k`,
+`draft_type_v`, and `draft_n_ubatch` settings also apply to active external MTP.
+They do not change main-model placement or KV settings. They remain dormant
+for integrated MTP and disabled speculation. Active changes reload the worker;
+leases, shard fingerprints, group reservations and cleanup use existing paths.
+
+Source inspected at `c0819bbbaeafa81e506eb83cf1b43f9f6106d307`, tree
+`4e951fcb49275d0c70b539d7d5d01525d663c746`:
+
+| Format | Recognition / source boundary |
+| --- | --- |
+| `gemma4-assistant` | Dedicated helper architecture and native assistant graph |
+| `qwen3next`, `qwen35`, `qwen35moe`, `qwen4exp`, `nemotron_h_moe`, `deepseek2`, `deepseek4` | Positive NextN layers, valid block count, characteristic projection tensors and no main-network blocks across the complete shard group |
+| Shared-target export | Recognized as helper; this pin has no shared-target embedding loader. Known shared activation is rejected; use a self-contained export |
+| Other or contradictory evidence | No automatic MTP classification; explicit `[draft]` is an expectation, not a model-validity certificate |
+
+Relevant native paths: `tools/server/server-context.cpp` passes draft-specific
+parameters through `common_base_params_to_speculative`; `common/speculative.cpp`
+loads the external model before considering the embedded-head branch and fails
+without falling back; `src/llama-model.cpp:nextn_flags` and the listed family
+loaders support MTP-only trunks. Qwen4exp and Gemma assistant require their own
+token embeddings in this pin. Source support does not certify every export,
+target/helper pair or GPU. Native load and real drafting remain authoritative.
+
+The optional compact tensor-name summary comes from the already-open GGUF
+reader, with no tensor-value access, second reader or extra full hash. It is
+internal and does not add public `show` fields. Metadata schema 9, digest schema
+2 and cache envelope 2 remain valid. Old cache entries are enriched when their
+specific known-family import is inspected, without a global cache reset. Warm
+ordinary listings do not require the new summary.
+
+For physical-file off/on qualification with the exact installed build:
+
+```sh
+PYTHONPATH=src python3 scripts/mtp-qualification-smoke.py \
+  --model /ABS/MAIN.gguf --draft-model /ABS/MTP.gguf \
+  --device Vulkan0 --ctx 4096 \
+  --expected-fingerprint b12359-c0819bbbae \
+  --output /tmp/tllama-external-mtp
+```
+
+Use the first shard for split files and a new output directory. The off worker
+does not receive the helper. The MTP worker records the external path/identity,
+requires a separate MTP model owner in Memory API, measures draft/accept counts,
+exercises streaming/cancel/reuse and retains both load logs. Compare rates with
+off using the same settings; activation is not proof of a speedup. Main-model
+MTP tensors may still be loaded: this pin's `common_model_params_to_llama`
+enables them for `draft-mtp`; no memory saving by skipping the embedded head is
+promised. Keep mmap and device choices consistent with the working HW setup.
+
+Then qualify the registered composite through the application:
+
+```sh
+PYTHONPATH=src python3 scripts/functional-qualification-smoke.py \
+  --profile text --model REGISTERED_COMPOSITE --require-mtp \
+  --models-dir /var/lib/tllama/models --device Vulkan0 \
+  --expected-fingerprint b12359-c0819bbbae \
+  --output /tmp/tllama-external-mtp-public
+```
+
+These are qualification recipes, not claims of completed external-model or HW
+smoke. Both captures retain errors and never silently select another head.
 
 ## Historical 0048–0052 evidence and recipes
 

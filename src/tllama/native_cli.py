@@ -46,7 +46,7 @@ def csv_field(value: str) -> str:
     return output.getvalue()
 
 
-def runtime_cli_args(options) -> tuple[str, ...]:
+def runtime_cli_args(options, *, external_draft=False) -> tuple[str, ...]:
     for name, value in options.items():
         if name not in RUNTIME_OPTION_NAMES:
             raise ValueError(f"{name!r} is not an additional native launch option")
@@ -60,7 +60,7 @@ def runtime_cli_args(options) -> tuple[str, ...]:
         args += ["--spec-type", options["spec_type"]]
     if options.get("spec_type") in {"draft-mtp", "draft-dflash"}:
         args += ["--spec-draft-n-max", str(options.get("draft_n_max", SPEC_DRAFT_N_MAX_DEFAULT))]
-    if options.get("spec_type") == "draft-dflash":
+    if options.get("spec_type") == "draft-dflash" or (options.get("spec_type") == "draft-mtp" and external_draft):
         if (options.get("draft_device") == "none"
                 and options.get("draft_n_gpu_layers", "auto") not in ("auto", 0)):
             raise ValueError("draft_device 'none' conflicts with explicit draft_n_gpu_layers; use 0 or auto")

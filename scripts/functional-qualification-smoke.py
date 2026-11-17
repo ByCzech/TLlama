@@ -167,7 +167,8 @@ class Capture:
             report = NativeMemoryReport(data)
             checks = LIFECYCLE['evidence_checks'](report, self.args.expected_fingerprint, 'loaded',
                                                  4096, device=self.args.device)
-            weights = MTP['weight_evidence'](report, self.args.require_mtp)
+            weights = MTP['weight_evidence'](report, self.args.require_mtp,
+                                           external=worker.spec.draft is not None)
             snap = report.snapshot()
             targets = {d['id'] for d in snap['devices'] if d['name'] == self.args.device}
             if self.args.device != 'none':

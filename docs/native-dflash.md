@@ -30,7 +30,7 @@ two draft artifacts while sharing the same target weights.
 | --- | --- |
 | `draft-dflash` with an imported draft | `--spec-type draft-dflash --spec-draft-model PATH --spec-draft-n-max N` |
 | `none` or an unset strategy | No external draft path; no draft weights/context requested |
-| `draft-mtp` with a declared external draft | Embedded MTP only; no external draft path |
+| `draft-mtp` with a declared DFlash draft | Embedded MTP only; DFlash stays dormant. A separate MTP helper is forwarded instead; see [native-mtp.md](native-mtp.md) |
 | Request `spec_type` | Explicitly selects `none`, `draft-mtp` or `draft-dflash` over configuration |
 | Request `draft_num_predict=0` | Selects `none`; omits external draft path and native draft limit |
 | Positive request `draft_num_predict=N` | Adjusts the configured active strategy's length; with no active strategy retains the existing MTP fallback |

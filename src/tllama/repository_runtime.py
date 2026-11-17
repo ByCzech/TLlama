@@ -10,6 +10,7 @@ from hashlib import sha256
 from tllama.config import ConfigError
 from tllama.helpers.gguf_import import shard_names
 from tllama.helpers.gguf_metadata import read_gguf_metadata
+from tllama.helpers.metadata_cache import load_metadata_cache, save_metadata_cache
 from tllama.helpers.model_toml import parse_model_toml, render_model_toml, write_model_toml
 from tllama.helpers.repository_files import repository_tempfile
 from tllama.repository_layout import REPOSITORY_FORMAT
@@ -160,10 +161,11 @@ def register_pull(manager, repo_id, filename, paths, metadata, digests, source_f
     index = read_origin(manager, repo_id, filename)
     warnings = []
     name = None
-    # DFlash and DFlash2 share general.architecture=dflash upstream. This
-    # identifies a stored draft, not an active speculative strategy or a
-    # guarantee that the native loader accepts a particular target pair.
-    if metadata.get('arch') == 'dflash':
+    from tllama.helpers.draft_metadata import group_draft_kind
+    kind = group_draft_kind(metadata)
+    metadata = metadata[0]
+    # Role evidence covers the complete shard group, never only its head/tail.
+    if kind is not None:
         model_type = 'draft'
     else:
         model_type = 'mmproj' if metadata.get('is_projector') else 'main'
@@ -184,7 +186,12 @@ def register_pull(manager, repo_id, filename, paths, metadata, digests, source_f
             name = candidate
             break
         spec = parse_model_toml(target.read_text(encoding='utf-8'), source=str(target))
-        if spec.model_type != model_type:
+        # The origin's still-owned binding keeps the user's manually selected
+        # role, including an unrecognized helper or an old main definition.
+        owned = candidate == previous and spec.primary_model == index.get('path')
+        if owned:
+            role = 'llm' if spec.model_type == 'main' else spec.model_type
+        elif spec.model_type != model_type:
             continue
         if spec.primary_model == relative:
             name = candidate
@@ -242,11 +249,20 @@ def pull_sync(manager, repo_id, filename, token=None, revision=None, progress=No
                 except (OSError, KeyError, ValueError, TypeError):
                     pass
                 if group is not None and list(group.digests) == index['digests']:
+                    # Preparation already inspected these headers. Enrich old
+                    # optional summaries without invalidating unrelated caches.
+                    for path, metadata, signature in zip(group.sources, group.metadata, group.signatures):
+                        old = load_metadata_cache(manager.metadata_cache_dir, path, repository=manager.repository)
+                        if metadata.get('_draft') is not None and (old or {}).get('_draft') is None:
+                            save_metadata_cache(manager.metadata_cache_dir, str(path), path, metadata,
+                                fingerprint={'path': path.relative_to(manager.repository.root).as_posix(),
+                                             'size': signature[2], 'mtime_ns': signature[3]},
+                                repository=manager.repository)
                     if progress is not None:
                         size = sum(path.stat().st_size for path in group.sources)
                         progress.set_total(size)
                         progress.add(size)
-                    return register_pull(manager, repo_id, filename, group.sources, group.metadata[0],
+                    return register_pull(manager, repo_id, filename, group.sources, group.metadata,
                                          group.digests, index['files'])
     # completed already accumulates bytes across bars; total must likewise
     # cover the whole split group instead of being reset by each shard.
@@ -281,4 +297,4 @@ def pull_sync(manager, repo_id, filename, token=None, revision=None, progress=No
         with manager.repository.lock():
             pin.update(groups=[group.relative_paths[0].parts[1]])
             paths = manager.repository.publish(group, link_owned=True)
-            return register_pull(manager, repo_id, filename, paths, group.metadata[0], group.digests, files)
+            return register_pull(manager, repo_id, filename, paths, group.metadata, group.digests, files)

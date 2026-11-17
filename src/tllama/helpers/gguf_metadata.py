@@ -4,6 +4,7 @@ import gguf
 from tllama.helpers.fim import read_fim_metadata
 from typing import Any, Dict, Iterable, Mapping
 from enum import IntEnum
+from tllama.helpers.draft_metadata import DRAFT_ARCHITECTURES, tensor_summary
 
 try:
     import numpy as np
@@ -288,6 +289,13 @@ def read_gguf_metadata(model_path: str) -> Dict[str, Any]:
     vocab = reader.fields.get("tokenizer.ggml.tokens")
     metadata["embedding"] = {"vocab_size": len(vocab.data)} if vocab is not None else {}
     metadata["fim"] = read_fim_metadata(reader)
+    arch = metadata.get('general.architecture')
+    if arch in DRAFT_ARCHITECTURES:
+        def field(suffix):
+            value = reader.fields.get(f'{arch}.{suffix}')
+            return _field_to_python_value(value) if value is not None else None
+        metadata['_draft'] = tensor_summary(arch, field('block_count'), field('nextn_predict_layers'),
+            field('nextn_shared_target_tensors'), (tensor.name for tensor in reader.tensors))
     return metadata
 
 
@@ -402,6 +410,9 @@ def build_model_metadata_payload(meta: Dict[str, Any]) -> Dict[str, Any]:
         "metadata_raw": metadata_raw,
         "fim": meta.get("fim"),
         "embedding": meta.get("embedding", {}),
+        # Optional internal evidence, excluded from public metadata_raw. Old
+        # v9 metadata remains valid; imports enrich only the headers they need.
+        "_draft": meta.get("_draft"),
 
         # A projector is not a model and a continuation shard is not a
         # separate model. Reported here so callers that build or list

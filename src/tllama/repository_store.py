@@ -97,11 +97,16 @@ def prepare_group(paths, *, names=None, cache_dir=None, metadata_reader=None, re
     signatures = tuple(file_signature(path) for path in sources)
     headers = validate_group(names, sources, metadata_reader=metadata_reader)
     digests = tuple(measured_digest(path, cache_dir, repository=repository) for path in sources)
-    metadata = tuple((load_metadata_cache(cache_dir, path, repository=repository) if cache_dir is not None else None)
-                     or build_model_metadata_payload(header) for path, header in zip(sources, headers))
+    metadata = []
+    for path, header in zip(sources, headers):
+        value = ((load_metadata_cache(cache_dir, path, repository=repository) if cache_dir is not None else None)
+                 or build_model_metadata_payload(header))
+        if '_draft' in header:
+            value = dict(value, _draft=header['_draft'])
+        metadata.append(value)
     if signatures != tuple(file_signature(path) for path in sources):
         raise ValueError('Weight group changed during preparation.')
-    return PreparedGroup(sources, signatures, digests, metadata, tuple(names))
+    return PreparedGroup(sources, signatures, digests, tuple(metadata), tuple(names))
 
 
 def sync_directory(path):

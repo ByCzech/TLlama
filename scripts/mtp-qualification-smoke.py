@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Qualify an exact native build's embedded MTP with independent off/on workers.
+"""Qualify an exact native build's embedded or external MTP with off/on workers.
 
 Physical GGUF, no registered-model edits. Raw evidence is retained on failure.
 This is a native diagnostic, not public API or general model quality certification.
@@ -28,6 +28,7 @@ RAW_MEMORY = runpy.run_path(str(HERE / "memory-smoke.py"))["raw_memory"]
 def parser():
     result = argparse.ArgumentParser(description=__doc__)
     result.add_argument("--model", type=Path, required=True)
+    result.add_argument("--draft-model", type=Path, help="Self-contained external MTP GGUF; omitted from the off worker")
     result.add_argument("--device", required=True)
     result.add_argument("--expected-fingerprint", required=True)
     result.add_argument("--executable", type=Path)
@@ -51,7 +52,11 @@ def parser():
 
 def launch_specs(args):
     base = LIFECYCLE["launch_spec"](args)
-    return {profile: replace(base, runtime_options={**base.runtime_options,
+    draft = args.draft_model.expanduser().resolve(strict=True) if args.draft_model else None
+    if draft is not None and not draft.is_file():
+        raise ValueError('--draft-model must name an existing GGUF file')
+    return {profile: replace(base, draft=draft if profile == 'mtp' else None,
+                runtime_options={**base.runtime_options,
                 "use_mmap": not args.no_mmap, "spec_type": kind, "draft_n_max": args.draft})
             for profile, kind in (("off", "none"), ("mtp", "draft-mtp"))}
 
@@ -61,7 +66,7 @@ def file_identity(path):
     return (str(path), stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
 
 
-def weight_evidence(report, active):
+def weight_evidence(report, active, *, external=False):
     """Independent union of snapshot-local intervals, never a sum of role totals."""
     snapshot = report.snapshot()
     storage = snapshot.get("weight_storage") or {}
@@ -76,6 +81,8 @@ def weight_evidence(report, active):
                       if any(rel["owner_id"] in selected_owners for rel in item["relationships"]))
     heads = report.weight_totals(components={"mtp_layers"})
     shared = [o["id"] for o in snapshot["owners"] if {"main", "mtp"} <= set(o["roles"])]
+    external_owners = [o['id'] for o in snapshot['owners'] if o['kind'] == 'model'
+                       and 'mtp' in o['roles'] and 'main' not in o['roles']]
     checks = {
         "main_payload": main is not None and main.status == "known" and (main.payload_bytes or 0) > 0,
         "union_payload": union is not None and union.status == "known" and union.payload_bytes == independent,
@@ -85,8 +92,10 @@ def weight_evidence(report, active):
     if active:
         checks.update(mtp_payload=mtp is not None and mtp.status == "known" and (mtp.payload_bytes or 0) > 0,
                       mtp_head_payload=heads is not None and heads.status == "known" and (heads.payload_bytes or 0) > 0,
-                      shared_model_owner=bool(shared))
+                      **({'external_mtp_owner': bool(external_owners)} if external
+                         else {'shared_model_owner': bool(shared)}))
     return {"checks": checks, "shared_main_mtp_owner_ids": shared,
+            "external_mtp_owner_ids": external_owners,
             "unique_interval_bytes": independent,
             "totals": {name: asdict(value) if value is not None else None
                        for name, value in (("main", main), ("mtp", mtp), ("union", union), ("all", total), ("mtp_layers", heads))},
@@ -107,7 +116,7 @@ async def observe(worker, capture, stage, active, baseline=None):
         report = NativeMemoryReport(data)
         checks = LIFECYCLE["evidence_checks"](report, worker.spec.runtime_fingerprint, "loaded",
                                                worker.spec.memory_tensor_diagnostics, device=worker.spec.device)
-        evidence = weight_evidence(report, active)
+        evidence = weight_evidence(report, active, external=worker.spec.draft is not None)
         payloads = {role: totals["payload_bytes"] if totals else None for role, totals in evidence["totals"].items()}
         if baseline is not None:
             checks["payload_unchanged"] = payloads == baseline
@@ -158,12 +167,14 @@ async def exercise(args, specs, capture):
 
         try:
             identity = (file_identity(spec.model), file_identity(spec.executable))
+            draft_identity = file_identity(spec.draft) if spec.draft else None
             if baseline is None:
                 baseline = identity
             capture.check(profile + ":same-files", identity == baseline, identity=identity)
             capture.check(profile + ":fresh-worker", LIFECYCLE["fresh_telemetry"](worker.memory_snapshot()))
             await worker.start()
-            record("ready", pid=worker.pid, argv=worker.command, fingerprint=worker.runtime_fingerprint, props=worker.props)
+            record("ready", pid=worker.pid, argv=worker.command, fingerprint=worker.runtime_fingerprint,
+                   props=worker.props, external_draft_identity=draft_identity)
             payloads = await observe(worker, capture, profile + ":loaded", active)
             control_body = MTP["request"]("Reply exactly READY.", 16)
             control = await MTP["collect"](worker, control_body, False, record, probe="control")
@@ -189,6 +200,8 @@ async def exercise(args, specs, capture):
             capture.check(profile + ":cancel-reuse", worker.pid == pid and all(checks.values()), checks=checks, pid=worker.pid)
             await observe(worker, capture, profile + ":after-cancel", active, baseline=payloads)
             capture.check(profile + ":files-unchanged", identity == (file_identity(spec.model), file_identity(spec.executable)))
+            if spec.draft is not None:
+                capture.check(profile + ':draft-unchanged', draft_identity == file_identity(spec.draft))
             profiles[profile] = results
         finally:
             try:

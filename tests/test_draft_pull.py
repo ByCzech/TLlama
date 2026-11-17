@@ -112,7 +112,7 @@ def test_changed_draft_updates_owned_binding_but_keeps_shared_old_weights(manage
     assert parse_model_toml(target.read_text()).runtime == {}
 
 
-def test_legacy_llm_definition_is_preserved_and_gets_an_independent_draft_alias(manager, hf):
+def test_manually_selected_llm_role_is_preserved_without_a_conflicting_alias(manager, hf):
     hf.add('draft.gguf', arch='dflash')
     path = Path(manager._pull_hf_file_sync('ns/repo', 'draft.gguf'))
     target = manager.models_dir / definition_path('ns/repo/draft')
@@ -122,9 +122,8 @@ def test_legacy_llm_definition_is_preserved_and_gets_an_independent_draft_alias(
     for _ in range(2):
         assert manager._pull_hf_file_sync('ns/repo', 'draft.gguf') == str(path)
     assert target.read_text() == legacy
-    helper = manager.models_dir / definition_path('ns/repo/draft_01')
-    assert parse_model_toml(helper.read_text()).draft_model == relative
-    assert json.loads((manager.repository.root / origin_path('ns/repo', 'draft.gguf')).read_text())['model'] == 'ns/repo/draft_01'
+    assert not (manager.models_dir / definition_path('ns/repo/draft_01')).exists()
+    assert json.loads((manager.repository.root / origin_path('ns/repo', 'draft.gguf')).read_text())['model'] == 'ns/repo/draft'
     assert len(hf.calls) == 1 and len(list(path.parent.parent.iterdir())) == 1
 
 

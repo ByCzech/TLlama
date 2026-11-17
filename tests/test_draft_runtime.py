@@ -36,7 +36,8 @@ def text(strategy='draft-dflash', **values):
 
 def resolve(strategy='draft-dflash', **values):
     return resolve_worker_config(BackendConfig(runtime_overrides={'device': 'Vulkan0'}),
-        Path('/models/m.gguf'), parse_model_toml(text(strategy, **values)), draft=Path('/models/d.gguf'))
+        Path('/models/m.gguf'), parse_model_toml(text(strategy, **values)), draft=Path('/models/d.gguf'),
+        draft_metadata={'arch': 'dflash'})
 
 
 def args(resolved):
@@ -65,8 +66,8 @@ def test_external_tuning_is_dormant_outside_dflash_even_if_it_would_conflict(str
     command = args(resolve(strategy, **values))
     assert all(flag not in command for flag in FLAGS.values())
     assert '--spec-draft-model' not in command
-    assert parameter_changes(parse_model_toml(text(strategy, **values)), {}) == parameter_changes(
-        parse_model_toml(text(strategy)), {})
+    assert parameter_changes(parse_model_toml(text(strategy, **values)), {}, draft_metadata={'arch': 'dflash'}) == parameter_changes(
+        parse_model_toml(text(strategy)), {}, draft_metadata={'arch': 'dflash'})
 
 
 @pytest.mark.parametrize('value,expected', [('auto', 'auto'), ('all', 'all'), (-1, 'all'), (0, '0'), (17, '17')])

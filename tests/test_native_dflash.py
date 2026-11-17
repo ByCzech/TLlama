@@ -43,7 +43,7 @@ def test_configuration_selects_only_active_external_draft(strategy, length):
     overrides = {} if length is None else ollama_runtime_overrides({'draft_num_predict': length})
     resolved = resolve_worker_config(BackendConfig(runtime_overrides={'device': 'none'}),
         Path('/models/main.gguf'), parse_model_toml(text), draft=Path('/models/draft.gguf'),
-        runtime_overrides=overrides)
+        runtime_overrides=overrides, draft_metadata={'arch': 'dflash'})
     active = 'none' if length == 0 else strategy if strategy != 'none' or length is None else 'draft-mtp'
     args = resolved.launch.command(Path('/private/key'))
     assert option(args, '--spec-type') == active
@@ -80,7 +80,7 @@ def test_combined_or_invented_methods_are_rejected(strategy):
 
 
 @pytest.mark.parametrize('strategy,draft', [('draft-dflash', None), ('none', Path('/d.gguf')),
-                                         ('draft-mtp', Path('/d.gguf')),
+                                         ('draft-mtp', Path('relative.gguf')),
                                          ('draft-dflash', Path('relative.gguf'))])
 def test_direct_launch_refuses_inconsistent_or_relative_draft(strategy, draft):
     with pytest.raises(ValueError, match='draft'):

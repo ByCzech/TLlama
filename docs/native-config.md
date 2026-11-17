@@ -79,10 +79,10 @@ a shell; paths and serialized values stay individual argv elements.
 | `lora_path`, `lora_scale` | `--lora` / `--lora-scaled` | Resolved inside model store; no new `[lora]` section |
 | `spec_type` | Omitted when unset; `--spec-type none/draft-mtp/draft-dflash` when explicit | Load; speculative methods are opt-in |
 | `draft_n_max` | `--spec-draft-n-max` only with MTP/DFlash; default 3 when enabled | Load; see [native-mtp.md](native-mtp.md) and [native-dflash.md](native-dflash.md) |
-| `draft_device` | `--spec-draft-device` | External DFlash only; unset follows main device |
-| `draft_n_gpu_layers` | `--spec-draft-ngl`; auto/all, -1=all, or nonnegative int32 | External DFlash only; unset native auto |
-| `draft_type_k`, `draft_type_v` | `--spec-draft-type-k`, `--spec-draft-type-v` | External DFlash only; separate KV names/enums, unset f16 |
-| `draft_n_ubatch` | `--spec-draft-n-ubatch` | External DFlash only; nonnegative int32, 0/unset follows main ubatch |
+| `draft_device` | `--spec-draft-device` | Active external MTP/DFlash; unset follows main device |
+| `draft_n_gpu_layers` | `--spec-draft-ngl`; auto/all, -1=all, or nonnegative int32 | Active external MTP/DFlash; unset native auto |
+| `draft_type_k`, `draft_type_v` | `--spec-draft-type-k`, `--spec-draft-type-v` | Active external MTP/DFlash; separate KV names/enums, unset f16 |
+| `draft_n_ubatch` | `--spec-draft-n-ubatch` | Active external MTP/DFlash; nonnegative int32, 0/unset follows main ubatch |
 | `embedding` | `--embeddings` when true; speculation explicitly disabled | Load mode; see [native-embeddings.md](native-embeddings.md) |
 | `pooling_type` -1/1/2/3 | Omit / `--pooling mean/cls/last` | Embedding load only; -1 retains the model default |
 | `[template].jinja` | `--jinja --chat-template-file` | Private 0600 file owned and removed by worker |

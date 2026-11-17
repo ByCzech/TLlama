@@ -78,7 +78,7 @@ def _typed(value, annotation):
     return value
 
 
-def parameter_changes(spec, metadata, *, adapter_digest=None):
+def parameter_changes(spec, metadata, *, adapter_digest=None, draft_metadata=None):
     """Only TOML changes against TLlama -> GGUF, in canonical parameter names."""
     changes = {}
     baseline = _runtime_defaults(metadata)
@@ -92,7 +92,10 @@ def parameter_changes(spec, metadata, *, adapter_digest=None):
                  'rope_freq_base': 0, 'rope_freq_scale': 0, 'yarn_orig_ctx': 0}
     for key, value in runtime.items():
         if key in EXTERNAL_DRAFT_TYPES:
-            if runtime.get('spec_type', 'none') != 'draft-dflash':
+            strategy = runtime.get('spec_type', 'none')
+            if not (strategy == 'draft-dflash' or (strategy == 'draft-mtp'
+                    and (spec.draft_model is not None or spec.draft_from is not None)
+                    and (draft_metadata or {}).get('arch') != 'dflash')):
                 continue
             if key in ('draft_type_k', 'draft_type_v'):
                 value = kv_type_name(value)

@@ -100,7 +100,14 @@ class ProbeLaunchSpec(WorkerLaunchSpec):
     def command(self, api_key_file, template_file=None, socket_file=None):
         require(self.speculation in {'none', 'draft-mtp'}, 'Invalid diagnostic speculation type')
         require(type(self.draft_tokens) is int and 1 <= self.draft_tokens <= 32, 'Invalid draft token limit')
-        return super().command(api_key_file, template_file, socket_file) + (
+        args = list(super().command(api_key_file, template_file, socket_file))
+        # Own one explicit off/on pair, while the parent validates/serializes
+        # an external draft and its active tuning with the selected strategy.
+        for flag in ('--spec-type', '--spec-draft-n-max'):
+            if flag in args:
+                index = args.index(flag)
+                del args[index:index + 2]
+        return tuple(args) + (
             '--spec-type', self.speculation, '--spec-draft-n-max', str(self.draft_tokens))
 
 
@@ -109,7 +116,8 @@ def probe_launch(spec, args, speculation):
     # This diagnostic owns off/on selection even when TOML enables MTP.
     # Emit each switch once, with no last-wins ambiguity.
     runtime = {k: v for k, v in spec.runtime_options.items() if k not in {'spec_type', 'draft_n_max'}}
-    values.update(runtime_options={**runtime, 'n_batch': 512, 'n_ubatch': 512},
+    values.update(runtime_options={**runtime, 'n_batch': 512, 'n_ubatch': 512, 'spec_type': speculation},
+                  draft=spec.draft if speculation == 'draft-mtp' else None,
                   memory_source='native', memory_compare=False)
     return ProbeLaunchSpec(**values, speculation=speculation, draft_tokens=args.draft)
 

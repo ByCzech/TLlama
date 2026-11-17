@@ -13,6 +13,7 @@ from tllama.helpers.metadata_cache import (build_model_file_fingerprint,
     get_digest_cache_path, get_metadata_cache_path, load_digest_cache, save_digest_cache,
     load_metadata_cache, save_metadata_cache)
 from tllama.helpers.gguf_metadata import read_gguf_metadata, build_model_metadata_payload
+from tllama.helpers.draft_metadata import DRAFT_ARCHITECTURES
 from tllama.repository_cleanup import _directory, _files, _regular
 from tllama.repository_info import validate_group_files
 from tllama.repository_layout import group_paths
@@ -129,8 +130,9 @@ def _prepare_published_group(store, paths):
                     and type(raw.get('split.count', 1)) is int
                     and raw.get('split.count', 1) == len(paths)
                     and type(raw.get('split.no', 0)) is int
-                    and raw.get('split.no', 0) == positions[path]):
-                return raw
+                    and raw.get('split.no', 0) == positions[path]
+                    and (cached.get('arch') not in DRAFT_ARCHITECTURES or cached.get('_draft') is not None)):
+                return dict(raw, _draft=cached['_draft']) if cached.get('_draft') is not None else raw
             raw = read_gguf_metadata(str(path))
             scanned[path] = build_model_metadata_payload(raw)
             return raw

@@ -43,6 +43,19 @@ def test_probe_owns_only_pinned_diagnostic_flags(kind, tmp_path):
     assert '--offline' in args and args[args.index('--parallel') + 1] == '1'
 
 
+def test_probe_keeps_external_path_and_tuning_only_on_selected_profile(tmp_path):
+    from types import SimpleNamespace
+    from tllama.worker_config import WorkerLaunchSpec
+    source = WorkerLaunchSpec(model=tmp_path/'m.gguf', draft=tmp_path/'d.gguf', device='none',
+        runtime_options={'spec_type': 'draft-mtp', 'draft_n_ubatch': 64})
+    for kind in ['none', 'draft-mtp']:
+        probe = smoke.probe_launch(source, SimpleNamespace(draft=3), kind)
+        args = probe.command(tmp_path/'key')
+        assert args.count('--spec-type') == args.count('--spec-draft-n-max') == 1
+        assert ('--spec-draft-model' in args) == (kind == 'draft-mtp')
+        assert ('--spec-draft-n-ubatch' in args) == (kind == 'draft-mtp')
+
+
 @pytest.mark.parametrize('mode,ok,review', [
     ('normal', True, False), ('no-drafting', True, True), ('different-text', True, True),
     ('punctuated-control', True, False), ('changed-control', True, True),

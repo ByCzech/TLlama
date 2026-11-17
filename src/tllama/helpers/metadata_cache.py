@@ -13,6 +13,12 @@ from tllama.helpers.repository_files import repository_tempfile
 SCHEMA_VERSION = 9
 """Layout version of the GGUF metadata cache document.
 
+0235's optional internal _draft summary does not invalidate v9. Ordinary
+metadata consumers do not require it. Import checks known-family headers
+when their summary is absent and enriches only those entries; unknown
+active helper metadata still reaches the authoritative native loader.
+The independent content-digest cache is never invalidated by this enrichment.
+
 Bumped to 9 for portable ID comparison against GGUF RoPE defaults.
 
 Bumped to 8 for GGUF license metadata; content digest caches remain valid.

@@ -289,22 +289,20 @@ class ModelManager:
                 metadata = {}
             # Reject incompatible load settings before reading large files
             # merely to compute their public identity.
+            draft_metadata = {}
+            if draft is not None:
+                try:
+                    draft_metadata = self._read_metadata_for_path(draft)
+                except (ValueError, OSError) as exc:
+                    # Optional evidence cannot replace the native loader.
+                    # Complete shard validation above remains mandatory.
+                    logger.warning("Native draft metadata scan failed for %s: %s", model_name, exc)
             resolved = resolve_worker_config(self.config, model.resolve(), spec, num_ctx=num_ctx,
                                              mmproj=mmproj.resolve() if mmproj else None,
                                              draft=draft.resolve() if draft else None,
-                                             metadata=metadata, runtime_overrides=runtime_overrides,
+                                             metadata=metadata, draft_metadata=draft_metadata,
+                                             runtime_overrides=runtime_overrides,
                                              **self._native_launch_options)
-            if resolved.launch.draft is not None:
-                try:
-                    arch = self._read_metadata_for_path(draft).get('arch')
-                except (ValueError, OSError) as exc:
-                    # As for the target, optional Python metadata is not the
-                    # native loader's model-validity verdict. Shard integrity
-                    # has already been checked separately above.
-                    logger.warning("Native draft metadata scan failed for %s: %s", model_name, exc)
-                    arch = None
-                if arch not in (None, '', 'unknown', 'dflash'):
-                    raise ValueError(f"Model '{model_name}': draft-dflash requires dflash weights; got {arch!r}")
             artifacts = self._model_artifacts(spec, model, model_name, metadata=metadata)
             identity_before = tuple(build_model_file_fingerprint(path, repository=self.repository) for path in artifacts.files)
             info['model_digest'] = self._artifact_digest(spec, artifacts, metadata)
@@ -691,7 +689,12 @@ class ModelManager:
         if ((artifacts.projector and not projector) or (artifacts.adapter and not adapter)
                 or (artifacts.draft and not draft)):
             return ''
-        return model_digest(llm, projector, parameter_changes(spec, metadata, adapter_digest=adapter),
+        draft_metadata = None
+        if (artifacts.draft and spec.runtime.get('spec_type') == 'draft-mtp'
+                and any(key.startswith('draft_') and key != 'draft_n_max' for key in spec.runtime)):
+            draft_metadata = self._read_metadata_for_path(artifacts.draft[0])
+        return model_digest(llm, projector, parameter_changes(spec, metadata, adapter_digest=adapter,
+                            draft_metadata=draft_metadata),
                             draft=draft)
 
     def _listing_identity(self, model_name):

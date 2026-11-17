@@ -68,6 +68,30 @@ def test_main_mtp_shared_owner_is_a_union_not_role_sum(diagnosed):
     assert smoke['weight_evidence'](NativeMemoryReport(diagnosed), True) == result
 
 
+def test_external_draft_dry_run_omits_off_path_and_requires_separate_owner(tmp_path, diagnosed):
+    draft = tmp_path / 'external.gguf'
+    draft.write_bytes(b'owned test draft')
+    args = smoke['parser']().parse_args(arguments(tmp_path, '--draft-model', str(draft)))
+    specs = smoke['launch_specs'](args)
+    assert specs['off'].draft is None and specs['mtp'].draft == draft
+    assert '--spec-draft-model' not in specs['off'].command(tmp_path / 'key')
+    assert specs['mtp'].command(tmp_path / 'key').count('--spec-draft-model') == 1
+    result = smoke['weight_evidence'](NativeMemoryReport(diagnosed), True, external=True)
+    assert not result['checks']['external_mtp_owner']
+    owner = deepcopy(diagnosed['owners'][0])
+    owner.update(id='external-model', roles=['mtp'])
+    diagnosed['owners'].append(owner)
+    for buffer in diagnosed['buffers']:
+        if {'owner_id': diagnosed['owners'][0]['id'], 'component': 'model_weights'} in buffer['owners']:
+            buffer['owners'].append({'owner_id': owner['id'], 'component': 'model_weights'})
+    for item in diagnosed['weight_storage']['intervals']:
+        for rel in list(item['relationships']):
+            if rel['owner_id'] == diagnosed['owners'][0]['id']:
+                item['relationships'].append(dict(rel, owner_id=owner['id']))
+    result = smoke['weight_evidence'](NativeMemoryReport(diagnosed), True, external=True)
+    assert all(result['checks'].values()), result
+
+
 @pytest.mark.parametrize('fault', ['no-role', 'no-head', 'no-storage', 'partial', 'draft-owner'])
 def test_missing_or_incomplete_mtp_weight_evidence_fails(diagnosed, fault):
     if fault == 'no-role':

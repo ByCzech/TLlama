@@ -148,12 +148,12 @@ class WorkerLaunchSpec:
                 raise ValueError(f"{name} must be a KV cache type name or unset")
             if value is not None:
                 object.__setattr__(self, name, kv_type_name(value))
-        runtime_cli_args(self.runtime_options)
+        runtime_cli_args(self.runtime_options, external_draft=self.draft is not None)
         if self.runtime_options.get("spec_type") == "draft-dflash":
             if self.draft is None:
                 raise ValueError("draft-dflash requires a resolved [draft].model path")
-        elif self.draft is not None:
-            raise ValueError("An external draft path requires spec_type=draft-dflash")
+        elif self.draft is not None and self.runtime_options.get("spec_type") != "draft-mtp":
+            raise ValueError("An external draft path requires spec_type=draft-mtp or draft-dflash")
         mmproj_cli_args(self.mmproj_options)
         if type(self.embedding) is not bool:
             raise ValueError("embedding must be a boolean")
@@ -246,7 +246,7 @@ class WorkerLaunchSpec:
                 args += [flag, value]
         if "context_shift" not in self.runtime_options:
             args.append("--no-context-shift")
-        args += runtime_cli_args(self.runtime_options)
+        args += runtime_cli_args(self.runtime_options, external_draft=self.draft is not None)
         args += mmproj_cli_args(self.mmproj_options)
         if self.memory_tensor_diagnostics:
             args += ["--memory-tensor-diagnostics", str(self.memory_tensor_diagnostics)]

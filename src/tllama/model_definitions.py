@@ -8,6 +8,7 @@ from tllama.model_uploads import blob_path, verified_blob
 from tllama.helpers.gguf_import import shard_names
 from tllama.helpers.metadata_cache import build_model_file_fingerprint
 from tllama.repository_cleanup import remember_definition, collect_pending
+from tllama.helpers.draft_metadata import group_draft_kind
 
 
 def definition_path(manager, name):
@@ -138,6 +139,10 @@ def create_definition(manager, name, text, uploads, *, force=False, dry_run=Fals
         table = spec.document[section]
         table['from'] = group.relative_paths[0].as_posix()
         table['model'] = table.pop('from')
+        if section == 'llm' and group_draft_kind(group.metadata) is not None:
+            if set(spec.document) != {'llm'}:
+                raise ValueError('A standalone prediction helper requires [draft] without main-model settings')
+            spec.document['draft'] = spec.document.pop('llm')
     if groups or existing_groups:
         text = spec.document.as_string()
     for group in groups:

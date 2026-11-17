@@ -22,6 +22,7 @@ from tllama.native_params import freeze_values, kv_type_name, runtime_problem, S
 from tllama.worker_config import WorkerLaunchSpec
 from tllama.decision_contract import decision_type
 from tllama.ollama_options import resolve_ollama_speculation
+from tllama.helpers.draft_metadata import active_draft
 
 
 _DEFAULTS = {"n_gpu_layers": -1, "flash_attn": False, "n_batch": 512, "n_ubatch": 512,
@@ -71,6 +72,7 @@ def resolve_worker_config(
     alias: str = "tllama-worker", load_timeout: float = 600,
     request_timeout: float | None = None,
     metadata: Mapping | None = None, runtime_overrides: Mapping | None = None,
+    draft_metadata: Mapping | None = None,
 ) -> ResolvedWorkerConfig:
     if virtual_spec is not None and (not isinstance(virtual_spec.fim_order, str)
                                      or virtual_spec.fim_order not in FIM_ORDERS):
@@ -177,7 +179,7 @@ def resolve_worker_config(
         launch = WorkerLaunchSpec(
             model=model, executable=config.runtime_executable if executable is None else executable,
             device=device, alias=alias, mmproj=mmproj,
-            draft=draft if runtime.get("spec_type") == "draft-dflash" else None,
+            draft=active_draft(runtime.get("spec_type"), draft, draft_metadata),
             backend_priority=config.backend_priority,
             version_policy=config.runtime_version_policy,
             memory_source=config.memory_source, memory_compare=config.memory_compare,
