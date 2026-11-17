@@ -116,7 +116,7 @@ def lease_metadata(lease):
     # Worker props reflect the actual selected template. TOML is already part
     # of the generation; no mutable definition/header lookup occurs here.
     template = lease.resolved.launch.template
-    if template is None:
+    if not template:
         template = props.get("chat_template", metadata.get("template"))
     metadata["template"] = template
     metadata['tool_template'] = props.get('chat_template_tool_use', metadata.get('tool_template') or template)

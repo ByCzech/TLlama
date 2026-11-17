@@ -72,6 +72,7 @@ def test_show_has_repo_relative_artifacts_and_verbatim_toml(listing_repo, name):
     assert parse_model_toml(data['modelfile']).model_type == role
     if role != 'main':
         assert data['capabilities'] == [] and data['template'] == '' and data['parameters'] == ''
+        assert not ({'renderer', 'parser', 'template_source', 'thinking'} & data.keys())
         assert data['model_info']['general.architecture'] == ('clip' if role == 'mmproj' else 'qwen3')
     elif name == 'full':
         assert 'completion' in data['capabilities'] and 'vision' in data['capabilities']

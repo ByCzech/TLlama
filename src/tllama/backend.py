@@ -752,7 +752,12 @@ class ModelManager:
 
             overrides = await _settle_owned(asyncio.create_task(asyncio.to_thread(
                 self._model_metadata_overrides, model_name)))
-            return {**metadata, **overrides} if overrides else metadata
+            result = {**metadata, **overrides}
+            # Per-definition provenance is transient: never mutate or persist
+            # it in the GGUF cache shared by aliases of these weights.
+            result['_template_source'] = ('tllama_toml' if overrides.get('template') else
+                                          'gguf_chat_template' if metadata.get('template') else 'unknown')
+            return result
 
 
     def _model_metadata_overrides(self, model_name):
@@ -778,12 +783,11 @@ class ModelManager:
             global_runtime = coerce_runtime_overrides(self.config.runtime_overrides)
             overrides["embedding_configured"] = virtual_spec.runtime.get("embedding", global_runtime.get("embedding", False))
             overrides["embedding_pooling_type"] = int(virtual_spec.runtime.get("pooling_type", global_runtime.get("pooling_type", -1)))
-            if virtual_spec.template is not None:
+            if virtual_spec.template:
                 overrides["template"] = virtual_spec.template
-                # A nonempty native override replaces both GGUF variants.
-                # An empty override keeps native's model-template fallback.
-                if virtual_spec.template:
-                    overrides["tool_template"] = virtual_spec.template
+                # A nonempty override replaces both GGUF variants. Empty
+                # overrides retain the model fallback, including provenance.
+                overrides["tool_template"] = virtual_spec.template
             if virtual_spec.system_prompt is not None:
                 overrides["default_system_prompt"] = virtual_spec.system_prompt
             if virtual_spec.sampling:

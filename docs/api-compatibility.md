@@ -38,6 +38,12 @@ Repository maintenance is local through `tllamad repo check`; there is no public
 `/api/repo/*` route or `tllama repo` HTTP client command. Additions to the public
 HTTP API require prior agreement with the maintainer.
 
+For generation models, `/api/show` adds offline `renderer`, `parser`,
+`template_source` and qualified optional `thinking` metadata. It does not
+load/probe workers. These describe default chat configuration, not an active
+request; unknown templates stay empty rather than using a synthetic placeholder.
+See [show-diagnostics.md](show-diagnostics.md) for provenance and omissions.
+
 ## Generation and chat
 
 ```bash

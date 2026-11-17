@@ -245,6 +245,7 @@ async def test_existing_public_generation_rejects_decision_before_load(public, p
     assert not manager.test.ledger
     shown = await client.post('/api/show', json={'model': name})
     assert shown.status_code == 200 and shown.json()['capabilities'] == ['decision']
+    assert not ({'renderer', 'parser', 'template_source', 'thinking'} & shown.json().keys())
 
 
 @pytest.mark.parametrize('body', [

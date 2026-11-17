@@ -12,6 +12,7 @@ from tllama.version import get_version as get_tllama_version
 from tllama.helpers.runner import RUNNER, validate_runner
 from tllama.helpers.common import format_ollama_parameters
 from tllama.helpers.reasoning_split import detect_reasoning_format
+from tllama.helpers.show_diagnostics import chat_diagnostics
 from tllama.helpers.tool_capability import template_accepts_tools
 from tllama.native_routes import serve_native
 from tllama.native_reporting import ollama_processes
@@ -118,11 +119,16 @@ async def show_model_info(request: ShowRequest):
         model_info = model_manager._build_model_file_info(model_name)
         if not model_info:
             raise HTTPException(status_code=404, detail="Model doesn't exist")
+        # Header failure does not erase explicit definition modes/templates.
+        # This is still metadata-only owned I/O, without a worker operation.
+        metadata_info = await _settle_owned(asyncio.create_task(asyncio.to_thread(
+            model_manager._model_metadata_overrides, model_name)))
+        metadata_info['_template_source'] = 'tllama_toml' if metadata_info.get('template') else 'unknown'
         metadata_info['model_definition'] = model_info.get('model_definition', {'type': 'main', 'artifacts': {}})
 
     definition_info = metadata_info.get('model_definition', {'type': 'main', 'artifacts': {}})
     helper = definition_info['type'] != 'main'
-    template = '' if helper else metadata_info.get("template") or "{{ .System }}\nUser: {{ .Prompt }}\nAssistant: "
+    template = '' if helper else metadata_info.get("template") or ''
 
     family = metadata_info.get("arch", "unknown")
 
@@ -151,6 +157,9 @@ async def show_model_info(request: ShowRequest):
         capabilities = ['decision'] if decision_capable(metadata_info) else []
     if helper:
         capabilities = []
+    diagnostics = (chat_diagnostics(metadata_info) if not helper
+                   and metadata_info.get('embedding_configured') is not True
+                   and not has_decision_head(metadata_info) else {})
     # Ollama's own `show --modelfile` hands back the definition a model
     # was built from, and the workflow that makes it worth having is
     # fetching it, editing it and putting it back. So this is the .toml
@@ -202,6 +211,7 @@ async def show_model_info(request: ShowRequest):
         "projector_info": metadata_info.get("projector_info") or {},
         "capabilities": capabilities,
         "model_definition": definition_info,
+        **diagnostics,
     }
 
 

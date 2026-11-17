@@ -135,7 +135,7 @@ def _response_format(value):
 
 def _chat_metadata(metadata_info, resolved, tools):
     reasoning_metadata = {**(metadata_info or {})}
-    if resolved.launch.template is not None:
+    if resolved.launch.template:
         reasoning_metadata['template'] = resolved.launch.template
     elif tools and reasoning_metadata.get('tool_template'):
         reasoning_metadata['template'] = reasoning_metadata['tool_template']

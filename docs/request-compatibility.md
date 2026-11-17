@@ -80,6 +80,10 @@ available in `model_info`. TOML edits take effect without rewriting a GGUF cache
 Header cache schema 8 refreshes old metadata; expensive content digests retain
 their independent cache version. `modelfile` remains the original TLlama TOML.
 
+Offline chat diagnostics and qualified thinking controls are described in
+[show-diagnostics.md](show-diagnostics.md). They do not start or interrogate a
+worker; parser identity remains a native-path label rather than a live probe.
+
 This is still compact model information, not full Ollama show parity: verbose
 tensor inventories, arbitrary show-time options and multi-runner manifests
 remain separate work. No new API route is claimed by these metadata additions.
