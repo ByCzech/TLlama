@@ -23,6 +23,7 @@ from tllama.native_embeddings import embedding_response
 from tllama.schemas.embeddings import OllamaEmbedRequest, OllamaLegacyEmbeddingRequest
 from tllama.schemas.model_management import CopyRequest, CreateRequest, DeleteRequest, ShowRequest, PullRequest
 from tllama.model_definitions import copy_definition, create_definition
+from tllama.model_management_errors import CREATE_HINT, PULL_HINT, with_contract_hint
 from tllama.residency import _settle_owned
 from tllama.model_uploads import has_blob as repository_has_blob, receive_blob
 
@@ -234,7 +235,7 @@ async def pull_model_ollama(request: PullRequest):
     try:
         target_info = model_manager.resolve_hf_pull_target(model_ref)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=with_contract_hint(e, PULL_HINT)) from e
 
     # Hugging Face uses token auth. For now, allow the password field
     # to act as a token placeholder if provided.
@@ -258,7 +259,7 @@ async def pull_model_ollama(request: PullRequest):
             status_code=404,
             detail=(
                 f"'{target_info['filename']}' not found in repository "
-                f"'{target_info['repo_id']}'"
+                f"'{target_info['repo_id']}'. {PULL_HINT}"
             ),
         )
 
@@ -402,4 +403,4 @@ async def create_model(request: CreateRequest):
     except FileNotFoundError as exc:
         raise HTTPException(404, str(exc)) from exc
     except (ValueError, UnicodeError) as exc:
-        raise HTTPException(400, str(exc)) from exc
+        raise HTTPException(400, with_contract_hint(exc, CREATE_HINT)) from exc

@@ -299,6 +299,10 @@ To reuse existing managed data without uploading, use its exact
 
 ## Pull from Hugging Face
 
+The shared Ollama route name does not imply registry/import compatibility.
+See [model-management-compatibility.md](model-management-compatibility.md) for
+create/pull payloads and errors in both client/daemon directions.
+
 ```sh
 tllama pull namespace/repository/path/to/model.gguf
 ```

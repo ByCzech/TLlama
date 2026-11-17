@@ -13,6 +13,8 @@ from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
+from tllama.model_management_errors import CREATE_HINT, PULL_HINT, with_contract_hint
+
 DEFAULT_HOST = 'http://127.0.0.1:54800'
 DEFAULT_TIMEOUT = 30.0
 
@@ -292,26 +294,32 @@ class TLlamaClient:
         try:
             spec = parse_model_toml(definition)
         except ValueError as exc:
-            raise ClientConfigError(str(exc)) from None
+            raise ClientConfigError(with_contract_hint(exc, CREATE_HINT)) from None
         if (spec.model_type != 'main' or spec.draft_model is not None
                 or spec.draft_from is not None or (uploads is not None and 'draft' in uploads)):
             await self.require_repository_helpers()
 
     async def create(self, model, definition, *, uploads=None, force=False):
         await self._require_create_support(definition, uploads)
-        data = await self._request('POST', 'api/create', wait_for_server_work=True,
-                                   json={'model': model, 'definition': definition,
-                                         'uploads': uploads or {}, 'force': force})
-        if data.get('status') != 'success':
-            raise ClientError('Server did not confirm definition creation.')
+        try:
+            data = await self._request('POST', 'api/create', wait_for_server_work=True,
+                                       json={'model': model, 'definition': definition,
+                                             'uploads': uploads or {}, 'force': force})
+            if data.get('status') != 'success':
+                raise ClientError('Server did not confirm definition creation.')
+        except ClientError as exc:
+            raise ClientError(with_contract_hint(exc, CREATE_HINT)) from None
         return data
 
     async def check_create(self, model, definition, *, force=False):
         await self._require_create_support(definition)
-        data = await self._request('POST', 'api/create', wait_for_server_work=True,
-                                   json={'model': model, 'definition': definition, 'force': force, 'dry_run': True})
-        if data.get('status') != 'ready':
-            raise ClientError('Server did not confirm definition preflight.')
+        try:
+            data = await self._request('POST', 'api/create', wait_for_server_work=True,
+                                       json={'model': model, 'definition': definition, 'force': force, 'dry_run': True})
+            if data.get('status') != 'ready':
+                raise ClientError('Server did not confirm definition preflight.')
+        except ClientError as exc:
+            raise ClientError(with_contract_hint(exc, CREATE_HINT)) from None
 
     async def embed(self, model, text, *, options=None, keep_alive=None):
         payload = {'model': model, 'input': text}
@@ -465,5 +473,7 @@ class TLlamaClient:
                     if event['status'] == 'success':
                         return
                 raise ClientError('Pull stream ended without confirming success.')
+        except ClientError as exc:
+            raise ClientError(with_contract_hint(exc, PULL_HINT)) from None
         except httpx.HTTPError as exc:
             raise self._transport_error(exc) from None

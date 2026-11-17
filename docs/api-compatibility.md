@@ -103,6 +103,8 @@ omitted. It is not an Ollama registry tag or a Hugging Face browser URL. See
 `/api/create` accepts TLlama TOML plus its explicit upload map; it does not parse
 Ollama Modelfiles or the full Ollama structured create schema. Copy/import,
 conflict, staging and deletion contracts are in [cli.md](cli.md).
+See [model-management-compatibility.md](model-management-compatibility.md) for
+request examples, response/error shapes and both client/daemon directions.
 
 ## Memory and capabilities
 

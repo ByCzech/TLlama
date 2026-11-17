@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse, Response
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from tllama.helpers.model_toml import TomlModelError
+from tllama.model_management_errors import CREATE_HINT, PULL_HINT, with_contract_hint
 
 
 # A broken .toml is the server's own configuration being wrong, not the
@@ -259,9 +260,13 @@ async def validation_exception_handler(
     exc: RequestValidationError,
 ) -> Response:
     if is_ollama_api_path(request.url.path):
+        message = describe_validation_error(exc)
+        hint = {'/api/create': CREATE_HINT, '/api/pull': PULL_HINT}.get(request.url.path)
+        if hint is not None:
+            message = with_contract_hint(message, hint)
         return ollama_error_response(
             OLLAMA_VALIDATION_STATUS,
-            describe_validation_error(exc),
+            message,
         )
 
     if is_openai_api_path(request.url.path):

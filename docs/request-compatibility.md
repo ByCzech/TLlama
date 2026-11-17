@@ -1,5 +1,16 @@
 # Public request compatibility
 
+## Model creation and download
+
+`/api/create` requires TLlama TOML `definition` and optional `uploads`, not an
+Ollama structured create request or Modelfile. `/api/pull` resolves a Hugging
+Face GGUF file reference, not an Ollama registry tag or browser URL. Invalid
+create bodies/references return HTTP 400 with a string `error` and actionable
+contract guidance. Existing create 409 conflicts and missing-file 404 responses
+retain their status. The client preserves remote errors and adds source-format
+guidance without identifying servers from error text or changing requests.
+See [model-management-compatibility.md](model-management-compatibility.md).
+
 ## OpenAI chat controls
 
 Assistant messages accept `reasoning` as the canonical reasoning-history field,

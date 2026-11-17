@@ -131,4 +131,5 @@ async def create_from_file(client, model, path, *, force=False, as_json=False, d
         async with WaitStatus('Creating model definition…', enabled=not as_json):
             return await client.create(model, text, uploads=uploads, force=force)
     except (OSError, ValueError) as exc:
-        raise ClientError(f'Cannot create model: {exc}') from None
+        from tllama.model_management_errors import CREATE_HINT, with_contract_hint
+        raise ClientError(with_contract_hint(f'Cannot create model: {exc}', CREATE_HINT)) from None

@@ -134,16 +134,19 @@ def test_repointed_helper_is_not_overwritten_and_numbered_name_stays_stable(mana
 
 
 @pytest.mark.parametrize('other_role', ['llm', 'draft'])
-def test_same_data_in_another_role_does_not_replace_standalone_helper_registration(manager, hf, other_role):
+def test_repeat_pull_preserves_manually_selected_role_without_another_alias(manager, hf, other_role):
     hf.add('mmproj.gguf', arch='clip')
     path = Path(manager._pull_hf_file_sync('ns/repo', 'mmproj.gguf'))
     target = definition(manager)
     relative = path.relative_to(manager.repository.root).as_posix()
     custom = f'[{other_role}]\nmodel = {json.dumps(relative)}\n'
     target.write_text(custom)
-    manager._pull_hf_file_sync('ns/repo', 'mmproj.gguf')
+    for _ in range(2):
+        manager._pull_hf_file_sync('ns/repo', 'mmproj.gguf')
     assert target.read_text() == custom
-    assert parse_model_toml(definition(manager, 'ns/repo/mmproj_01').read_text()).model_type == 'mmproj'
+    # Since 0235, the origin-owned binding retains an explicit manual role.
+    assert list(manager.models_dir.rglob('*.toml')) == [target]
+    assert parse_model_toml(target.read_text()).model_type == ('main' if other_role == 'llm' else other_role)
     assert len(list((manager.models_dir / 'data').iterdir())) == 1
 
 

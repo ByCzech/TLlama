@@ -684,7 +684,7 @@ after a late conflict/failure; they are not deleted behind other definitions.
 There is no automatic retry, model load, conversion or quantization.
 
 The native TLlama `POST /api/create` JSON contract is model, definition (TOML
-text), optional force and uploads. uploads maps llm/mmproj to ordered arrays
+text), optional force and uploads. uploads maps llm/mmproj/draft to ordered arrays
 of `{ "digest": "sha256:HEX", "filename": "original.gguf" }`, exactly for
 sections containing from. Upload every referenced digest through the blob API
 first. With no from, omit uploads. Success is `{ "status": "success", "model":
@@ -695,3 +695,5 @@ or publish anything. The definition limit is 2 MiB of UTF-8 text.
 This create contract does not parse Ollama Modelfile or accept Ollama's full
 structured create schema. Unsupported fields fail explicitly. Save/load of
 REPL conversations remains separate work.
+See [model-management-compatibility.md](model-management-compatibility.md) for
+payload examples, source conventions and errors with other clients/daemons.
