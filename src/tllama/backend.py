@@ -216,6 +216,7 @@ class ModelManager:
     def _new_native_residency(self):
         return NativeResidency(self._resolve_protected_native_definition,
                                max_loaded_models=self.config.max_loaded_models,
+                               device_limits=self.config.device_limits,
                                worker_factory=self._native_factory,
                                generation_numbers=self._native_generation_numbers)
 

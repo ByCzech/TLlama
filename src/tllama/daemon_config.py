@@ -21,6 +21,7 @@ from tllama.native_params import RUNTIME_TYPES, SAMPLING_TYPES, runtime_problem,
 from tllama.helpers.runtime_params import coerce_runtime_overrides
 from tllama.helpers.sampling_params import coerce_sampling_overrides
 from tllama.helpers.common import normalize_keep_alive
+from tllama.device_limits import capacity_config, device_limits
 
 
 # One canonical key per setting; aliases are expanded before layers are merged.
@@ -34,6 +35,7 @@ SETTINGS = {
     'storage.models_dir': ('str', DEFAULT_MODELS_DIR, 'TLLAMA_MODELS', 'models_dir'),
     'lifecycle.keep_alive': ('duration', '5m', 'TLLAMA_KEEP_ALIVE', 'keep_alive'),
     'lifecycle.max_loaded_models': ('int', 1, 'TLLAMA_MAX_LOADED_MODELS', 'max_loaded_models'),
+    'lifecycle.device': ('devices', (), 'TLLAMA_DEVICE_LIMITS', 'device_limits'),
     'lifecycle.janitor_interval': ('float', 10.0, 'TLLAMA_JANITOR_INTERVAL', 'janitor_interval_seconds'),
     'cache.metadata_ttl': ('float', 300.0, 'TLLAMA_METADATA_CACHE_TTL', 'metadata_cache_ttl_seconds'),
     'engine.executable': ('str', str(DEFAULT_EXECUTABLE), 'TLLAMA_RUNTIME_EXECUTABLE', 'runtime_executable'),
@@ -53,6 +55,8 @@ _ACTIVE = ContextVar('tllama_daemon_config', default=None)
 
 
 def _convert(key, value, *, text=False):
+    if key == 'lifecycle.device':
+        return [item.document() for item in device_limits(value, text=text)]
     if key.startswith('runtime.') and key not in SETTINGS:
         name = key[8:]
         if text and isinstance(value, str):
@@ -214,7 +218,7 @@ def load_daemon_config(config_path=None, overrides=None, *, environ=None, discov
         raise ConfigError(f'{sources[key]} ({key}): {message}; got {values[key]!r}')
 
     for key, minimum, inclusive in [('server.port', 1, True), ('runtime.n_ctx', 0, True),
-                                   ('lifecycle.max_loaded_models', 1, True),
+                                   ('lifecycle.max_loaded_models', 0, True),
                                    ('lifecycle.janitor_interval', 0, False), ('cache.metadata_ttl', 0, True)]:
         value = values[key]
         if value < minimum or not inclusive and value == minimum:
@@ -254,6 +258,16 @@ def load_daemon_config(config_path=None, overrides=None, *, environ=None, discov
             except ValueError as exc:
                 invalid(key, str(exc))
     values['engine.backend_priority'] = list(backend_priority(values['engine.backend_priority']))
+    try:
+        maximum, _ = capacity_config(
+            None if sources['lifecycle.max_loaded_models'] == 'default' else values['lifecycle.max_loaded_models'],
+            values['lifecycle.device'])
+    except ValueError as exc:
+        raise ConfigError(f"{sources['lifecycle.max_loaded_models']} (lifecycle.max_loaded_models) / "
+                          f"{sources['lifecycle.device']} (lifecycle.device): {exc}") from None
+    if sources['lifecycle.max_loaded_models'] == 'default' and maximum == 0:
+        sources['lifecycle.max_loaded_models'] = 'implicit per-device mode'
+    values['lifecycle.max_loaded_models'] = maximum
     runtime = {key[8:]: value for key, value in values.items() if key.startswith('runtime.') and key not in SETTINGS}
     sampling = {key[9:]: value for key, value in values.items() if key.startswith('sampling.')}
     backend_values = {spec[3]: values[key] for key, spec in SETTINGS.items() if spec[3]}

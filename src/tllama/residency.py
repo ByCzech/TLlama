@@ -19,6 +19,7 @@ from tllama.helpers.common import never_expires_at, NEVER_EXPIRES_SECONDS
 from tllama.native_params import freeze_values
 from tllama.worker import NativeWorker, WorkerError, WorkerExited
 from tllama.automatic_worker import AutomaticWorker
+from tllama.device_limits import capacity_config, worker_devices
 
 
 logger = logging.getLogger(__name__)
@@ -91,6 +92,8 @@ class _Generation:
     close_task: asyncio.Task | None = None
     watch_task: asyncio.Task | None = None
     exit_recorded: bool = False
+    devices: frozenset[str] = field(default_factory=frozenset)
+    last_used: float = 0
 
 
 @dataclass(eq=False)
@@ -126,14 +129,16 @@ class NativeResidency:
     """
 
     def __init__(self, resolver: Callable[[str, int | None], Awaitable[ModelDefinition]], *,
-                 max_loaded_models: int = 1, worker_factory=NativeWorker, clock=time.monotonic,
+                 max_loaded_models: int | None = None, device_limits=(), worker_factory=NativeWorker, clock=time.monotonic,
                  generation_numbers=None):
-        if type(max_loaded_models) is not int or max_loaded_models < 1:
-            raise ValueError("max_loaded_models must be a positive integer")
+        max_loaded_models, limits = capacity_config(max_loaded_models, device_limits)
         self._resolve = resolver
         self._factory = worker_factory
         self._clock = clock
         self.max_loaded_models = max_loaded_models
+        self._device_mode = max_loaded_models == 0
+        self._device_limits = {row.name: row.max_loaded_models for row in limits}
+        self._unavailable_warned = set()
         self._condition = asyncio.Condition()
         self._numbers = generation_numbers if generation_numbers is not None else itertools.count(1)
         self._entries: dict[int, _Generation] = {}
@@ -218,6 +223,56 @@ class NativeResidency:
                     and entry.expires_at is not None and entry.expires_at <= now):
                 self._retire(entry, "TTL expired")
 
+    def _device_admission_locked(self, devices, *, exclude=None):
+        entries = [entry for entry in self._entries.values() if entry is not exclude]
+        blocked = {name for name in devices
+                   if (limit := self._device_limits.get(name, self._device_limits.get(None, 1))) > 0
+                   and sum(name in entry.devices for entry in entries) >= limit}
+        if not blocked:
+            return True
+        logger.debug('Waiting for device capacity: %s', sorted(blocked))
+        affected = [entry for entry in entries if blocked.intersection(entry.devices)]
+        if any(entry.state == 'cleanup_failed' for entry in affected):
+            raise ModelCleanupError(f'Device capacity {sorted(blocked)} is held by failed cleanup')
+        # A close/load already in progress can free capacity. Never retire
+        # extra workers while waiting for that owned transition to settle.
+        if not any(entry.retired or not entry.loaded for entry in affected):
+            idle = [entry for entry in affected if not entry.refs]
+            victim = min(idle or affected, key=lambda entry: (entry.last_used, entry.number))
+            logger.info('Device capacity %s: replacing model %s generation %s; leases=%s',
+                        sorted(blocked), victim.definition.name, victim.number, victim.refs)
+            self._retire(victim, 'device capacity replacement')
+        return False
+
+    async def _reserve_candidate(self, entry, candidate):
+        """AutomaticWorker calls only before spawn, after old child cleanup."""
+        devices = worker_devices(candidate)
+        async with self._condition:
+            # The preceding attempt is reaped before this transfer. A failed
+            # cleanup never reaches here and keeps its old reservation.
+            entry.devices = frozenset()
+            self._condition.notify_all()
+            while True:
+                self._ensure_open()
+                if entry.error is not None or entry.close_task is not None:
+                    raise ModelUnloaded('Generation retired while waiting for device capacity')
+                if self._device_admission_locked(devices, exclude=entry):
+                    entry.devices = devices
+                    logger.info('Device capacity reserved for %s generation %s: %s',
+                                entry.definition.name, entry.number, sorted(devices))
+                    return
+                await self._condition.wait()
+
+    def _observe_devices(self, selectors):
+        # Only called after an existing, successful complete discovery. No
+        # config-time hardware probe or assumption after a failed discovery.
+        available = set(selectors) | {'CPU'}
+        for name in self._device_limits:
+            if name is not None and name not in available and name not in self._unavailable_warned:
+                self._unavailable_warned.add(name)
+                logger.warning('Configured device %s is unavailable in this worker discovery; '
+                               'its capacity setting is retained', name)
+
     async def _load_entry(self, entry):
         try:
             await entry.worker.start()
@@ -289,6 +344,7 @@ class NativeResidency:
             entry.refs -= 1
             assert entry.refs >= 0
             if not entry.refs and entry.number in self._entries:
+                entry.last_used = self._clock()
                 if entry.retired:
                     if entry.state not in ("closing", "cleanup_failed"):
                         self._retire(entry, entry.reason or "retired")
@@ -362,7 +418,13 @@ class NativeResidency:
                             self._retire(entry, "worker exited", force=True)
                             entry = None
                         if entry is None:
-                            if len(self._entries) >= self.max_loaded_models:
+                            launch = definition.resolved.launch
+                            devices = (worker_devices(launch) if self._device_mode and launch.device is not None
+                                       else frozenset())
+                            if self._device_mode and devices and not self._device_admission_locked(devices):
+                                await self._condition.wait()
+                                continue
+                            if not self._device_mode and len(self._entries) >= self.max_loaded_models:
                                 if any(e.state == "cleanup_failed" for e in self._entries.values()):
                                     raise ModelCleanupError("Native capacity is held by a generation whose cleanup failed")
                                 if self.max_loaded_models == 1:
@@ -376,13 +438,15 @@ class NativeResidency:
                                     f"Loaded model limit reached ({self.max_loaded_models}). "
                                     "Unload a model first or increase TLLAMA_MAX_LOADED_MODELS."
                                 )
-                            launch = definition.resolved.launch
                             if definition.protection is not None:
                                 launch = replace(launch, resource_fds=tuple(dict.fromkeys(
                                     (*launch.resource_fds, *definition.protection.inherited_fds))))
-                            worker = (AutomaticWorker(launch, worker_factory=self._factory)
+                            worker = (AutomaticWorker(launch, worker_factory=self._factory,
+                                      **({'before_attempt': lambda candidate: self._reserve_candidate(entry, candidate),
+                                          'inventory_observer': self._observe_devices} if self._device_mode else {}))
                                       if launch.device is None else self._factory(launch))
                             entry = _Generation(next(self._numbers), definition, worker)
+                            entry.devices, entry.last_used = devices, self._clock()
                             self._entries[entry.number] = entry
                             self._current[name] = entry
                             entry.load_task = self._owned(self._load_entry(entry))

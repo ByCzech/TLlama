@@ -18,6 +18,20 @@ keep_alive = "5m"
 max_loaded_models = 1
 janitor_interval = 10
 
+# Per-device mode: set max_loaded_models above to 0 (or omit it), then
+# uncomment device tables. A positive global limit conflicts with this list.
+# [[lifecycle.device]]
+# name = "Vulkan1"
+# max_loaded_models = 1
+# [[lifecycle.device]]
+# name = "Vulkan0"
+# max_loaded_models = 2
+# [[lifecycle.device]]
+# name = "CPU"
+# max_loaded_models = 3
+# [[lifecycle.device]]
+# max_loaded_models = 1 # Default for devices without a named entry.
+
 [cache]
 metadata_ttl = 300
 

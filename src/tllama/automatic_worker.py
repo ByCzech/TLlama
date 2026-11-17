@@ -131,9 +131,11 @@ async def discover_devices(spec):
 class AutomaticWorker:
     """Proxy the successful native worker; own every failed child until reaped."""
 
-    def __init__(self, spec, *, worker_factory=NativeWorker):
+    def __init__(self, spec, *, worker_factory=NativeWorker, before_attempt=None, inventory_observer=None):
         self._requested = spec
         self._factory = worker_factory
+        self._before_attempt = before_attempt
+        self._inventory_observer = inventory_observer
         self._worker = None
         self._run_task = None
         self._close_task = None
@@ -199,6 +201,8 @@ class AutomaticWorker:
         if spec.backend_priority and spec.backend_priority[0] != 'CPU':
             try:
                 selectors = await discover_devices(spec)
+                if self._inventory_observer is not None:
+                    self._inventory_observer(selectors)
             except (OSError, UnicodeError, WorkerError, asyncio.TimeoutError) as exc:
                 logger.warning('Automatic device discovery failed; trying CPU: %s', exc)
         for backend, device in device_candidates(spec.backend_priority, selectors):
@@ -210,6 +214,8 @@ class AutomaticWorker:
             candidate = replace(spec, device=device, n_gpu_layers=0 if device == 'none' else spec.n_gpu_layers,
                                 fit=device != 'none' and (spec.fit if spec.fit is not None
                                                         else spec.n_gpu_layers is None), runtime_options=options)
+            if self._before_attempt is not None:
+                await self._before_attempt(candidate)
             self._worker = self._factory(candidate)
             record = {'backend': backend, 'device': device, 'outcome': 'starting'}
             self.selection_attempts.append(record)

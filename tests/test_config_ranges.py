@@ -15,16 +15,14 @@ from tllama.daemon_config import load_daemon_config
 
 class TestAValueOutsideItsRangeIsRefused:
     def test_no_room_for_a_model_is_not_room_for_one(self, monkeypatch):
-        # backend._ensure_capacity_for_load reads `<= 1` as "unload
-        # everything else and keep one", so 0 and -5 both behave exactly
-        # like 1 -- an operator asking for no resident models gets one.
-        monkeypatch.setenv("TLLAMA_MAX_LOADED_MODELS", "0")
+        # Zero now explicitly selects per-device mode; negatives remain invalid.
+        monkeypatch.setenv("TLLAMA_MAX_LOADED_MODELS", "-1")
 
         with pytest.raises(ConfigError) as excinfo:
             load_daemon_config(False, discover=False).backend
 
         assert "TLLAMA_MAX_LOADED_MODELS" in str(excinfo.value)
-        assert "0" in str(excinfo.value)
+        assert "-1" in str(excinfo.value)
 
     @pytest.mark.parametrize("value", ["0", "-1"])
     def test_a_collection_interval_has_to_pass_time(self, monkeypatch, value):

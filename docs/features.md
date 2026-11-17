@@ -50,7 +50,7 @@ Three distinct capabilities matter:
 
 | Scope | TLlama behavior |
 | --- | --- |
-| Different models, different backends | Each model resolves its own device and owns its own worker; capacity is controlled by `max_loaded_models` |
+| Different models, different backends | Each model resolves its own device and owns its own worker; choose a global `max_loaded_models` cap or per-device limits via `[[lifecycle.device]]` |
 | One model, explicit device list | Comma-separated native selectors are passed unchanged; layer/row splitting and `tensor_split` remain native controls |
 | Automatic placement | An ordered backend policy tries one backend family per attempt, then CPU; it does not create a mixed-backend group |
 

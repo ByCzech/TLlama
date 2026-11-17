@@ -194,6 +194,7 @@ and sampling settings remain omitted, so native/model defaults keep applying.
 | `engine.ignore_unsupported_runner` | `--ignore-unsupported-runner` / negative form | `TLLAMA_IGNORE_UNSUPPORTED_RUNNER` | `false` |
 | `lifecycle.keep_alive` | `--keep-alive` | `TLLAMA_KEEP_ALIVE` | `5m` |
 | `lifecycle.max_loaded_models` | `--max-loaded-models` | `TLLAMA_MAX_LOADED_MODELS` | `1` |
+| `[[lifecycle.device]]` | — | `TLLAMA_DEVICE_LIMITS` (JSON array, replaces whole list) | Empty; nonempty list implies global 0 unless explicitly set |
 | `lifecycle.janitor_interval` | `--janitor-interval` | `TLLAMA_JANITOR_INTERVAL` | `10` seconds |
 | `cache.metadata_ttl` | `--metadata-cache-ttl` | `TLLAMA_METADATA_CACHE_TTL` | `300` seconds |
 | `telemetry.memory_source` | `--memory-source` | `TLLAMA_MEMORY_SOURCE` | `auto` |

@@ -50,7 +50,7 @@ def test_relative_storage_and_config_paths_use_cwd(tmp_path, monkeypatch):
                                 '[runtime]\nflash_attn=1', '[sampling]\ntop_k=true',
                                 '[server]\nport=true', '[server]\nport=0',
                                 '[server]\nport=65536', '[lifecycle]\njanitor_interval=0',
-                                '[lifecycle]\nmax_loaded_models=0', '[cache]\nmetadata_ttl=nan',
+                                '[lifecycle]\nmax_loaded_models=-1', '[cache]\nmetadata_ttl=nan',
                                 '[runtime]\ntype_kv="q9"', '[runtime]\nn_ctx=-1',
                                 '[lifecycle]\nkeep_alive="tomorrow"',
                                 '[engine]\nexecutable="relative"',

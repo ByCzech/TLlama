@@ -79,6 +79,72 @@ generations have no running idle TTL. It is an internal diagnostic shape, not
 provenance.
 Generation numbers remain distinct across full shutdown/start on the same manager.
 
+## Per-device capacity
+
+Select per-device mode with global `max_loaded_models=0`, or omit the global
+setting and supply a nonempty device list. Explicit positive global values
+cannot be combined with this list; the daemon refuses the configuration before
+serving. Existing configurations with only a positive global cap keep their
+original behavior.
+
+```toml
+[lifecycle]
+max_loaded_models = 0
+
+[[lifecycle.device]]
+name = "Vulkan1"
+max_loaded_models = 1
+
+[[lifecycle.device]]
+name = "Vulkan0"
+max_loaded_models = 2
+
+[[lifecycle.device]]
+name = "CPU"
+max_loaded_models = 3
+
+[[lifecycle.device]]
+max_loaded_models = 1
+```
+
+Named entries override the single optional unnamed default, independently of
+order. Missing default means 1; zero means unlimited. Counts refer to owned
+worker generations, not requests or GGUF files. CPU is the configuration name
+for an explicitly CPU-only worker. GPU host spill buffers do not consume a CPU
+slot. Attached helper weights on the same device share the generation's slot;
+an explicitly different draft device occupies one slot there as well, only
+when that draft is active. CSV/tensor-split placement conservatively reserves
+all selected devices, deduplicated, rather than guessing actual tensor placement.
+
+Capacity is reserved atomically before constructing/starting a model worker.
+Loading, draining, closing and failed-cleanup generations retain their device
+slots until cleanup succeeds. A full device replaces the least recently used
+idle generation touching that device. If every candidate is busy, retire the
+least recently used one, let all admitted leases finish, then close/reap it
+before replacement. keep_alive=-1 prevents expiry, not capacity replacement.
+Other devices' workers remain resident. This is load admission, not a second
+inference scheduler. No memory-fit guarantee is implied by a model-count limit.
+
+Automatic selection keeps its existing backend order and candidate selector
+sets. Each actual candidate acquires all its required slots before spawn. A full
+quota waits and never triggers another backend/GPU/CPU fallback. Acceleration
+failure may use the existing fallback, but only after the failed child is
+reaped; the next candidate then replaces the reservation atomically. Automatic
+capacity waits participate in the existing bounded automatic-load deadline.
+Cancelled waiters, explicit unload, failures and shutdown use ordinary owned
+cleanup. A cleanup failure quarantines the affected slots rather than making
+them fictitiously available.
+
+The configuration keeps unavailable devices. Normal automatic discovery, when
+successful and complete, logs a warning once for unmatched named entries in
+that worker's environment. Failed/absent discovery is not evidence of absence.
+No hardware probe is added to check-config, print-config, startup validation or
+an explicit-device load. An explicit unavailable placement still fails normally
+at native startup. Independent native selectors do not identify a shared
+physical GPU across backend families: Vulkan1 and ROCm0 can be the same card;
+cross-backend physical grouping is outside this policy. Limits cover one daemon
+and its own workers, not other GPU processes or multiple daemons.
+
 ## ModelManager methods and integration boundary
 
 - `acquire_native_model()` holds a lease for the caller's scope.

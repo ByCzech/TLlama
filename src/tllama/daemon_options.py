@@ -22,7 +22,7 @@ OPTIONS = (
     ('k-cache-type', 'runtime.type_k', 'TLLAMA_K_CACHE_TYPE', 'Global K cache type; overrides same-layer shorthand'),
     ('v-cache-type', 'runtime.type_v', 'TLLAMA_V_CACHE_TYPE', 'Global V cache type; overrides same-layer shorthand'),
     ('keep-alive', 'lifecycle.keep_alive', 'TLLAMA_KEEP_ALIVE', 'Default idle duration; default 5m; negative = retain indefinitely'),
-    ('max-loaded-models', 'lifecycle.max_loaded_models', 'TLLAMA_MAX_LOADED_MODELS', 'Resident model limit; default 1'),
+    ('max-loaded-models', 'lifecycle.max_loaded_models', 'TLLAMA_MAX_LOADED_MODELS', 'Global resident model limit; default 1, 0 = per-device limits'),
     ('janitor-interval', 'lifecycle.janitor_interval', 'TLLAMA_JANITOR_INTERVAL', 'Janitor interval in seconds; default 10'),
     ('metadata-cache-ttl', 'cache.metadata_ttl', 'TLLAMA_METADATA_CACHE_TTL', 'Memory metadata TTL in seconds; default 300'),
     ('log-level', 'server.log_level', 'TLLAMA_LOG_LEVEL', 'critical/error/warning/info/debug/trace; default info'),

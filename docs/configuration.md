@@ -89,7 +89,7 @@ $ echo $?
 
 An unset or empty variable is not an error. `TLLAMA_CONTEXT_LENGTH=` in a unit file says "I set nothing", not "I set nonsense", and means the default.
 
-Whether a value converts and whether it means anything are separate questions, and TLlama's own numeric settings are checked for both. `TLLAMA_JANITOR_INTERVAL=0` converts to a number and then asks for a wait that does not wait; `TLLAMA_MAX_LOADED_MODELS=0` converts but is below the accepted minimum of `1`. Each section below states the accepted range.
+Whether a value converts and whether it means anything are separate questions, and TLlama's own numeric settings are checked for both. `TLLAMA_JANITOR_INTERVAL=0` converts to a number and then asks for a wait that does not wait; `TLLAMA_MAX_LOADED_MODELS=-1` converts but is below the accepted minimum of `0`. Each section below states the accepted range.
 
 Sampling values are typed and must be finite. Disable modes such as `top_k <= 0` and `top_p >= 1` remain accepted. Negative `temperature` is refused: the native runtime would turn it into greedy sampling instead of reproducing the former binding chain.
 
@@ -219,7 +219,38 @@ Overridden per request by `keep_alive`, which is how Ollama treats `OLLAMA_KEEP_
 
 ### `TLLAMA_MAX_LOADED_MODELS`
 
-How many models may be resident at once. Default `1`, and `1` is the smallest accepted value. Asking for one more than fits unloads to make room.
+Global worker-generation limit. Without device configuration the default is `1`.
+Zero disables the global cap and enables per-device capacity, whose implicit
+default is one generation on each device. A nonempty device list also selects
+this mode when no global value was explicitly supplied. An explicit positive
+global cap and a nonempty device list conflict and stop the daemon; no sum
+heuristics or ignored settings. With a positive global cap the existing
+single-model replacement / larger-limit error behavior remains unchanged.
+
+### `TLLAMA_DEVICE_LIMITS`
+
+JSON array replacing the whole `[[lifecycle.device]]` list from server TOML:
+
+```sh
+export TLLAMA_DEVICE_LIMITS='[
+  {"name":"Vulkan1","max_loaded_models":2},
+  {"name":"ROCm0","max_loaded_models":1},
+  {"name":"CPU","max_loaded_models":3},
+  {"max_loaded_models":5}
+]'
+```
+
+Names are exact native selectors except `CPU`, the capacity name for native
+`device=none`. One entry without name sets the default for all other devices;
+if omitted, that default is 1. Device limits are nonnegative integers, with 0
+meaning unlimited on that device. Every entry must contain max_loaded_models;
+unknown keys, duplicate names/defaults/JSON keys, empty names and invalid values
+are errors. `[]` removes all explicit entries; with explicit global 0 the
+implicit device default 1 remains active. With no explicit global value and an
+empty list, the legacy global default 1 applies.
+
+See [per-device residency](native-residency.md#per-device-capacity) for worker
+replacement, automatic placement and unavailable-device behavior.
 
 ### `TLLAMA_JANITOR_INTERVAL`
 

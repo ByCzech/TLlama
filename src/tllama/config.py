@@ -201,7 +201,7 @@ class BackendConfig:
     models_dir: str = DEFAULT_MODELS_DIR
     context_length: int = 0
     keep_alive: str | int | float | None = "5m"
-    max_loaded_models: int = 1
+    max_loaded_models: int | None = None
     janitor_interval_seconds: float = 10.0
     metadata_cache_ttl_seconds: float = 300.0
     # Global values are typed by the shared daemon configuration loader.
@@ -228,8 +228,16 @@ class BackendConfig:
     backend_priority: tuple[str, ...] = DEFAULT_BACKEND_PRIORITY
     memory_source: str = "auto"
     memory_compare: bool = False
+    device_limits: tuple = ()
 
     def __post_init__(self):
+        from tllama.device_limits import capacity_config
+        try:
+            maximum, limits = capacity_config(self.max_loaded_models, self.device_limits)
+        except ValueError as exc:
+            raise ConfigError(str(exc)) from None
+        object.__setattr__(self, 'max_loaded_models', maximum)
+        object.__setattr__(self, 'device_limits', limits)
         object.__setattr__(self, "backend_priority", backend_priority(self.backend_priority))
         path = Path(self.runtime_executable)
         if not path.is_absolute() or "\0" in str(path):
