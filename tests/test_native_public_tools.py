@@ -69,7 +69,7 @@ async def test_parallel_same_function_cycle_preserves_objects_strings_and_histor
     decoded = args if api == 'ollama' else [json.loads(a) for a in args]
     assert decoded == [{'key': key} for key in KEYS]
     assert len({c['id'] for c in first['tool_calls']}) == 2
-    first['thinking' if api == 'ollama' else 'reasoning_content'] = 'keep tool reasoning'
+    first['thinking' if api == 'ollama' else 'reasoning'] = 'keep tool reasoning'
     history = messages() + [first] + [
         {'role': 'tool', 'tool_call_id': call['id'], 'name': call['function']['name'],
          'content': json.dumps({'marker': f'MARKER_{i}'})}

@@ -222,7 +222,7 @@ async def exercise(args):
                             for choice in value['choices']:
                                 delta = choice.get('delta', {})
                                 content.append(delta.get('content') or '')
-                                reasoning.append(delta.get('reasoning_content') or '')
+                                reasoning.append(delta.get('reasoning') or '')
                                 if choice.get('finish_reason'):
                                     final = value
                         else:

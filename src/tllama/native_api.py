@@ -275,7 +275,7 @@ class ReplyContext:
 def _message(result, *, ollama):
     message = {"role": "assistant", "content": result.content}
     if result.reasoning:
-        message["thinking" if ollama else "reasoning_content"] = result.reasoning
+        message["thinking" if ollama else "reasoning"] = result.reasoning
     if result.tool_calls:
         if not ollama:
             message["tool_calls"] = _plain(result.tool_calls)

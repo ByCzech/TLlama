@@ -66,9 +66,9 @@ class Consumer:
             finish = payload.get('done_reason') if payload.get('done') else None
             require(not payload.get('done') or finish in {'stop', 'length'}, 'Invalid Ollama terminal')
         self.message['content'] += message.get('content') or ''
-        reasoning = message.get('thinking' if self.api == 'ollama' else 'reasoning_content') or ''
+        reasoning = message.get('thinking' if self.api == 'ollama' else 'reasoning') or ''
         if reasoning:
-            field = 'thinking' if self.api == 'ollama' else 'reasoning_content'
+            field = 'thinking' if self.api == 'ollama' else 'reasoning'
             self.message[field] = self.message.get(field, '') + reasoning
         for ordinal, call in enumerate(message.get('tool_calls', [])):
             if self.api == 'ollama':

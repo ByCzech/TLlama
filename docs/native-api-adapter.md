@@ -127,7 +127,7 @@ prompt/generation times are not queue wait, TTFT or cold worker load duration.
 Those extra measurements are not invented.
 
 Ollama uses NDJSON with message.thinking or generate.thinking. OpenAI uses SSE
-with message/delta.reasoning_content and answer-only content. Reasoning is not
+with message/delta.reasoning and answer-only content. Reasoning is not
 merged into content or hidden merely because think=False; think controls the
 template. Modern tools use the validated stream assembly and SDK contract in
 [native-tools.md](native-tools.md).

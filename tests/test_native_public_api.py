@@ -64,13 +64,13 @@ async def test_public_text_result_and_stream_use_one_native_worker(public, path,
             assert frames[-1] == '[DONE]'
             bodies = [json.loads(frame) for frame in frames[:-1]]
             assert all(body['model'] == name for body in bodies)
-            assert ''.join(choice.get('delta', {}).get('reasoning_content', '')
+            assert ''.join(choice.get('delta', {}).get('reasoning', '')
                            for body in bodies for choice in body['choices']) == 'myšlenka'
         else:
             body = response.json()
             assert body['model'] == name and body['usage']['prompt_tokens'] == 25
             assert body['choices'][0]['message']['content'] == 'Ahoj světe'
-            assert body['choices'][0]['message']['reasoning_content'] == 'myšlenka'
+            assert body['choices'][0]['message']['reasoning'] == 'myšlenka'
     else:
         bodies = [json.loads(line) for line in response.text.splitlines()] if stream else [response.json()]
         assert bodies[-1]['done'] and bodies[-1]['model'] == name

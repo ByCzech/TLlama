@@ -2,6 +2,25 @@
 
 ## OpenAI chat controls
 
+Assistant messages accept `reasoning` as the canonical reasoning-history field,
+matching Ollama's OpenAI-compatible chat interface. `reasoning_content` is an
+input-only alias. Both names become one internal `reasoning` value; equal
+non-null values are accepted, different values return HTTP 400 before model
+admission. Null means absent; an explicit empty string is preserved and
+conflicts with nonempty text. Values must be strings or null.
+
+**Upgrade note for 1.6.0:** full replies now return `message.reasoning` and
+streams return `delta.reasoning`, replacing `reasoning_content`. Only the
+canonical name is emitted; clients reading the old response field must update.
+Reasoning remains separate from answer `content`, including reasoning-only
+and tool-call turns. A returned assistant message can be replayed unchanged.
+This is an Ollama-compatible extension, not an official OpenAI Chat Completions
+message field. The pinned native worker still uses `reasoning_content` privately.
+Ollama `/api/chat` and `/api/generate` continue to use `thinking`.
+
+Message reasoning text is distinct from the request-level `reasoning` object
+and `reasoning_effort` thinking controls; their existing precedence is unchanged.
+
 `POST /v1/chat/completions` accepts request-local `seed`, `frequency_penalty`
 and `presence_penalty`, including explicit zero values. They override model
 sampling defaults without editing the definition or reloading its worker.

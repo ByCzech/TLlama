@@ -88,7 +88,7 @@ async def test_dflash_tool_cycle_preserves_escaped_calls_history_and_request_cou
         assert [v['choices'][0]['finish_reason'] for v in values if v.get('tllama')] == ['tool_calls']
         if stream:
             assert values[-1]['choices'] == [] and values[-1]['usage']['completion_tokens'] == 10
-    first['thinking' if api == 'ollama' else 'reasoning_content'] = 'tool reasoning'
+    first['thinking' if api == 'ollama' else 'reasoning'] = 'tool reasoning'
     body['messages'] = messages() + [first] + [
         {'role': 'tool', 'tool_call_id': c['id'], 'name': c['function']['name'],
          'content': json.dumps({'marker': f'MARKER_{i}'})} for i, c in enumerate(first['tool_calls'])]

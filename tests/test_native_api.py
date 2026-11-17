@@ -94,14 +94,14 @@ def test_structured_chat_reasoning_does_not_reparse_literal_markers_in_content()
     assert result.reasoning == "thought" and result.content == "Literal <think>example</think> answer"
     assert ollama_response(result, context())["message"]["thinking"] == "thought"
     message = openai_response(result, context())["choices"][0]["message"]
-    assert message["reasoning_content"] == "thought" and message["content"] == result.content
+    assert message["reasoning"] == "thought" and message["content"] == result.content
 
 
 def test_reasoning_only_length_is_success_with_empty_answer():
     result = read_result(chat_result(content=None, reasoning="unfinished thought", finish="length"), CHAT)
     message = openai_response(result, context())["choices"][0]["message"]
     assert result.finish_reason == "length" and message["content"] == ""
-    assert message["reasoning_content"] == "unfinished thought"
+    assert message["reasoning"] == "unfinished thought"
 
 
 def test_tool_call_result_keeps_native_arguments_and_length_semantics():
@@ -187,7 +187,7 @@ async def test_openai_frames_keep_public_identity_reasoning_tools_and_terminal_o
     bodies = [json.loads(f[6:]) for f in frames[:-1]]
     assert all(b["id"] == "chatcmpl-public-1" and b["model"] == "public/model" and b["created"] == 123 for b in bodies)
     assert bodies[0]["choices"][0]["delta"] == {"role": "assistant"}
-    assert bodies[1]["choices"][0]["delta"] == {"reasoning_content": "thought"}
+    assert bodies[1]["choices"][0]["delta"] == {"reasoning": "thought"}
     assert bodies[2]["choices"][0]["delta"] == {"content": "answer"}
     assert bodies[3]["choices"][0]["delta"]["tool_calls"][0]["function"]["arguments"] == '{"x":'
     final = bodies[-2] if include_usage else bodies[-1]

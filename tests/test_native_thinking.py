@@ -247,7 +247,7 @@ def test_public_instella_channels_without_model_name_hint(client, native_reply, 
             parts = [c['delta'] for body in bodies for c in body['choices']]
         else:
             parts = [response.json()['choices'][0]['message']]
-        reasoning_key = 'reasoning_content'
+        reasoning_key = 'reasoning'
     else:
         bodies = [json.loads(line) for line in response.text.splitlines()] if stream else [response.json()]
         assert bodies[-1]['done']

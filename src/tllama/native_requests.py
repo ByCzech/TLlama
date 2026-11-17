@@ -80,6 +80,10 @@ def normalize_chat_input(messages, *, tool_api="ollama"):
         for key in ("name", "tool_call_id", "tool_calls", "reasoning_content"):
             if key in value:
                 normalized[key] = value[key]
+        if tool_api == "openai" and value.get("reasoning") is not None:
+            # Public aliases have already become one ChatMessage.reasoning.
+            # The pinned native server still expects reasoning_content.
+            normalized["reasoning_content"] = value["reasoning"]
         if "tool_calls" in normalized:
             calls = normalized["tool_calls"]
             if not isinstance(calls, list) or any(not isinstance(call, dict) for call in calls):

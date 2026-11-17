@@ -1,6 +1,6 @@
 import math
 
-from pydantic import BaseModel, ConfigDict, StrictBool, StrictFloat, StrictInt, StrictStr, field_validator
+from pydantic import BaseModel, ConfigDict, StrictBool, StrictFloat, StrictInt, StrictStr, field_validator, model_validator
 from typing import List, Optional, Any, Dict, Union
 
 from tllama.helpers.common import normalize_keep_alive
@@ -20,8 +20,21 @@ class ChatMessage(BaseModel):
     # OpenAI tool-call conversation support.
     tool_call_id: Optional[str] = None
     tool_calls: Optional[List[Dict[str, Any]]] = None
-    # Preserve the native reasoning field when callers replay an assistant turn.
-    reasoning_content: Optional[str] = None
+    # Ollama-compatible reasoning history; the native wire name is mapped later.
+    reasoning: Optional[StrictStr] = None
+
+    @model_validator(mode='before')
+    @classmethod
+    def normalize_reasoning_alias(cls, value):
+        if isinstance(value, dict) and 'reasoning_content' in value:
+            value = dict(value)
+            alias = value.pop('reasoning_content')
+            reasoning = value.get('reasoning')
+            if reasoning is not None and alias is not None and reasoning != alias:
+                raise ValueError('Conflicting message reasoning and reasoning_content')
+            if reasoning is None:
+                value['reasoning'] = alias
+        return value
 
     # Deprecated OpenAI compatibility path.
     function_call: Optional[Dict[str, Any]] = None

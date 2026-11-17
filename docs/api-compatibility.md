@@ -67,6 +67,11 @@ string leaves output unconstrained. Invalid formats fail before model work.
 OpenAI uses `response_format`. Native owns constrained sampling and schema
 support. Thinking selection controls templates; it cannot make an unsupported
 model honor a level. Thinking and answer text have separate response channels.
+The OpenAI-compatible chat extension uses `reasoning` for assistant history,
+full replies and streamed deltas, matching Ollama. The previous
+`reasoning_content` name is accepted only on input; response consumers must use
+`reasoning` as of 1.6.0. Neither name is an official OpenAI Chat Completions
+message field. Ollama's native paths retain `thinking`.
 See [native-public-api.md](native-public-api.md) and
 [request-compatibility.md](request-compatibility.md) for controls and refusals.
 
