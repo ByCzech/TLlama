@@ -2,12 +2,15 @@ import time
 import asyncio
 import logging
 import threading
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
+from contextvars import ContextVar
 import itertools
 import json
+import errno
 
 from dataclasses import dataclass, replace
 import os
+import stat
 from pathlib import Path
 from hashlib import sha256
 
@@ -174,6 +177,10 @@ class ModelManager:
         self._janitor_task: asyncio.Task | None = None
 
         self._metadata_cache: Dict[str, CachedMetadataEntry] = {}
+        # Request-local parsed definitions, propagated into owned I/O threads.
+        # This is not a manager-lifetime cache: edits remain visible between
+        # requests and are checked before every reuse within a request.
+        self._definition_reads = ContextVar('tllama_definition_reads', default=None)
 
         # Validate global cache types at startup without loading a model.
         self._validate_global_kv_cache_types()
@@ -433,11 +440,52 @@ class ModelManager:
         simply not existing.
         """
         toml_path = self._toml_path_for_reference(model_ref)
-        if toml_path is None or not toml_path.is_file():
+        if toml_path is None:
             return None
+        try:
+            file_stat = toml_path.stat()
+        except OSError as exc:
+            # Preserve Path.is_file()'s missing/invalid-target treatment while
+            # sharing its stat result with the request-local revision check.
+            if exc.errno in {errno.ENOENT, errno.ENOTDIR, errno.EBADF, errno.ELOOP}:
+                return None
+            raise
+        if not stat.S_ISREG(file_stat.st_mode):
+            return None
+        return self._read_virtual_model_spec(toml_path, file_stat=file_stat)
 
-        text = toml_path.read_text(encoding="utf-8")
-        return parse_model_toml(text, source=str(toml_path))
+    @contextmanager
+    def _definition_read_scope(self):
+        """Share parses in one request, including its joined I/O work."""
+        if self._definition_reads.get() is not None:
+            yield
+            return
+        token = self._definition_reads.set({})
+        try:
+            yield
+        finally:
+            self._definition_reads.reset(token)
+
+    def _read_virtual_model_spec(self, toml_path, *, file_stat=None):
+        reads = self._definition_reads.get()
+        if reads is None:
+            return parse_model_toml(toml_path.read_text(encoding='utf-8'), source=str(toml_path))
+
+        def signature(value=None):
+            value = toml_path.stat() if value is None else value
+            return (value.st_dev, value.st_ino, value.st_size,
+                    value.st_mtime_ns, value.st_ctime_ns)
+
+        for attempt in range(3):
+            before = signature(file_stat if attempt == 0 else None)
+            cached = reads.get(toml_path)
+            if cached is not None and cached[0] == before:
+                return cached[1]
+            spec = parse_model_toml(toml_path.read_text(encoding='utf-8'), source=str(toml_path))
+            if before == signature():
+                reads[toml_path] = (before, spec)
+                return spec
+        raise TomlModelError(f'{toml_path}: definition kept changing while it was read')
 
     def _toml_fingerprint_for_reference(self, model_ref: str) -> Optional[Dict[str, Any]]:
         """Identify the revision of the .toml a model would be built from.
@@ -690,13 +738,15 @@ class ModelManager:
         the messages it was given already carry one (client always wins),
         never a value to send outright.
         """
-        metadata = await self._get_raw_model_metadata(model_name)
-        if metadata is None:
-            return None
+        with self._definition_read_scope():
+            metadata = await self._get_raw_model_metadata(model_name)
+            if metadata is None:
+                return None
 
-        overrides = await _settle_owned(asyncio.create_task(asyncio.to_thread(
-            self._model_metadata_overrides, model_name)))
-        return {**metadata, **overrides} if overrides else metadata
+            overrides = await _settle_owned(asyncio.create_task(asyncio.to_thread(
+                self._model_metadata_overrides, model_name)))
+            return {**metadata, **overrides} if overrides else metadata
+
 
     def _model_metadata_overrides(self, model_name):
         """Read fresh TOML/projector data in the caller's owned I/O thread."""
@@ -842,8 +892,7 @@ class ModelManager:
 
         for toml_path in self._iter_repository_toml_files():
             try:
-                text = toml_path.read_text(encoding="utf-8")
-                spec = parse_model_toml(text, source=str(toml_path))
+                spec = self._read_virtual_model_spec(toml_path)
 
                 if model_type != 'all' and spec.model_type != model_type:
                     continue
@@ -901,46 +950,42 @@ class ModelManager:
         model's content is isolated to that model, not the whole listing.
 
         That isolation has to be enforced here as well as in the scan.
-        _list_local_models_sync parses each .toml and drops the ones it
-        cannot use, but get_model_metadata() re-reads the same file from
-        disk afterwards, so a file edited in between is parsed twice with
-        different results: the scan let the model through and the second
-        read raised, taking the whole listing with it. A .toml is an
-        ordinary file a person edits in place, and /api/tags is exactly
-        what a client polls while that is happening.
-
-        The model is dropped, matching what the scan does with a file it
-        cannot parse.
+        Inventory, metadata and identity share a parsed definition only while
+        its file revision is unchanged. Every reuse checks file attributes;
+        edits are reparsed, and a malformed definition is dropped just as in
+        the initial scan. Request scopes are independent, including across
+        concurrent requests and cancellation.
         """
-        models = (await self.list_local_models() if model_type == 'main'
-                  else await self.list_local_models(model_type))
-        enriched: List[Dict[str, Any]] = []
+        with self._definition_read_scope():
+            models = (await self.list_local_models() if model_type == 'main'
+                      else await self.list_local_models(model_type))
+            enriched: List[Dict[str, Any]] = []
 
-        for model in models:
-            item = dict(model)
+            for model in models:
+                item = dict(model)
 
-            try:
-                metadata = await self.get_model_metadata(model["id"])
-            except TomlModelError as e:
-                logger.warning("Ignoring %s: %s", model["id"], e)
-                continue
+                try:
+                    metadata = await self.get_model_metadata(model["id"])
+                except TomlModelError as e:
+                    logger.warning("Ignoring %s: %s", model["id"], e)
+                    continue
 
-            if metadata:
-                item.update(metadata)
+                if metadata:
+                    item.update(metadata)
 
-            # A definition can change role between the scan and metadata read.
-            if model_type != 'all' and item.get('model_definition', {}).get('type', 'main') != model_type:
-                continue
+                # A definition can change role between the scan and metadata read.
+                if model_type != 'all' and item.get('model_definition', {}).get('type', 'main') != model_type:
+                    continue
 
-            try:
-                item['digest'], item['size'] = await asyncio.to_thread(self._listing_identity, model['id'])
-            except (TomlModelError, OSError, ValueError) as exc:
-                logger.warning('Ignoring %s: %s', model['id'], exc)
-                continue
+                try:
+                    item['digest'], item['size'] = await asyncio.to_thread(self._listing_identity, model['id'])
+                except (TomlModelError, OSError, ValueError) as exc:
+                    logger.warning('Ignoring %s: %s', model['id'], exc)
+                    continue
 
-            enriched.append(item)
+                enriched.append(item)
 
-        return enriched
+            return enriched
 
 
     def _validate_global_kv_cache_types(self) -> None:

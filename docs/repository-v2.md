@@ -55,6 +55,14 @@ rehash. Standalone file-fingerprint callers outside the manager can still
 capture an absolute path; cache writers accept both forms without replacing
 the captured size or mtime with attributes from a newer file.
 
+An enriched listing or metadata request can reuse a parsed TOML definition
+within that request. Every reuse checks device/inode, size, nanosecond mtime
+and ctime; a changed definition is reparsed. A parse is retained only after
+its before/after attributes match. This state is local to one request and its
+I/O threads, never shared between independent requests or persisted on disk.
+Concurrent requests, errors and cancellation do not retain it in the manager.
+Existing per-file error isolation and content-identity retry checks still apply.
+
 Physical resolution remains necessary for containment checks and for freezing
 native launch inputs before pinning/spawning. A separate physical root anchors
 those checks; it is not the repository's general I/O prefix. Internal symlinks
