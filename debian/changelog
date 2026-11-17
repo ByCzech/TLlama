@@ -1,3 +1,24 @@
+tllama (1.6.0-1) unstable; urgency=medium
+
+  * New upstream release:
+    - Unify repository roots/relative references and reduce repeated startup,
+      TOML, metadata and group work without repository/cache conversion.
+    - Manage external MTP helpers through the existing draft slot and tuning.
+    - Add explicit per-device residency limits, including CPU and default entries.
+    - Align chat reasoning output with Ollama, retain the legacy input alias,
+      and resolve thinking controls with compatible warnings/fallbacks.
+    - Report offline show diagnostics and clarify create/pull error contracts.
+  * Document the reasoning response-field upgrade and mutually exclusive
+    global/per-device limits. Retain the existing native package dependency,
+    inference defaults, systemd lifecycle and package split.
+  * Update the release review, documentation index and daemon manual.
+  * Keep documentation/fixtures in Git-less source archives and extend the
+    built-wheel smoke. Align the legacy external-MTP log test with 1.6 behavior.
+  * Include documentation, Debian files and test fixtures in Git-less Python
+    source archives; extend the built-wheel smoke for the 1.6.0 contracts.
+
+ -- NemaChybu team APT archive <maintainers@nemachybu.cz>  Tue, 17 Nov 2026 23:00:00 +0100
+
 tllama (1.5.1-1) unstable; urgency=medium
 
   * Native compatibility release:

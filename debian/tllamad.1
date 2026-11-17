@@ -101,6 +101,27 @@ File selection is --config, TLLAMA_CONFIG, the user's tllama/server.toml under
 XDG_CONFIG_HOME (or ~/.config), then /etc/tllama/server.toml.
 The first existing default file is used, without merging files.
 Relative paths use the daemon's working directory.
+.PP
+Residency uses either the existing global [lifecycle].max_loaded_models cap
+or per-device [[lifecycle.device]] tables. Each device table requires a
+nonnegative max_loaded_models; zero means unlimited. The optional name is an
+exact device selector, including CPU. One unnamed table supplies the default;
+without it, unspecified devices have a limit of one.
+.PP
+A nonempty device list implies global zero when the global value is omitted.
+An explicitly positive global cap together with a device list is a startup
+configuration error. TLLAMA_DEVICE_LIMITS accepts a JSON array replacing the
+whole device list, for example:
+.PP
+.nf
+[{"name":"Vulkan1","max_loaded_models":1},
+ {"name":"CPU","max_loaded_models":3},
+ {"max_loaded_models":2}]
+.fi
+.PP
+Configuration validation does not probe hardware. Complete device discovery
+warns about configured devices that are unavailable without blocking startup.
+See the installed server.toml example and docs/native-residency.md.
 .SH FILES
 .TP
 .I /etc/tllama/server.toml

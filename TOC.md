@@ -30,6 +30,7 @@ original build identities and evidence.
 - [Backend selection and fallback](docs/backend-priority.md).
 - [Device inventory and selector evidence](docs/device-inventory.md).
 - [Model repositories, pulling and maintenance](docs/model-repositories.md).
+- [Create/pull compatibility and errors](docs/model-management-compatibility.md).
 - [Persistent metadata and digest caches](docs/metadata-cache.md).
 - [CLI, REPL and client-side imports](docs/cli.md).
 
@@ -37,12 +38,14 @@ original build identities and evidence.
 
 - [API compatibility and complete route table](docs/api-compatibility.md).
 - [Request compatibility](docs/request-compatibility.md).
+- [Thinking controls and qualified template profiles](docs/thinking-controls.md).
+- [Offline show diagnostics and provenance](docs/show-diagnostics.md).
 - [Ollama options and runtime overrides](docs/ollama-options.md).
 - [Current native public API adapters](docs/native-public-api.md).
 - [Tools and tool-result history](docs/native-tools.md).
 - [Vision and projector integration](docs/native-vision.md).
 - [FIM prefix/suffix completion](docs/native-fim.md).
-- [Embedded MTP](docs/native-mtp.md).
+- [Embedded and external MTP](docs/native-mtp.md).
 - [External DFlash/DFlash2 drafts](docs/native-dflash.md).
 - [Embedding API](docs/embedding-api.md).
 - [Native embedding worker contract](docs/native-embeddings.md).
@@ -67,6 +70,7 @@ original build identities and evidence.
 - [Pre-1.0.0 documentation review](docs/release-review-100.md).
 - [1.5.0 release scope and qualification](docs/release-review-150.md).
 - [1.5.1 native compatibility release](docs/release-review-151.md).
+- [1.6.0 scope, upgrade notes and integration](docs/release-review-160.md).
 
 The runtime audit distinguishes accepted hardware/model recipes from source
 support and unresolved release items. A passing protocol comparison is not a

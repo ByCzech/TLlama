@@ -88,8 +88,9 @@ timestamp, compact metadata for the configured projector, and the GGUF
 `general.license` identifier when present. This identifier is not fetched full
 license text; absent licenses remain empty. License name/link metadata is
 available in `model_info`. TOML edits take effect without rewriting a GGUF cache.
-Header cache schema 8 refreshes old metadata; expensive content digests retain
-their independent cache version. `modelfile` remains the original TLlama TOML.
+Header cache schema 9 and independent digest schema 2 are retained in 1.6.0;
+no cache reset or full content rehash is required for this upgrade.
+`modelfile` remains the original TLlama TOML.
 
 Offline chat diagnostics and qualified thinking controls are described in
 [show-diagnostics.md](show-diagnostics.md). They do not start or interrogate a

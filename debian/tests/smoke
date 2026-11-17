@@ -91,6 +91,15 @@ def main():
         assert report["settings"]["server.port"]["value"] == 54801, report
         assert not (root / "models").exists()
 
+        # Verify the new config contract from built code without HW discovery.
+        config.write_text('[lifecycle]\nmax_loaded_models=0\n'
+                          '[[lifecycle.device]]\nname="CPU"\nmax_loaded_models=2\n',
+                          encoding="utf-8")
+        assert run("tllama.daemon", "--config", str(config), "--check-config", env=env, cwd=root) == "Configuration is valid."
+        report = json.loads(run("tllama.daemon", "--config", str(config), "--print-config", env=env, cwd=root))
+        assert report['settings']['lifecycle.device']['value'] == [{'name': 'CPU', 'max_loaded_models': 2}], report
+        assert not (root / "models").exists()
+
         for operation in (("check",), ("prune",), ("prune-uploads",), ("stats",), ("inspect", "absent")):
             reply = subprocess.run([sys.executable, "-m", "tllama.daemon", "repo",
                 *operation, "--no-config", "--json"], env=env, cwd=root, capture_output=True,
@@ -117,7 +126,16 @@ async def check():
         for path in ('/docs', '/redoc', '/openapi.json', '/docs/oauth2-redirect'):
             reply = await client.get(path)
             assert reply.status_code == 404, (path, reply.text)
+        reply = await client.post('/api/create', json={'model': 'foreign', 'from': 'registry-model'})
+        assert reply.status_code == 400 and 'TLlama TOML' in reply.json()['error'], reply.text
+        reply = await client.post('/api/pull', json={'model': 'registry-model'})
+        assert reply.status_code == 400 and 'Hugging Face' in reply.json()['error'], reply.text
 asyncio.run(check())
+
+# Replay normalization must exist in the selected wheel, not an editable checkout.
+from tllama.schemas.openai import ChatMessage
+replay = ChatMessage(role='assistant', content='', reasoning_content='step')
+assert replay.reasoning == 'step' and 'reasoning_content' not in replay.model_dump()
 
 # Qualify optional .inf support from the actual installed/built wheel.
 import os
@@ -169,6 +187,7 @@ async def check_helper():
         reply = await client.post('/api/show', json={'model': 'package-draft'})
         assert reply.status_code == 200, reply.text
         assert reply.json()['model_definition'] == {'type': 'draft', 'artifacts': {'draft': relative}}, reply.text
+        assert not {'renderer', 'parser', 'template_source', 'thinking'} & reply.json().keys(), reply.text
         reply = await client.post('/api/chat', json={'model': 'package-draft',
             'messages': [{'role': 'user', 'content': 'hello'}], 'stream': False})
         assert reply.status_code == 400 and 'draft helper' in reply.text, reply.text

@@ -1,0 +1,9 @@
+include README.md CHANGELOG.md TOC.md
+graft debian
+graft docs
+graft examples
+graft scripts
+graft systemd
+graft tests
+graft tools
+global-exclude *.py[cod]

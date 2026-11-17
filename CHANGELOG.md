@@ -5,6 +5,63 @@ identify the source; the complete history retains tests, refactoring and
 intermediate development steps. TLlama application versions
 are independent of the separately packaged `tllama-server` native runtime.
 
+## 1.6.0 — 2026-11-17
+
+### Added
+
+- External MTP helpers in the existing `[draft]` slot, including whole-group
+  recognition, ordinary pull/create import, manual-role preservation and
+  active draft placement/KV/batch tuning. A selected external MTP head takes
+  precedence over the integrated one; load failures do not silently switch heads.
+- Optional per-device residency limits through `[[lifecycle.device]]` and
+  `TLLAMA_DEVICE_LIMITS`. Named devices include `CPU`; an unnamed entry sets the
+  default. Zero means unlimited. A nonempty device list implies global zero
+  when omitted; an explicit positive global cap conflicts and prevents startup.
+- Offline `/api/show` renderer/parser/template provenance and optional qualified
+  thinking values/default. Unknown capabilities are omitted and absent templates
+  stay empty. Embedding, Decision and standalone helpers omit chat diagnostics.
+- Local repository/startup profiling with separate duration and operation-count
+  measurements, without starting native workers or forcing cache invalidation.
+
+### Changed
+
+- Unify configured repository roots and repository-relative internal references;
+  avoid repeated TOML parsing, shard/group/header inspection and listing I/O.
+  Cancellation waits for owned filesystem work before returning. Measured
+  operation reductions do not promise a fixed speedup on every repository.
+- Resolve meaningful `reasoning.effort` before `reasoning_effort`; absent,
+  null and blank values fall through. Conflicting explicit choices warn.
+  Exactly qualified template profiles use known aliases/defaults and a warning
+  for unsupported levels; unknown/custom templates remain passthrough.
+- Clarify create/pull compatibility and error messages: TLlama TOML/import
+  and HF GGUF references are distinct from Ollama create/registry contracts.
+  Existing status codes and successful request formats are preserved.
+- Keep documentation, Debian packaging and test fixtures in Python source
+  archives built without Git metadata; extend the smoke against the built wheel.
+
+### Upgrade notes
+
+- OpenAI-compatible chat replies now return assistant `reasoning`, including
+  streamed `delta.reasoning`, matching Ollama. Consumers reading the previous
+  `reasoning_content` response field must update. It remains an input-only alias;
+  unequal non-null aliases fail with HTTP 400 before admission. These reasoning
+  text fields are extensions to OpenAI Chat Completions. Ollama APIs retain
+  `thinking`; private native wire fields are unchanged.
+- Existing global-only residency configurations retain their behavior. When
+  enabling per-device mode, remove the explicit positive global cap or set it
+  to zero. Every device entry requires `max_loaded_models`; configured devices
+  absent from complete discovery warn rather than blocking startup. See the
+  configuration examples.
+- No repository conversion, cache reset, reimport or model-identity change is
+  required. Repository format 2, metadata 9, digest 2 and cache envelope 2 remain
+  unchanged. Existing valid content digests are reused.
+- The separately versioned native runtime remains `b12359-c0819bbbae` with
+  Debian floor `1.0.0~dev+b12359.1-1`. Sampling, KV, mmap and default speculative
+  settings are unchanged. Attaching a draft does not activate speculation.
+
+See the [1.6.0 release review](docs/release-review-160.md) for the selected
+scope, qualification boundaries and final integration checkpoints.
+
 ## 1.5.1 — 2026-11-16
 
 ### Changed

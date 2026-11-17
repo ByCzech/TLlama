@@ -54,7 +54,9 @@ Example:
 /var/lib/tllama/models/.tllama/metadata-cache/
 ```
 
-Each model gets one JSON cache file.
+Each GGUF weight file has a cache entry; definitions sharing that file reuse
+its header metadata. Definition-specific overrides and template provenance
+are applied to a fresh result, not written into the shared GGUF cache.
 
 The cache file name is derived from the resolved model path relative to the repository root, using `/` separators. The stored fingerprint uses the same relative path, so different mount points share one entry.
 
@@ -72,16 +74,17 @@ The hash-like file name is not intended to be human-readable. The JSON content c
 
 The cache stores normalized metadata used by TLlama.
 
-Illustrative header-cache document (header schema is 8; digest schema is 1):
+Illustrative header-cache document (current header schema 9, independent digest
+schema 2, cache envelope 2; unchanged by the 1.6.0 upgrade):
 
 ```json
 {
   "cache_format_version": 2,
-  "schema_version": 8,
+  "schema_version": 9,
   "created_at": "2026-04-26T02:20:27.679666+00:00",
   "model": {
     "name": "unsloth/Qwen3.5-4B-GGUF/Qwen3.5-4B-Q4_K_M",
-    "path": "HuggingFace/unsloth/Qwen3.5-4B-GGUF/Qwen3.5-4B-Q4_K_M.gguf",
+    "path": "data/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/weights.gguf",
     "size": 2740937888
   },
   "metadata": {

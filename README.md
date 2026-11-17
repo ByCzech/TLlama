@@ -70,7 +70,12 @@ changes); Debian requires the matching runtime series or newer. It does not
 change model settings or enable additional native features automatically.
 See the [1.5.1 release review](docs/release-review-151.md).
 
-Upgrading from 1.4.1 needs no repository conversion or cache reset. Older
+Version 1.6.0 adds external MTP management, per-device residency limits,
+repository/startup improvements and offline show diagnostics. Chat reasoning
+responses now use `reasoning`; `reasoning_content` remains an input alias.
+See the [1.6.0 release review and upgrade notes](docs/release-review-160.md).
+
+Upgrading from 1.4.1 through 1.6.0 needs no repository conversion or cache reset. Older
 unconverted repositories require the explicit [offline conversion](tools/README.md)
 with all writers stopped. See the [changelog](CHANGELOG.md) for migration,
 coordination requirements and other release changes.

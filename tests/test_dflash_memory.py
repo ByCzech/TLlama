@@ -45,8 +45,8 @@ def test_draft_uncertainty_does_not_mask_pending_or_broken_logs(log, reason, end
     assert observe(log, end=end, external_draft=True).snapshot()['reason'] == reason
 
 
-@pytest.mark.parametrize('strategy', ['none', 'draft-mtp', 'draft-dflash'])
-def test_worker_enables_log_guard_only_when_external_weights_are_actually_loaded(strategy):
+@pytest.mark.parametrize('strategy,external', [('none', False), ('draft-mtp', True), ('draft-dflash', True)])
+def test_worker_enables_log_guard_only_when_external_weights_are_actually_loaded(strategy, external):
     from pathlib import Path
     from tllama.config import BackendConfig
     from tllama.helpers.model_toml import parse_model_toml
@@ -59,8 +59,10 @@ def test_worker_enables_log_guard_only_when_external_weights_are_actually_loaded
     for line in VULKAN.splitlines() + [END]:
         worker.memory.observe(line)
     report = worker.memory.snapshot()
-    assert report['status'] == ('partial' if strategy == 'draft-dflash' else 'known')
-    if strategy != 'draft-dflash':
+    assert report['status'] == ('partial' if external else 'known')
+    if external:
+        assert report['reason'] == 'draft_allocation_unverified'
+    else:
         assert report == observe().snapshot()
 
 
