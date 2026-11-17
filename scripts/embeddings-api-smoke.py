@@ -25,6 +25,7 @@ from starlette.requests import ClientDisconnect
 
 from tllama.backend import ModelManager
 from tllama.daemon_config import load_daemon_config
+from tllama.helpers.metadata_cache import build_model_file_fingerprint
 from tllama.native_config import _plain
 from tllama.worker import NativeWorker, WorkerError, WorkerRequestError
 
@@ -84,6 +85,17 @@ class DiagnosticManager(ModelManager):
         # Keep weights in their original store, but make every public/native
         # admission read the same temporary definition and normal fingerprint.
         return self.probe_definition if model_ref == self.probe_model else None
+
+    def _toml_fingerprint_for_reference(self, model_ref):
+        # The owned probe TOML is outside the weight repository. Its absolute
+        # snapshot is local to this diagnostic, not a production fallback.
+        path = self._toml_path_for_reference(model_ref)
+        if path is None:
+            return None
+        try:
+            return build_model_file_fingerprint(path)
+        except OSError:
+            return None
 
 
 def decode_vectors(payload, path, count, dimension, *, encoded=False):

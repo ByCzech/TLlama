@@ -20,6 +20,7 @@ import tomlkit
 
 from tllama.backend import ModelManager
 from tllama.daemon_config import load_daemon_config
+from tllama.helpers.metadata_cache import build_model_file_fingerprint
 from tllama.embedding_contract import embedding_contract
 from tllama.native_config import _plain
 from tllama.worker import NativeWorker, WorkerError, WorkerRequestError
@@ -82,6 +83,17 @@ class ManagedProbeManager(ModelManager):
 
     def _toml_path_for_reference(self, model_ref):
         return self.probe_definition if model_ref == self.probe_model else None
+
+    def _toml_fingerprint_for_reference(self, model_ref):
+        # Only this explicitly owned capture definition uses an absolute
+        # fingerprint; production definition paths remain repository-relative.
+        path = self._toml_path_for_reference(model_ref)
+        if path is None:
+            return None
+        try:
+            return build_model_file_fingerprint(path)
+        except OSError:
+            return None
 
 
 def png(swapped=False):

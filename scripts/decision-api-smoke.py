@@ -23,6 +23,7 @@ from starlette.requests import ClientDisconnect
 from tllama.backend import ModelManager
 from tllama.daemon_config import load_daemon_config
 from tllama.decision_contract import DECISION_RUNTIME
+from tllama.helpers.metadata_cache import build_model_file_fingerprint
 from tllama.native_config import _plain
 from tllama.worker import NativeWorker, WorkerError, WorkerRequestError
 
@@ -64,6 +65,18 @@ class DiagnosticManager(ModelManager):
 
     def _toml_path_for_reference(self, model_ref):
         return self.probe_definition if model_ref == self.probe_model else None
+
+    def _toml_fingerprint_for_reference(self, model_ref):
+        # This owned diagnostic definition lives in the capture, outside the
+        # weight repository. Keep its absolute snapshot explicit here; normal
+        # managers retain A5's repository-relative definition identities.
+        path = self._toml_path_for_reference(model_ref)
+        if path is None:
+            return None
+        try:
+            return build_model_file_fingerprint(path)
+        except OSError:
+            return None
 
 
 def stable_command(argv):
