@@ -86,7 +86,7 @@ class ChatCompletionRequest(GenerationRequest):
     function_call: Optional[Union[str, Dict[str, Any]]] = None
 
     # Simple compatibility path for reasoning control
-    reasoning_effort: Optional[str] = None
+    reasoning_effort: Optional[StrictStr] = None
 
     # Some clients may send nested reasoning config instead
     reasoning: Optional[Dict[str, Any]] = None

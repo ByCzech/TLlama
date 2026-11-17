@@ -78,11 +78,11 @@ def test_unspecified_think_does_not_override_template_defaults(resolved):
     assert "chat_template_kwargs" not in body and "reasoning_effort" not in body
 
 
-def test_openai_effort_nested_fallback_and_top_level_priority(resolved):
+def test_openai_effort_nested_priority_and_top_level_fallback(resolved):
     request = ChatCompletionRequest(model="m", messages=[], reasoning={"effort": "low"})
     assert prepare_openai_chat(request, resolved=resolved).body()["reasoning_effort"] == "low"
     request.reasoning_effort = "none"
-    assert prepare_openai_chat(request, resolved=resolved).body()["reasoning_effort"] == "none"
+    assert prepare_openai_chat(request, resolved=resolved).body()["reasoning_effort"] == "low"
 
 
 @pytest.mark.parametrize("value", [0, 1, [], {}, 0.5])

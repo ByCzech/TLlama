@@ -19,7 +19,13 @@ message field. The pinned native worker still uses `reasoning_content` privately
 Ollama `/api/chat` and `/api/generate` continue to use `thinking`.
 
 Message reasoning text is distinct from the request-level `reasoning` object
-and `reasoning_effort` thinking controls; their existing precedence is unchanged.
+and `reasoning_effort` thinking controls. A nonempty `reasoning.effort` wins;
+missing/null/empty/whitespace falls through to `reasoning_effort`. Different
+explicitly supplied controls warn, equal normalized controls do not. Unset
+controls preserve defaults. Unsupported values in an exactly qualified model
+contract use its default, and unavailable off uses its lowest level, with
+warnings; unknown templates/custom levels pass through to the backend.
+See [thinking-controls.md](thinking-controls.md) for qualification boundaries.
 
 `POST /v1/chat/completions` accepts request-local `seed`, `frequency_penalty`
 and `presence_penalty`, including explicit zero values. They override model

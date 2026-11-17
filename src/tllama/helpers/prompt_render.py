@@ -3,10 +3,11 @@ from jinja2.sandbox import ImmutableSandboxedEnvironment
 from fastapi import HTTPException
 
 from tllama.helpers.common import normalize_stop, strftime_now
+from tllama.helpers.chat import build_think_kwargs_ex
 
 
 def render_generate_text(metadata_info: dict, request, *, bos_token: str, eos_token: str,
-                         add_generation_prompt: bool = True):
+                         add_generation_prompt: bool = True, warn_thinking: bool = True):
     """Render a completion prompt from a model template and request data.
 
     Returns:
@@ -48,29 +49,9 @@ def render_generate_text(metadata_info: dict, request, *, bos_token: str, eos_to
 
     tools_value = []
 
-    think_value = getattr(request, "think", None)
-    think_is_set = think_value is not None
-
-    think_enabled = None
-    think_level = ""
-    reasoning_effort = None
-
-    if think_value is True:
-        think_enabled = True
-    elif think_value is False:
-        think_enabled = False
-        think_level = "none"
-        reasoning_effort = "none"
-    elif isinstance(think_value, str):
-        normalized_think = think_value.strip().lower()
-        if normalized_think in {"false", "none"}:
-            think_enabled = False
-            think_level = "none"
-            reasoning_effort = "none"
-        else:
-            think_enabled = True
-            think_level = normalized_think
-            reasoning_effort = normalized_think
+    think_kwargs = build_think_kwargs_ex(getattr(request, "think", None),
+        {**metadata_info, "template": template}, warn=warn_thinking)
+    think_is_set = bool(think_kwargs)
 
     tllama_options = {}
     options_value = getattr(request, "options", None)
@@ -111,16 +92,8 @@ def render_generate_text(metadata_info: dict, request, *, bos_token: str, eos_to
         context["model_identity"] = model_identity
 
     if think_is_set:
-        context.update(
-            {
-                "enable_thinking": think_enabled,
-                "thinking": think_enabled,
-                "Think": think_enabled,
-                "ThinkLevel": think_level
-            }
-        )
-        if reasoning_effort is not None:
-            context["reasoning_effort"] = reasoning_effort
+        context.update(think_kwargs)
+        context.setdefault("ThinkLevel", "")
 
     def raise_exception(message: str):
         raise ValueError(message)

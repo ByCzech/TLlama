@@ -14,6 +14,7 @@ from typing import Mapping, Literal
 from tllama.helpers.chat import build_think_kwargs_ex, apply_default_system_prompt
 from tllama.helpers.common import validate_format
 from tllama.helpers.reasoning_split import detect_reasoning_format
+from tllama.helpers.thinking import select_openai_think
 from tllama.native_config import ResolvedWorkerConfig, build_native_sampling, _plain
 from tllama.native_params import freeze_values
 from tllama.native_tool_input import tool_options, tool_history
@@ -106,10 +107,10 @@ def _chat_messages(messages, resolved, normalized_messages=None, *, tool_api="ol
     return apply_default_system_prompt(result, {"default_system_prompt": resolved.system_prompt})
 
 
-def _think_payload(think):
+def _think_payload(think, metadata_info=None):
     if think is not None and type(think) not in (bool, str):
         raise ValueError("think must be a boolean, string or None")
-    aliases = build_think_kwargs_ex(think)
+    aliases = build_think_kwargs_ex(think, metadata_info)
     effort = aliases.pop("reasoning_effort", None)
     body = {"chat_template_kwargs": aliases} if aliases else {}
     if effort is not None:
@@ -132,23 +133,30 @@ def _response_format(value):
     return _json_copy(value)
 
 
+def _chat_metadata(metadata_info, resolved, tools):
+    reasoning_metadata = {**(metadata_info or {})}
+    if resolved.launch.template is not None:
+        reasoning_metadata['template'] = resolved.launch.template
+    elif tools and reasoning_metadata.get('tool_template'):
+        reasoning_metadata['template'] = reasoning_metadata['tool_template']
+    return reasoning_metadata
+
+
 def prepare_chat(messages, opts, *, resolved: ResolvedWorkerConfig, metadata_info=None,
                  think=None, response_format=None, tools=None, tool_choice=None,
                  parallel_tool_calls=None, normalized_messages=None, tool_api="ollama") -> NativeRequest:
     tools, tool_choice = tool_options(tools, tool_choice, parallel_tool_calls)
+    reasoning_metadata = _chat_metadata(metadata_info, resolved, tools)
     body = build_native_sampling(opts or {}, metadata_info, resolved=resolved)
     body.update({"messages": _chat_messages(messages, resolved, normalized_messages, tool_api=tool_api),
                  "reasoning_format": "deepseek"})  # Structured fields, never legacy reasoning-in-content.
-    body.update(_think_payload(think))
+    body.update(_think_payload(think, reasoning_metadata))
     if response_format is not None:
         body["response_format"] = _response_format(response_format)
     for name, value in {"tools": tools, "tool_choice": tool_choice,
                         "parallel_tool_calls": parallel_tool_calls}.items():
         if value is not None:
             body[name] = value
-    reasoning_metadata = metadata_info or {}
-    if tools and not resolved.launch.template and reasoning_metadata.get("tool_template"):
-        reasoning_metadata = {**reasoning_metadata, "template": reasoning_metadata["tool_template"]}
     return NativeRequest("chat", body, detect_reasoning_format(reasoning_metadata))
 
 
@@ -189,11 +197,8 @@ def prepare_openai_chat(request, *, resolved: ResolvedWorkerConfig, metadata_inf
     if request.functions is not None or request.function_call is not None:
         raise UnsupportedNativeInput("Deprecated functions/function_call needs an explicit native mapping; use tools/tool_choice")
     opts = openai_sampling_options(request)
-    effort = request.reasoning_effort
-    if effort is None and isinstance(request.reasoning, dict):
-        effort = request.reasoning.get("effort")
-    if effort is not None and not isinstance(effort, str):
-        raise ValueError("reasoning effort must be a string")
+    thinking_metadata = _chat_metadata(metadata_info, resolved, request.tools)
+    effort = select_openai_think(request, thinking_metadata)
     return prepare_chat(request.messages, opts, resolved=resolved, metadata_info=metadata_info,
                         think=effort, response_format=request.response_format, tools=request.tools,
                         tool_choice=request.tool_choice, parallel_tool_calls=request.parallel_tool_calls,

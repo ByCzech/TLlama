@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from typing import Any
+from tllama.helpers.thinking import resolve_think
 
 
-def build_think_kwargs_ex(think_value) -> dict[str, Any]:
+def build_think_kwargs_ex(think_value, metadata_info=None, *, warn=True) -> dict[str, Any]:
+    think_value = resolve_think(think_value, metadata_info, warn=warn)
     if think_value is None:
         return {}
 

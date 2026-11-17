@@ -22,7 +22,10 @@ version; the adapter does not read headers, render templates or load models.
 
 Think aliases become typed chat_template_kwargs and native reasoning_effort
 where specified. Unspecified think does not override template defaults. OpenAI
-top-level effort wins over nested reasoning.effort. Chat requests explicitly ask
+nonempty reasoning.effort wins over reasoning_effort, with fallback for empty
+values and warnings on differing explicit controls. Qualified model controls
+and unknown passthrough are documented in [thinking-controls.md](thinking-controls.md).
+Chat requests explicitly ask
 for reasoning_format=deepseek, the native structured output parser setting;
 this is not a requirement for a DeepSeek model or a request to enable thinking.
 

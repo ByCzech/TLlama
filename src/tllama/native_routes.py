@@ -15,6 +15,7 @@ from tllama.errors import ollama_stream_error_line, openai_stream_error_frame
 from tllama.helpers.common import get_iso_time, validate_format, validate_sampling_options
 from tllama.helpers.prompt_render import render_generate_text
 from tllama.helpers.reasoning_split import detect_reasoning_format, completion_reasoning_format
+from tllama.helpers.thinking import normalize_think, openai_effort_values
 from tllama.helpers.vision import content_carries_images, request_carries_images, NO_MULTIMODAL_SUPPORT
 from tllama.native_api import (NativeAPI, ReplyContext, ollama_response, openai_response,
                               ollama_stream, openai_stream, public_error)
@@ -74,6 +75,7 @@ class NativeStreamingResponse(StreamingResponse):
 
 def _validate(request, api, kind):
     if api == "ollama":
+        normalize_think(request.think)
         validate_format(request.format)
         validate_sampling_options(request.options)
         if kind == "completion":
@@ -94,6 +96,7 @@ def _validate(request, api, kind):
                 messages.append({"role": "user", "content": request.prompt, "images": request.images})
                 return normalize_chat_input(messages)
     else:
+        openai_effort_values(request)
         validate_sampling_options(openai_sampling_options(request))
         if request.response_format is not None:
             _response_format(request.response_format)
@@ -116,6 +119,7 @@ def lease_metadata(lease):
     if template is None:
         template = props.get("chat_template", metadata.get("template"))
     metadata["template"] = template
+    metadata['tool_template'] = props.get('chat_template_tool_use', metadata.get('tool_template') or template)
     metadata["default_system_prompt"] = lease.resolved.system_prompt
     if lease.resolved.model_sampling is not None:
         metadata["sampling_defaults"] = _plain(lease.resolved.model_sampling)
@@ -141,7 +145,7 @@ async def _completion_request(request, lease, metadata) -> NativeRequest:
     if not request.raw and detect_reasoning_format(reasoning_metadata) == "think_prefix":
         try:
             without_generation, _ = render_generate_text(
-                metadata, request, bos_token=bos, eos_token=eos, add_generation_prompt=False)
+                metadata, request, bos_token=bos, eos_token=eos, add_generation_prompt=False, warn_thinking=False)
         except HTTPException:
             # Some custom templates require a generation prompt. Failure of
             # this optional comparison must not invalidate a valid render.
