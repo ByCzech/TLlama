@@ -14,9 +14,9 @@ from tllama.decision_contract import SUPPORTED_DECISION_RUNTIME_FINGERPRINTS, DE
 from tllama.backend_policy import DEFAULT_BACKEND_PRIORITY, backend_priority
 
 
-# Current native contract: docs/runtime-audit-100.md; retained captures: runtime-audit-070.md.
-RUNTIME_FINGERPRINT = "b12359-c0819bbbae"
-SUPPORTED_RUNTIME_FINGERPRINTS = frozenset({RUNTIME_FINGERPRINT, "b11850-0e9433bfd3", "b11552-ec2797836f",
+# Current native contract: docs/runtime-audit-100-backports.md; earlier audits are retained.
+RUNTIME_FINGERPRINT = "b12359-e148b6dbe6"
+SUPPORTED_RUNTIME_FINGERPRINTS = frozenset({RUNTIME_FINGERPRINT, "b12359-c0819bbbae", "b11850-0e9433bfd3", "b11552-ec2797836f",
                                          "b11552-d1570abd3d", "b11552-3144c167ef"})
 DEFAULT_EXECUTABLE = Path("/usr/lib/tllama/server/tllama-server")
 _OWNED_ENV = {"GGML_BACKEND_PATH", "MTMD_BACKEND_DEVICE", "LLAMA_API_KEY"}

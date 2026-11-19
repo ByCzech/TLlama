@@ -131,7 +131,7 @@ def test_pending_log_and_unverified_runtime_are_explicit():
 
 def test_new_worker_admission_does_not_certify_load_log_coverage():
     from tllama.worker_config import RUNTIME_FINGERPRINT
-    assert RUNTIME_FINGERPRINT == 'b12359-c0819bbbae'
+    assert RUNTIME_FINGERPRINT == 'b12359-e148b6dbe6'
     parser = NativeMemory()
     for line in VULKAN.splitlines() + [END]:
         parser.observe(line)
@@ -144,10 +144,11 @@ def test_new_worker_admission_does_not_certify_load_log_coverage():
     'h_nextn_dev_alloc: ROCm0 h_nextn buffer size = 4.00 MiB',
     'llama_kv_cache: CUDA0 rotation buffer size = 2.00 MiB',
 ])
-def test_100_additional_buffer_lines_never_leave_an_incomplete_log_total_known(line):
+@pytest.mark.parametrize('fingerprint', ['b12359-c0819bbbae', 'b12359-e148b6dbe6'])
+def test_100_additional_buffer_lines_never_leave_an_incomplete_log_total_known(line, fingerprint):
     # Native c0819bbbae adds these allocations. Only the exact V1 inventory
     # can account for ownership; old log totals must not silently omit them.
-    parser = observe(VULKAN + '\n' + line, runtime_fingerprint='b12359-c0819bbbae')
+    parser = observe(VULKAN + '\n' + line, runtime_fingerprint=fingerprint)
     result = parser.snapshot()
     assert result['status'] == 'partial'
     assert result['reason'] == 'unrecognized_buffer_report'

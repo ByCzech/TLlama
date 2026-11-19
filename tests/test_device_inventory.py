@@ -283,7 +283,7 @@ def test_reviewed_discovery_remains_exact_and_rejects_table_drift(tmp_path, mode
     assert report['runtime_audited'] is True
     assert report['audited_runtime'] == AUDITED_RUNTIME
     assert report['runtime_fingerprint'] == 'b11850-0e9433bfd3'
-    assert report['audited_runtime_fingerprints'] == ['b11552-3144c167ef', 'b11850-0e9433bfd3', 'b12359-c0819bbbae']
+    assert report['audited_runtime_fingerprints'] == ['b11552-3144c167ef', 'b11850-0e9433bfd3', 'b12359-c0819bbbae', 'b12359-e148b6dbe6']
     assert report['expected_runtime'] == (expected or AUDITED_RUNTIME)
     assert report['private_directory_removed'] and not report['placement_ready']
     assert len(calls.read_text().splitlines()) == (2 if expected == 'b11850-0e9433bfd3' else 1)
@@ -292,7 +292,7 @@ def test_reviewed_discovery_remains_exact_and_rejects_table_drift(tmp_path, mode
 @pytest.mark.parametrize('mode,ok', [('normal', True), ('drift', False)])
 def test_100_default_discovery_identity_still_requires_the_actual_table(tmp_path, mode, ok):
     exe = stub(tmp_path / 'native', mode,
-               version=b'version: 1.0.0-dev (build 12359, commit c0819bbbae)\nbuilt for Linux\n')
+               version=b'version: 1.0.0-dev (build 12359, commit e148b6dbe6)\nbuilt for Linux\n')
     pci(tmp_path / 'pci')
     run = subprocess.run([sys.executable, str(SCRIPT), '--executable', str(exe),
                           '--pci-root', str(tmp_path / 'pci'), '--output', str(tmp_path / 'result')],

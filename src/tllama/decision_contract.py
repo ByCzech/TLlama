@@ -6,9 +6,9 @@ from collections.abc import Mapping
 
 
 DECISION_TYPES = frozenset({'laya', 'nimble', 'clef'})
-# Current source contract: runtime-audit-100.md; previous MI50 evidence: runtime-audit-070.md.
-DECISION_RUNTIME = 'b12359-c0819bbbae'
-SUPPORTED_DECISION_RUNTIME_FINGERPRINTS = frozenset({DECISION_RUNTIME, 'b11850-0e9433bfd3', 'b11552-3144c167ef'})
+# Current source contract: runtime-audit-100-backports.md; previous audits are retained.
+DECISION_RUNTIME = 'b12359-e148b6dbe6'
+SUPPORTED_DECISION_RUNTIME_FINGERPRINTS = frozenset({DECISION_RUNTIME, 'b12359-c0819bbbae', 'b11850-0e9433bfd3', 'b11552-3144c167ef'})
 MAX_QUESTIONS = 32
 MAX_REQUEST_BYTES = 2 * 1024 * 1024
 

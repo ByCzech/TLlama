@@ -122,7 +122,7 @@ async def test_real_worker_strict_exact_pin_precedes_all_feature_requests(factor
 
 @pytest.mark.parametrize('factory', ['tcp'], indirect=True)
 @pytest.mark.parametrize('mode', MODES)
-@pytest.mark.parametrize('observed', ['b12359-c0819bbbae', 'b11850-0e9433bfd3', LEGACY_DECISION_BUILD])
+@pytest.mark.parametrize('observed', ['b12359-e148b6dbe6', 'b12359-c0819bbbae', 'b11850-0e9433bfd3', LEGACY_DECISION_BUILD])
 async def test_reviewed_and_legacy_builds_start_without_warning_under_strict(factory, mode, observed, caplog):
     env = {'STUB_BUILD': observed}
     if mode in MODES[2:]:
@@ -168,16 +168,17 @@ def test_general_runtime_evidence_does_not_admit_an_unaudited_decision_build(mod
 
 
 @pytest.mark.parametrize('factory', ['tcp'], indirect=True)
-async def test_100_exact_memory_api_is_used_without_certifying_legacy_logs(factory, payload):
+@pytest.mark.parametrize('observed', ['b12359-c0819bbbae', 'b12359-e148b6dbe6'])
+async def test_100_exact_memory_api_is_used_without_certifying_legacy_logs(factory, payload, observed):
     worker, root = factory(version_policy='strict', memory_source='native',
-                           environment={'STUB_BUILD': RUNTIME_FINGERPRINT})
-    payload['runtime_fingerprint'] = RUNTIME_FINGERPRINT
+                           environment={'STUB_BUILD': observed})
+    payload['runtime_fingerprint'] = observed
     (root / 'memory-report').write_text(json.dumps(payload))
     async with worker:
         await worker.refresh_memory()
         memory = worker.memory_snapshot()
         assert memory['source'] == 'native_memory_api'
-        assert memory['measurement']['report']['runtime_fingerprint'] == RUNTIME_FINGERPRINT
+        assert memory['measurement']['report']['runtime_fingerprint'] == observed
         assert memory['measurement']['totals']['allocated_bytes'] == 1350
         assert worker.memory.snapshot()['runtime_verified'] is False
     assert worker.process.returncode is not None and not worker.runtime_directory.exists()

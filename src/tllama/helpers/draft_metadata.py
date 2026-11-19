@@ -73,5 +73,5 @@ def active_draft(strategy, path, metadata):
         if metadata.get('is_projector'):
             raise ValueError('draft-mtp requires MTP weights, not a projector')
         if (metadata.get('_draft') or {}).get('shared_target') is True:
-            raise ValueError('Shared-target external MTP is unsupported by native b12359-c0819bbbae; use a self-contained MTP export')
+            raise ValueError('Shared-target external MTP is unsupported by the audited native contract; use a self-contained MTP export')
     return path
