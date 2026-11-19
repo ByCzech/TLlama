@@ -5,6 +5,23 @@ identify the source; the complete history retains tests, refactoring and
 intermediate development steps. TLlama application versions
 are independent of the separately packaged `tllama-server` native runtime.
 
+## 1.6.1 — 2026-11-19
+
+### Changed
+
+- Adopt default audited native `b12359-e148b6dbe6`, the separately packaged
+  `1.0.0~dev+b12359.2-1` ROCm 10.2/backport set. Retain older reviewed builds
+  in their separate generation/embedding, Decision and discovery audit sets.
+  Strict identity, live protocol and Memory API checks remain enforced.
+- Keep the existing native Debian minimum `.1-1`, supported earlier runtimes,
+  model/repository/cache formats, configuration and inference defaults.
+- Correct generate inline-image documentation; document dated SDK limitations,
+  plain options mappings and raw HTTP recipes for complete diagnostic data and
+  binary GGUF upload. Clarify the matching native-package ROCm transition.
+
+No new HTTP API, own SDK, audio implementation or model-definition syntax is
+introduced. See the [1.6.1 review](docs/release-review-161.md).
+
 ## 1.6.0 — 2026-11-17
 
 ### Added

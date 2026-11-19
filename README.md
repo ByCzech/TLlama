@@ -75,7 +75,11 @@ repository/startup improvements and offline show diagnostics. Chat reasoning
 responses now use `reasoning`; `reasoning_content` remains an input alias.
 See the [1.6.0 release review and upgrade notes](docs/release-review-160.md).
 
-Upgrading from 1.4.1 through 1.6.0 needs no repository conversion or cache reset. Older
+Version 1.6.1 accepts native `b12359-e148b6dbe6` with the ROCm 10.2 package
+set and selected native fixes, and documents existing SDK/API limits. Earlier
+audited runtimes remain supported. See the [1.6.1 review](docs/release-review-161.md).
+
+Upgrading from 1.4.1 through 1.6.1 needs no repository conversion or cache reset. Older
 unconverted repositories require the explicit [offline conversion](tools/README.md)
 with all writers stopped. See the [changelog](CHANGELOG.md) for migration,
 coordination requirements and other release changes.

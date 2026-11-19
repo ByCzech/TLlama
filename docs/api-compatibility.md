@@ -15,7 +15,7 @@ Ollama, OpenAI or the native server. The default listener is
 | GET, HEAD | `/api/tags` | Registered model definitions and offline GGUF details |
 | POST | `/api/show` | Model details, original TOML, template, capabilities and license identifier |
 | GET | `/api/ps` | Owned worker generations and memory provenance |
-| POST | `/api/generate` | Raw/rendered text or supported nonempty FIM suffix, full or streamed |
+| POST | `/api/generate` | Raw/rendered text, configured inline images or supported nonempty FIM suffix, full or streamed |
 | POST | `/api/chat` | Chat, thinking, modern tools and configured inline images, full or streamed |
 | POST | `/api/embed` | Modern pooled embeddings, batch/load controls and supported inline-image extension |
 | POST | `/api/embeddings` | Legacy single text embedding with native legacy normalization |
@@ -106,6 +106,10 @@ conflict, staging and deletion contracts are in [cli.md](cli.md).
 See [model-management-compatibility.md](model-management-compatibility.md) for
 request examples, response/error shapes and both client/daemon directions.
 
+SDK signatures and response parsers may expose only part of these public
+contracts. See [SDK compatibility](sdk-compatibility.md) for reviewed versions,
+options mappings and direct HTTP recipes.
+
 ## Memory and capabilities
 
 The `/api/tags` `size` is the total required file size, including all GGUF
@@ -148,7 +152,8 @@ remain independent. See [runtime-audit-070.md](runtime-audit-070.md).
   in the runtime audit without speculative unescaping.
 - [Vision](native-vision.md): inline base64/data URLs on chat APIs with a configured
   projector and live capability. Remote URLs, local paths and unsupported media
-  parts fail before admission. Generate images and audio are unsupported.
+  parts fail before admission. `/api/generate` also accepts inline `images` with
+  a configured projector and live vision support; audio remains unsupported.
 - [Embeddings](embedding-api.md): explicit embedding mode and verified pooled
   semantic metadata, literal input, exact token limits and checked native vectors.
   Modern routes support their documented image extension; legacy is text-only.

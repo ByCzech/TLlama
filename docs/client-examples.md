@@ -18,6 +18,9 @@ Use **Chat Completions** with OpenAI clients: `/v1/responses` and
 placeholder, not TLlama public authentication. For a proxy requiring a real
 credential, configure that credential and its URL instead.
 
+For versioned SDK limitations, options mappings, extended response fields and
+raw management/blob recipes, see [SDK compatibility](sdk-compatibility.md).
+
 ## Contents
 
 - [Install Python clients](#install-python-clients)

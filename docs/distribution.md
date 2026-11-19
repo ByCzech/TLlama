@@ -7,19 +7,22 @@ source installation and [hardware](hardware.md) for selecting a backend.
 
 ## Debian packages
 
-TLlama 1.6.0 is prepared as Python wheel/source archives and separate Debian
-application/documentation packages (`1.6.0-1`). The maintainer's APT archive
+TLlama 1.6.1 is prepared as Python wheel/source archives and separate Debian
+application/documentation packages (`1.6.1-1`). The maintainer's APT archive
 supplies published Debian releases. See the [changelog](../CHANGELOG.md) for
 changes and upgrade notes. Application and native runtime versions are
 independent.
 
-The current native set is `1.0.0~dev+b12359.1-1`, using
-`b12359-c0819bbbae`, with the project's native changes. TLlama 1.6.0's Debian
-package requires at least this runtime version for the coordinated update.
-The set has been built; current application compatibility evidence and the
-remaining actual hardware smoke are distinguished in the
-[native integration audit](runtime-audit-100.md). Historical 0.7.0 hardware
-results are retained separately. The native project has modular Debian packaging:
+The recommended native set is `1.0.0~dev+b12359.2-1`, using
+`b12359-e148b6dbe6`, with ROCm 10.2 and selected native backports.
+TLlama 1.6.1 retains Debian floor `1.0.0~dev+b12359.1-1` and its reviewed
+contracts; users of that earlier supported runtime are not forced to upgrade
+solely by this Python compatibility update. Current source and application
+verification boundaries are in the [native audit](runtime-audit-100-backports.md).
+The maintainer has built and installed the new set and reported Vulkan/HIP
+inference on an AMD APU; this does not qualify all other GPUs or models.
+Historical native/HW evidence is retained in the earlier audits.
+The native project has modular Debian packaging:
 
 | Package | Purpose |
 | --- | --- |
@@ -27,7 +30,7 @@ results are retained separately. The native project has modular Debian packaging
 | `tllama-server-core` | Private executable and common libraries |
 | `tllama-server-backend-cpu` | Portable CPU variants and OpenBLAS |
 | `tllama-server-backend-vulkan` | System-driver Vulkan compute |
-| `tllama-server-backend-rocm10.1` | AMD HIP/ROCm 10.1 backend |
+| `tllama-server-backend-rocm10.2` | AMD HIP/ROCm 10.2 backend |
 | `tllama-server-backend-cuda12.4` | CUDA route retaining older NVIDIA families |
 | `tllama-server-backend-cuda12.9` | CUDA 12.x plus included Blackwell images |
 | `tllama-server-backend-cuda13.3` | Newer NVIDIA targets, Turing onward |
@@ -40,9 +43,22 @@ coexist. CUDA's default must still suit the GPU: Pascal P100 needs CUDA12.x,
 even if a higher-priority CUDA13 plugin is installed.
 
 Legacy gfx900/gfx906/gfx90c deployment additionally uses the matching optional
-`amdrocm-blas10.1-gfx900`, `amdrocm-blas10.1-gfx906` or
-`amdrocm-blas10.1-gfx90c` add-on. These project-maintained libraries complement
+`amdrocm-blas10.2-gfx900`, `amdrocm-blas10.2-gfx906` or
+`amdrocm-blas10.2-gfx90c` add-on. These project-maintained libraries complement
 the native kernels; they are not Python dependencies.
+
+For an upgrade from the previous ROCm package, explicitly replace its old name
+while updating native core/CPU and every other installed backend to the same
+new version:
+
+```sh
+sudo apt install tllama-server-backend-rocm10.2 tllama-server-backend-rocm10.1-
+```
+
+Keep the complete earlier native set for rollback. The Python package alone
+does not choose a new HIP SDK generation or install every accelerator plugin.
+Legacy HIP testing retains the existing `--load-mode none` workaround; this
+upgrade does not establish a kernel/KFD fix.
 
 The default native executable is
 `/usr/lib/tllama/server/tllama-server`. Common libraries/backend loader links

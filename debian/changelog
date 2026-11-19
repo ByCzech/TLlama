@@ -1,3 +1,14 @@
+tllama (1.6.1-1) unstable; urgency=medium
+
+  * Accept audited native b12359-e148b6dbe6 with the ROCm 10.2/backport set,
+    retaining previous per-feature identities and the existing runtime floor.
+  * Correct generate image support documentation and add reviewed SDK limits,
+    options mappings and direct HTTP management/blob recipes.
+  * Update runtime/distribution/release notes without changing public APIs,
+    model definitions, cache formats or inference defaults.
+
+ -- NemaChybu team APT archive <maintainers@nemachybu.cz>  Thu, 19 Nov 2026 11:00:00 +0100
+
 tllama (1.6.0-1) unstable; urgency=medium
 
   * New upstream release:

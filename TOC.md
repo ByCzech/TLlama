@@ -16,6 +16,7 @@ original build identities and evidence.
 - [Usage and client integration](docs/usage.md).
 - [Client examples: Python, curl and JavaScript](docs/client-examples.md): basic
   and advanced SDK/HTTP calls, streaming, async, history and errors.
+- [SDK compatibility and direct HTTP recipes](docs/sdk-compatibility.md).
 - [Systemd installation and service permissions](docs/systemd.md).
 
 ## Configuration and model management
@@ -63,7 +64,8 @@ original build identities and evidence.
 
 ## Qualification and release records
 
-- [Current native 1.0.0 integration audit](docs/runtime-audit-100.md).
+- [Current native b12359.2 compatibility audit](docs/runtime-audit-100-backports.md).
+- [Original native 1.0.0 integration audit](docs/runtime-audit-100.md).
 - [Historical native 0.7.0 hardware/runtime audit](docs/runtime-audit-070.md).
 - [Runtime qualification procedures](docs/runtime-qualification-070.md).
 - [Decision qualification procedures](docs/decision-qualification-070.md).
@@ -71,6 +73,7 @@ original build identities and evidence.
 - [1.5.0 release scope and qualification](docs/release-review-150.md).
 - [1.5.1 native compatibility release](docs/release-review-151.md).
 - [1.6.0 scope, upgrade notes and integration](docs/release-review-160.md).
+- [1.6.1 native update and SDK documentation](docs/release-review-161.md).
 
 The runtime audit distinguishes accepted hardware/model recipes from source
 support and unresolved release items. A passing protocol comparison is not a

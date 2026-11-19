@@ -30,7 +30,7 @@ See [placement examples](features.md#model-placement-across-devices-and-backends
 | --- | --- | --- |
 | CPU / OpenBLAS | Core + CPU package | Host CPU; automatic supported instruction variant |
 | Vulkan | Optional package | AMD, NVIDIA or Intel device with a usable Vulkan compute driver |
-| ROCm/HIP | Versioned ROCm 10.1 package | AMD target plus matching HIP/BLAS libraries |
+| ROCm/HIP | Versioned ROCm 10.2 package | AMD target plus matching HIP/BLAS libraries |
 | CUDA | Versioned 12.4, 12.9, 13.3 packages | NVIDIA; select toolkit generation for the GPU family |
 | SYCL | Intel oneAPI package | Supported Intel GPU and compute driver |
 | Metal | Native build capability | Apple hardware with a suitable Metal build; packaged macOS delivery is planned |
